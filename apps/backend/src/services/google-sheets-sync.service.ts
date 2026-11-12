@@ -4323,18 +4323,25 @@ export class GoogleSheetsSyncService {
             if (mRows.length > 0) {
               const byId = new Map<string, string[]>();
               const byPhoneName = new Map<string, string[]>();
+              // Mã nguồn (cột 16, VD UBM_FORM_0318) là định danh DUY NHẤT của hồ sơ.
+              // Không dùng nó trước thì người nộp form 2 lần (cùng tên + SĐT) sẽ bị
+              // dòng sau "che" dòng trước -> mất trạng thái/đề xuất lịch của hồ sơ kia.
+              const bySourceCode = new Map<string, string[]>();
               mRows.forEach((r, i) => {
                 if (!r || !r.some(c => String(c || '').trim())) return;
                 byId.set(`CAND_${String(i + 1).padStart(4, '0')}`, r);
+                const sc = String(r[16] || '').trim();
+                if (sc) bySourceCode.set(sc, r);
                 const ph = canonicalPhone(String(r[6] || ''));
                 const nm = String(r[1] || '').trim().toLowerCase();
                 if (ph && nm) byPhoneName.set(`${ph}|${nm}`, r);
               });
               for (const c of fallback.candidates as any[]) {
-                // Ưu tiên khớp theo SĐT + tên: master có thể bị HR sắp xếp lại
-                // dòng, khi đó khớp theo vị trí (byId) sẽ gắn lịch PV/Zalo/VIP
-                // của người này sang người khác.
-                const mr = byPhoneName.get(`${c.phone_normalized || ''}|${String(c.full_name || '').trim().toLowerCase()}`)
+                // Ưu tiên mã nguồn (duy nhất) -> SĐT + tên (master có thể bị HR sắp
+                // xếp lại dòng) -> vị trí. Trước đây SĐT+tên đứng đầu nên hồ sơ
+                // trùng bị gắn nhầm dữ liệu của nhau.
+                const mr = bySourceCode.get(String((c as any).source_code || '').trim())
+                  || byPhoneName.get(`${c.phone_normalized || ''}|${String(c.full_name || '').trim().toLowerCase()}`)
                   || byId.get(c.submission_id);
                 if (!mr) continue;
                 // Lịch vừa bị hủy (tay/auto): ÉP XÓA thay vì hồi sinh dòng cũ trên Sheet.
