@@ -59,8 +59,52 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
    */
   private readonly approvalPushWaitMs = Math.max(1_000, Number(process.env.SHEETS_APPROVAL_PUSH_WAIT_MS) || 3_000);
 
+  /**
+   * MILKROUTE EV (BETA): adapter Sheets chưa có tab EV riêng.
+   * - Mảng EV đọc/ghi trực tiếp trên bộ nhớ fallback (MockSheetsAdapter).
+   * - Method ghi ủy quyền cho fallback và lên lịch lưu snapshot để dữ liệu
+   *   không mất khi restart. Chế độ PostgreSQL không đi qua đây (dùng proxy repo).
+   */
+  private bindMilkRouteEv(): void {
+    const f: any = this.fallbackAdapter;
+    const arrayKeys = [
+      // EV services tra cứu tài xế qua mảng employees (giống MockSheetsAdapter).
+      'employees',
+      'evVehicles', 'evRoutes', 'evRouteStops', 'evShifts', 'evShiftCheckins',
+      'evChargingTickets', 'evGpsPoints', 'evDriverPayroll',
+    ];
+    for (const key of arrayKeys) {
+      Object.defineProperty(this, key, {
+        enumerable: true,
+        configurable: true,
+        get: () => f[key],
+        set: (value: any) => { f[key] = value; },
+      });
+    }
+    const writeMethods = [
+      'createEVVehicle', 'updateEVVehicle', 'deleteEVVehicle',
+      'createEVRoute', 'updateEVRoute', 'deleteEVRoute',
+      'createEVRouteStop', 'updateEVRouteStop', 'deleteEVRouteStop',
+      'createEVShift', 'updateEVShift', 'deleteEVShift',
+      'createEVShiftCheckin', 'updateEVShiftCheckin', 'deleteEVShiftCheckin',
+      'createEVChargingTicket', 'updateEVChargingTicket', 'deleteEVChargingTicket',
+      'createEVGpsPoints', 'pruneEVGpsPoints',
+      'createEVDriverPayroll', 'updateEVDriverPayroll', 'deleteEVDriverPayroll',
+    ];
+    // GPS ghi rất dày và không nằm trong snapshot → khỏi lên lịch lưu mỗi lần.
+    const skipSnapshot = new Set(['createEVGpsPoints', 'pruneEVGpsPoints']);
+    for (const name of writeMethods) {
+      (this as any)[name] = async (...args: any[]) => {
+        const result = await f[name](...args);
+        if (!skipSnapshot.has(name)) this.scheduleRuntimeSnapshot();
+        return result;
+      };
+    }
+  }
+
   constructor() {
     this.fallbackAdapter = new MockSheetsAdapter();
+    this.bindMilkRouteEv();
 
     // Check if GOOGLE_SERVICE_ACCOUNT_JSON / BASE64 / FILE is provided
     let jsonStr = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();

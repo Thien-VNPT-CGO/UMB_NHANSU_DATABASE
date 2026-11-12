@@ -167,6 +167,17 @@ export class MockSheetsAdapter implements ISheetsRepository {
       maintenance: clone(this.maintenance),
       backupSnapshots: clone(this.backupSnapshots),
       systemSettings: clone(this.systemSettings),
+      // MILKROUTE EV (BETA): chưa có tab Google Sheets riêng → lưu kèm snapshot
+      // để không mất dữ liệu khi restart ở chế độ Sheets.
+      evVehicles: clone(this.evVehicles),
+      evRoutes: clone(this.evRoutes),
+      evRouteStops: clone(this.evRouteStops),
+      evShifts: clone(this.evShifts),
+      evShiftCheckins: clone(this.evShiftCheckins),
+      evChargingTickets: clone(this.evChargingTickets),
+      evDriverPayroll: clone(this.evDriverPayroll),
+      // evGpsPoints cố ý KHÔNG đưa vào snapshot: dữ liệu realtime, ghi rất dày
+      // (mỗi 15s/xe) sẽ làm file snapshot phình to; Live Map tự nạp lại khi chạy.
       terminatedRevoked: Array.from(this.terminatedRevoked),
     };
   }
@@ -183,6 +194,9 @@ export class MockSheetsAdapter implements ISheetsRepository {
       'attendanceAdjustments', 'payrollRuns', 'payslips', 'payrollFormulas',
       'payrollInputs', 'notificationOutbox', 'notificationInbox', 'testPapers',
       'testSubmissions', 'operations', 'auditLogs', 'branches', 'backupSnapshots',
+      // MILKROUTE EV (BETA) — khôi phục từ snapshot khi chạy chế độ Sheets.
+      'evVehicles', 'evRoutes', 'evRouteStops', 'evShifts', 'evShiftCheckins',
+      'evChargingTickets', 'evDriverPayroll',
     ] as const;
     for (const key of arrayKeys) {
       if (Array.isArray(state[key])) {
