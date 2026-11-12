@@ -1125,6 +1125,8 @@ export function App() {
   });
   const [profBusy, setProfBusy] = useState(false);
   const [idCardBusy, setIdCardBusy] = useState<'' | 'front' | 'back'>('');
+  /** Đang tải file hợp đồng (thử việc / chính thức) lên Drive. */
+  const [contractBusy, setContractBusy] = useState<'' | 'probation' | 'official'>('');
 
   const myContractDocs: any = (() => {
     const raw = (employee as any)?.contract_docs;
@@ -1146,6 +1148,21 @@ export function App() {
   useEffect(() => {
     // Mở lại tab Hồ sơ -> kiểm tra yêu cầu vừa được duyệt/từ chối bên admin.
     if (activeTab === 'profile' && employee?.employee_id) fetchBankChangeRequest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+  // Mở tab Hồ sơ -> nạp lại hồ sơ mới nhất từ server để trạng thái hợp đồng
+  // (HR vừa upload/gỡ bên Admin) hiện đúng, không phải F5.
+  useEffect(() => {
+    if (activeTab !== 'profile' || !employee?.employee_id) return;
+    let alive = true;
+    apiRequest('/me')
+      .then((me: any) => {
+        if (!alive || !me?.employee) return;
+        setEmployee(me.employee);
+        try { localStorage.setItem('ubm_emp_data', JSON.stringify(me.employee)); } catch {}
+      })
+      .catch(() => null);
+    return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
   useEffect(() => {
@@ -1213,8 +1230,75 @@ export function App() {
     }
   };
 
-  const handleSaveProfile = async () => {
-    if (profBusy) return;
+  /** Đọc file (PDF/Word/ảnh) thành base64 để gửi lên server. */
+  const readFileAsBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ''));
+    r.onerror = () => reject(new Error('read'));
+    r.readAsDataURL(file);
+  });
+
+  /** NV tự tải Hợp đồng Thử việc / Chính thức: lưu Drive + đồng bộ cổng Admin. */
+  const uploadMyContract = async (kind: 'probation' | 'official', file: File | undefined) => {
+    if (!file) return;
+    const ext = String(file.name.split('.').pop() || '').toLowerCase();
+    const okExt = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'webp'].includes(ext);
+    if (!okExt) {
+      showToast('⚠️ Chỉ nhận file PDF, Word (DOC/DOCX) hoặc ảnh JPG/PNG/WEBP.');
+      return;
+    }
+    if (file.size > 6 * 1024 * 1024) {
+      showToast('⚠️ File tối đa 6MB. Vui lòng nén lại hoặc chụp ảnh rõ hơn.');
+      return;
+    }
+    const label = kind === 'probation' ? 'hợp đồng thử việc' : 'hợp đồng chính thức';
+    setContractBusy(kind);
+    try {
+      showToast(`⏳ Đang tải ${label} lên Google Drive...`);
+      const base64 = await readFileAsBase64(file);
+      const res: any = await apiRequest('/me/contract-file', {
+        method: 'POST',
+        body: JSON.stringify({
+          kind: kind === 'probation' ? 'PROBATION' : 'OFFICIAL',
+          fileName: file.name,
+          mimeType: file.type || '',
+          base64,
+        }),
+      });
+      if (res?.employee) {
+        const merged = { ...(employee || {}), ...(res.employee || {}) };
+        setEmployee(merged as any);
+        try { localStorage.setItem('ubm_emp_data', JSON.stringify(merged)); } catch {}
+      }
+      const storage = res?.contract?.storage === 'DRIVE' ? 'Google Drive' : 'máy chủ (sẽ tự đồng bộ Drive)';
+      showToast(`✓ Đã lưu ${label} vào ${storage} và cập nhật cổng Admin!`);
+    } catch (err: any) {
+      showToast(err?.message || 'Tải file hợp đồng thất bại!');
+    } finally {
+      setContractBusy('');
+    }
+  };
+
+  /** Mở file hợp đồng đã lưu (Drive/đĩa VPS) của chính mình. */
+  const openMyContract = async (kind: 'probation' | 'official') => {
+    try {
+      showToast('⏳ Đang mở file hợp đồng...');
+      const token = getAuthToken();
+      const res = await fetch(`${getApiBase()}/me/contract/${kind}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error('Chưa có file hợp đồng để xem.');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const w = window.open(url, '_blank');
+      if (!w) window.location.href = url;
+      setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 60_000);
+    } catch (err: any) {
+      showToast(err?.message || 'Không mở được file hợp đồng!');
+    }
+  };
+
+  const handleSaveProfile = async () => {    if (profBusy) return;
     setProfBusy(true);
     try {
       const res: any = await apiRequest('/me/profile', {
@@ -8159,6 +8243,104 @@ export function App() {
                         </div>
                       )}
                     </div>
+                  </div>
+                </div>
+
+                {/* Hợp đồng lao động: NV tự tải bản scan/PDF đã ký */}
+                <div style={{ backgroundColor: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: '12px', padding: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px', flexWrap: 'wrap', gap: '6px' }}>
+                    <div style={{ fontWeight: 800, fontSize: '13.5px', display: 'flex', alignItems: 'center', gap: '6px', color: '#1E293B' }}>
+                      <span>📄</span> Hợp Đồng Lao Động (tải file lên)
+                    </div>
+                    <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#047857', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '999px', padding: '2px 8px' }}>
+                      ☁️ Tự động đồng bộ Google Drive
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.5 }}>
+                    Tải bản scan/PDF hợp đồng đã ký. File được lưu vào Google Drive theo cấu trúc <strong>05. HỒ SƠ NHÂN VIÊN / Chi nhánh / Tên bạn - Mã NV</strong> và hiện ngay trên cổng Admin cho HR. Tối đa 6MB (PDF, Word, JPG, PNG, WEBP).
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+                    {([
+                      {
+                        kind: 'probation' as const,
+                        title: 'Hợp đồng thử việc',
+                        icon: '📝',
+                        hint: (employee as any)?.start_date ? `Bắt đầu từ ${String((employee as any)?.start_date).slice(0, 10)}` : 'Bản hợp đồng thử việc đã ký',
+                      },
+                      {
+                        kind: 'official' as const,
+                        title: 'Hợp đồng chính thức',
+                        icon: '📄',
+                        hint: (employee as any)?.official_date ? `Hiệu lực từ ${String((employee as any)?.official_date).slice(0, 10)}` : 'Bản hợp đồng chính thức đã ký',
+                      },
+                    ]).map((b) => {
+                      const doc = myContractDocs?.[b.kind];
+                      const busy = contractBusy === b.kind;
+                      return (
+                        <div key={b.kind} style={{ backgroundColor: '#FFF', borderRadius: '10px', border: doc ? '1px solid #A7F3D0' : '1px solid var(--border)', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', fontWeight: 700 }}>
+                            <span style={{ color: '#0F172A' }}>{b.icon} {b.title}</span>
+                            <span style={{ fontSize: '11px', fontWeight: 700, color: doc ? '#059669' : '#D97706' }}>
+                              {doc ? '✅ Đã có file' : '⚠️ Chưa có'}
+                            </span>
+                          </div>
+                          <div style={{ height: '86px', borderRadius: '8px', border: doc ? '1px solid #A7F3D0' : '1.5px dashed #CBD5E1', backgroundColor: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '3px', padding: '6px', textAlign: 'center' }}>
+                            {doc ? (
+                              <>
+                                <span style={{ fontSize: '24px' }}>
+                                  {/\.pdf$/i.test(String(doc.file_name || ''))
+                                    ? '📕'
+                                    : /\.(jpe?g|png|webp)$/i.test(String(doc.file_name || ''))
+                                      ? '🖼️'
+                                      : '📄'}
+                                </span>
+                                <span style={{ fontSize: '10.5px', color: '#334155', fontWeight: 700, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={doc.file_name}>
+                                  {doc.file_name}
+                                </span>
+                                <span style={{ fontSize: '10px', color: '#64748B' }}>
+                                  {doc.size ? `${Math.max(1, Math.round(Number(doc.size) / 1024))}KB • ` : ''}
+                                  {doc.storage === 'DRIVE' ? '☁️ Google Drive' : 'Đĩa VPS'}
+                                  {doc.uploaded_at ? ` • ${new Date(doc.uploaded_at).toLocaleDateString('vi-VN')}` : ''}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <span style={{ fontSize: '24px', opacity: 0.6 }}>{b.icon}</span>
+                                <span style={{ fontSize: '10.5px', color: '#94A3B8' }}>{b.hint}</span>
+                              </>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '2px' }}>
+                            <label
+                              className="btn-primary"
+                              style={{ flex: '1 1 120px', fontSize: '11.5px', padding: '7px 8px', fontWeight: 800, cursor: busy ? 'not-allowed' : 'pointer', textAlign: 'center', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px', opacity: busy ? 0.7 : 1 }}
+                            >
+                              {busy ? '⏳ Đang tải...' : (doc ? '🔄 Thay file' : '📁 Tải file lên')}
+                              <input
+                                type="file"
+                                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png,image/webp"
+                                style={{ display: 'none' }}
+                                disabled={busy}
+                                onChange={(e) => {
+                                  const f = e.target.files?.[0];
+                                  e.target.value = '';
+                                  if (f) void uploadMyContract(b.kind, f);
+                                }}
+                              />
+                            </label>
+                            {doc && (
+                              <button
+                                className="btn-secondary"
+                                onClick={() => void openMyContract(b.kind)}
+                                style={{ flex: '1 1 80px', fontSize: '11.5px', padding: '7px 8px', fontWeight: 700 }}
+                              >
+                                👁 Xem file
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
                 <div>

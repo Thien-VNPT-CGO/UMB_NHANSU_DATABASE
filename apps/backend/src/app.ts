@@ -1205,6 +1205,42 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     },
   );
 
+  // NV tự tải Hợp đồng thử việc / Hợp đồng chính thức (bản scan/PDF đã ký).
+  // Luồng: lưu đĩa VPS -> đẩy Google Drive (thư mục hồ sơ NV) -> cập nhật
+  // contract_docs trên hồ sơ + broadcast realtime để cổng Admin thấy ngay.
+  app.post(
+    '/me/contract-file',
+    authMiddleware,
+    requireRole(['EMPLOYEE']),
+    validate({ body: employeeContractBody }),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const employeeId = req.user?.employeeId;
+        if (!employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+        const key = contractKeyOf(req.body?.kind);
+        if (key !== 'probation' && key !== 'official') {
+          return res.status(400).json({ error: 'INVALID_KIND: Chỉ nhận PROBATION (thử việc) hoặc OFFICIAL (chính thức).' });
+        }
+        const r = await employeesService.saveContract(
+          employeeId,
+          {
+            kind: String(req.body.kind),
+            fileName: String(req.body.fileName),
+            mimeType: String(req.body.mimeType || ''),
+            base64: String(req.body.base64),
+          },
+          req.user!.id,
+        );
+        broadcastUpdate('employees', { action: 'update', employee: r.employee });
+        const { avatar_photo: _drop, ...rest } = (r.employee || {}) as any;
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({ success: true, contract: r.meta, employee: rest });
+      } catch (err: any) {
+        res.status(400).json({ error: err.message || 'UPLOAD_FAILED' });
+      }
+    },
+  );
+
   // NV xem/tải ảnh CCCD hoặc HĐLĐ của chính mình
   app.get('/me/contract/:kind', authMiddleware, async (req: AuthenticatedRequest, res) => {
     try {

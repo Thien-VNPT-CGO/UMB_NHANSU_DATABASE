@@ -16853,6 +16853,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               </span>
                               <span>{fmtSize(doc.size)}</span>
                               {fmtAt(doc.uploaded_at) && <span>• {fmtAt(doc.uploaded_at)}</span>}
+                              {doc.uploaded_by && String(doc.uploaded_by) === String(profEmp.employee_id) && (
+                                <span style={{ color: '#0369A1', fontWeight: 700 }}>• 👤 NV tự tải lên</span>
+                              )}
                               <span>• {doc.storage === 'DISK' ? 'Đĩa VPS (đang đợi tự động đồng bộ Drive)' : '☁️ Google Drive'}</span>
                             </div>
                           )}
