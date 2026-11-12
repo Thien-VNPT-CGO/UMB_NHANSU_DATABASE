@@ -107,6 +107,8 @@ test('contractFileInfo nhận đúng MIME và đoán theo đuôi file', () => {
   });
   assert.deepEqual(contractFileInfo('application/octet-stream', 'scan.png'), { mime: 'image/png', ext: 'png' });
   assert.deepEqual(contractFileInfo('application/octet-stream', 'scan.jpeg'), { mime: 'image/jpeg', ext: 'jpg' });
+  assert.deepEqual(contractFileInfo('image/heic', 'IMG_0001.HEIC'), { mime: 'image/heic', ext: 'heic' });
+  assert.deepEqual(contractFileInfo('application/octet-stream', 'scan.heif'), { mime: 'image/heif', ext: 'heif' });
   assert.equal(contractFileInfo('text/html', 'x.html'), null);
   assert.equal(contractFileInfo('', 'khong-duoi'), null);
 });
@@ -126,6 +128,12 @@ test('contractBufferLooksValid chặn file đổi đuôi giả mạo', () => {
   const webp = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBP'), Buffer.alloc(8)]);
   assert.equal(contractBufferLooksValid(webp, 'image/webp'), true);
 
+  // HEIC/HEIF: 'ftyp' ở byte 4–8 + brand ở byte 8–12.
+  const heic = Buffer.concat([Buffer.alloc(4), Buffer.from('ftypheic'), Buffer.alloc(8)]);
+  assert.equal(contractBufferLooksValid(heic, 'image/heic'), true);
+  assert.equal(contractBufferLooksValid(heic, 'image/heif'), true);
+  assert.equal(contractBufferLooksValid(Buffer.from('not a heic file'), 'image/heic'), false);
+
   const docx = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0]);
   assert.equal(contractBufferLooksValid(docx, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'), true);
   const doc = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0, 0, 0, 0]);
@@ -133,8 +141,8 @@ test('contractBufferLooksValid chặn file đổi đuôi giả mạo', () => {
   assert.equal(contractBufferLooksValid(Buffer.alloc(0), 'application/pdf'), false);
 });
 
-test('giới hạn dung lượng hợp đồng là 6MB', () => {
-  assert.equal(CONTRACT_MAX_BYTES, 6 * 1024 * 1024);
+test('giới hạn dung lượng hồ sơ là 20MB (đủ cho bản scan GKSK)', () => {
+  assert.equal(CONTRACT_MAX_BYTES, 20 * 1024 * 1024);
 });
 
 test('tên file trên Drive cố định đúng 5 tài liệu hồ sơ nhân viên', () => {

@@ -39,7 +39,11 @@ export async function uploadBufferViaDriveWebhook(
   const url = getDriveUploadWebhookUrl();
   if (!url || !input.folderId || !input.buffer?.length) return null;
 
-  const timeoutMs = Math.max(5_000, Number(process.env.GOOGLE_DRIVE_WEBHOOK_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS);
+  const configuredMs = Math.max(5_000, Number(process.env.GOOGLE_DRIVE_WEBHOOK_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS);
+  // File lớn (GKSK/CCCD scan 8–20MB) Apps Script cần nhiều thời gian hơn để
+  // giải mã base64 + ghi Drive. Cộng thêm ~4s mỗi MB để không rớt oan về DISK.
+  const sizeAllowance = Math.ceil(input.buffer.length / (1024 * 1024)) * 4_000;
+  const timeoutMs = Math.max(configuredMs, 20_000 + sizeAllowance);
   const secret = String(process.env.GOOGLE_DRIVE_WEBHOOK_SECRET || '').trim();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

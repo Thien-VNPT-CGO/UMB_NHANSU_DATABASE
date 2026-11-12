@@ -16311,16 +16311,67 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       reader.onerror = () => reject(new Error('READ_FAILED: Không đọc được file trên máy.'));
       reader.readAsDataURL(file);
     });
+    /** Giới hạn file hồ sơ — khớp backend (CONTRACT_MAX_BYTES 20MB). */
+    const MAX_DOC_BYTES = 20 * 1024 * 1024;
+    /**
+     * Nén ảnh lớn (chụp GKSK/CCCD bằng điện thoại 3–12MB) về JPEG ~2400px.
+     * Giúp upload nhanh, không vượt giới hạn body và vẫn đọc rõ chữ.
+     * Trả null khi không nén được / file vốn đã nhỏ -> dùng file gốc.
+     */
+    const compressDocImage = async (file: File): Promise<{ base64: string; mimeType: string; fileName: string } | null> => {
+      const type = (file.type || '').toLowerCase();
+      const compressible = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(type)
+        || /\.(jpe?g|png|webp)$/i.test(file.name);
+      if (!compressible || file.size <= 2 * 1024 * 1024) return null;
+      try {
+        const bitmap = await createImageBitmap(file);
+        const maxSide = 2400;
+        const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+        const w = Math.max(1, Math.round(bitmap.width * scale));
+        const h = Math.max(1, Math.round(bitmap.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        // Nền trắng: PNG trong suốt -> JPEG không bị đen.
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(bitmap, 0, 0, w, h);
+        bitmap.close?.();
+        const blob: Blob | null = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.88));
+        if (!blob || blob.size >= file.size) return null;
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+          reader.onerror = () => reject(new Error('READ_FAILED'));
+          reader.readAsDataURL(blob);
+        });
+        return { base64, mimeType: 'image/jpeg', fileName: file.name.replace(/\.[^.]+$/, '') + '.jpg' };
+      } catch {
+        return null;
+      }
+    };
     const uploadContract = async (kind: AdminContractKind, file: File) => {
       if (!profEmp) return;
-      if (file.size > 8 * 1024 * 1024) {
-        showToast('⚠️ File tài liệu tối đa 8MB! Nén hoặc chụp lại giúp HR.');
+      if (file.size > MAX_DOC_BYTES) {
+        showToast('⚠️ File tài liệu tối đa 20MB! Nén hoặc chụp lại giúp HR.');
         return;
       }
       setContractBusy(kind);
       try {
-        const dataUrl = await readFileDataUrl(file);
-        const base64 = dataUrl.includes(',') ? dataUrl.slice(dataUrl.indexOf(',') + 1) : dataUrl;
+        const compressed = await compressDocImage(file);
+        let base64 = '';
+        let mimeType = file.type || '';
+        let fileName = file.name;
+        if (compressed) {
+          base64 = compressed.base64;
+          mimeType = compressed.mimeType;
+          fileName = compressed.fileName;
+        } else {
+          const dataUrl = await readFileDataUrl(file);
+          base64 = dataUrl.includes(',') ? dataUrl.slice(dataUrl.indexOf(',') + 1) : dataUrl;
+        }
         const kindTag =
           kind === 'id_card_front' ? 'ID_CARD_FRONT' :
           kind === 'id_card_back' ? 'ID_CARD_BACK' :
@@ -16330,11 +16381,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           method: 'POST',
           body: JSON.stringify({
             kind: kindTag,
-            fileName: file.name,
-            mimeType: file.type || '',
+            fileName,
+            mimeType,
             base64,
           }),
-        });
+          // File scan 10–20MB qua mạng chậm có thể lâu hơn 60s mặc định.
+          _timeoutMs: 180000,
+        } as any);
         clearAdminDocCache(profEmp.employee_id, kind);
         showToast(`✓ Đã lưu ${contractLabel(kind)} của ${profEmp.full_name}!`);
         if (onRefreshData) await onRefreshData();
@@ -16847,7 +16900,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <input
                     ref={contractInputRef}
                     type="file"
-                    accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,application/pdf,image/jpeg,image/png,image/webp,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.doc,.docx,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     style={{ display: 'none' }}
                     onChange={(e) => {
                       const f = e.target.files?.[0];

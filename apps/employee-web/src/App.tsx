@@ -1247,8 +1247,8 @@ export function App() {
       showToast('⚠️ Chỉ nhận file PDF, Word (DOC/DOCX) hoặc ảnh JPG/PNG/WEBP.');
       return;
     }
-    if (file.size > 6 * 1024 * 1024) {
-      showToast('⚠️ File tối đa 6MB. Vui lòng nén lại hoặc chụp ảnh rõ hơn.');
+    if (file.size > 20 * 1024 * 1024) {
+      showToast('⚠️ File tối đa 20MB. Vui lòng nén lại hoặc chụp ảnh rõ hơn.');
       return;
     }
     const label = kind === 'probation' ? 'hợp đồng thử việc' : 'hợp đồng chính thức';
@@ -8257,7 +8257,7 @@ export function App() {
                     </span>
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.5 }}>
-                    Tải bản scan/PDF hợp đồng đã ký. File được lưu vào Google Drive theo cấu trúc <strong>05. HỒ SƠ NHÂN VIÊN / Chi nhánh / Tên bạn - Mã NV</strong> và hiện ngay trên cổng Admin cho HR. Tối đa 6MB (PDF, Word, JPG, PNG, WEBP).
+                    Tải bản scan/PDF hợp đồng đã ký. File được lưu vào Google Drive theo cấu trúc <strong>05. HỒ SƠ NHÂN VIÊN / Chi nhánh / Tên bạn - Mã NV</strong> và hiện ngay trên cổng Admin cho HR. Tối đa 20MB (PDF, Word, JPG, PNG, WEBP).
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
                     {([

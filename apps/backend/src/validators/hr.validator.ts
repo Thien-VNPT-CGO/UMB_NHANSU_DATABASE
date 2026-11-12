@@ -70,13 +70,13 @@ export const bulkImportBody = z.object({
   employees: z.array(z.object({}).passthrough()).min(1).max(500),
 });
 
-// Upload Hợp đồng lao động (Thử việc / Chính thức). Base64 tối đa ~9MB
-// (file 6MB) — khớp giới hạn express.json 10MB.
+// Upload hồ sơ nhân viên (Hợp đồng / CCCD / Giấy khám sức khỏe). Base64 tối đa
+// ~28MB (file 20MB) — route hồ sơ dùng parser riêng 40MB, không dính trần 10MB.
 export const employeeContractBody = z.object({
-  kind: z.string().min(1).max(20),
+  kind: z.string().min(1).max(40),
   fileName: z.string().min(1).max(240),
   mimeType: z.string().max(120).optional(),
-  base64: z.string().min(16).max(9_000_000),
+  base64: z.string().min(16).max(28_000_000),
 });
 
 // HR cập nhật nhận Đồng phục: ngày nhận + số lượng theo size L/XL (1 áo = 150.000đ).

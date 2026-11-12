@@ -295,6 +295,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.use(corsMiddleware);
   app.options('*', corsMiddleware);
   // Nới trần JSON để chứa ảnh điểm danh 5MB (base64 phình ~33% + overhead).
+  // Route hồ sơ nhân viên (hợp đồng/CCCD/giấy khám sức khỏe) cần trần cao hơn:
+  // file scan 8–20MB -> base64 ~11–27MB. Parser riêng đặt TRƯỚC parser chung;
+  // body-parser thấy `req._body` đã đọc sẽ bỏ qua nên không parse 2 lần.
+  const documentJsonParser = express.json({ limit: '40mb' });
+  app.use(['/employees/:id/contract', '/me/contract-file'], documentJsonParser);
   app.use(express.json({ limit: '10mb' }));
   app.use(generalRateLimiter());
   app.use('/auth/', authRateLimiter());
@@ -8480,12 +8485,19 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // --- Central error handler cho middleware (CORS, JSON parse) ---
   // Các route hiện tại tự try/catch nên handler này chỉ bắt lỗi từ middleware.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
     if (err && typeof err.message === 'string' && err.message.startsWith('CORS blocked')) {
       return res.status(403).json({ error: 'CORS_FORBIDDEN', message: 'Origin không được phép' });
     }
     if (err?.type === 'entity.too.large') {
-      return res.status(413).json({ error: 'PAYLOAD_TOO_LARGE', message: 'Dữ liệu gửi lên quá lớn (tối đa 2MB)' });
+      const isDocUpload = /\/contract(\/|$)/.test(String(req.originalUrl || ''));
+      console.warn(`[payload-too-large] ${req.method} ${String(req.originalUrl || '').split('?')[0]} ${req.headers['content-length'] || '?'} bytes`);
+      return res.status(413).json({
+        error: 'PAYLOAD_TOO_LARGE',
+        message: isDocUpload
+          ? 'File gửi lên quá lớn. Hồ sơ nhân viên tối đa 20MB — vui lòng nén/chụp lại rồi thử lại.'
+          : 'Dữ liệu gửi lên quá lớn — vui lòng giảm kích thước rồi thử lại.',
+      });
     }
     if (err instanceof SyntaxError && 'body' in err) {
       return res.status(400).json({ error: 'INVALID_JSON', message: 'Body không phải JSON hợp lệ' });

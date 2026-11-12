@@ -15,8 +15,14 @@ export type ContractKey = 'probation' | 'official' | 'id_card_front' | 'id_card_
 export type ContractDocMeta = EmployeeContractDocMeta;
 export type ContractDocs = EmployeeContractDocs;
 
-/** Kích thước tối đa 1 file hợp đồng / CCCD (6MB — base64 ~8MB, vừa limit JSON 10MB). */
-export const CONTRACT_MAX_BYTES = 6 * 1024 * 1024;
+/**
+ * Kích thước tối đa 1 file hồ sơ (hợp đồng / CCCD / giấy khám sức khỏe).
+ *
+ * 20MB — bản scan GKSK/CCCD từ máy scan hoặc ảnh điện thoại thường 8–15MB.
+ * Base64 phình ~33% (~27MB) nên route hồ sơ dùng parser JSON riêng 40MB
+ * (xem app.ts), không dùng trần 10MB của các API thường.
+ */
+export const CONTRACT_MAX_BYTES = 20 * 1024 * 1024;
 
 export const CONTRACT_KIND_LABEL: Record<ContractKey, string> = {
   probation: 'Hợp đồng thử việc',
@@ -115,6 +121,10 @@ const CONTRACT_MIME_EXT: Record<string, string> = {
   'image/jpg': 'jpg',
   'image/png': 'png',
   'image/webp': 'webp',
+  // Ảnh chụp từ iPhone (HEIC/HEIF) — Drive lưu nguyên bản, trình duyệt chỉ
+  // xem trước được sau khi tải về nên vẫn chấp nhận để HR không bị chặn.
+  'image/heic': 'heic',
+  'image/heif': 'heif',
   'application/msword': 'doc',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
 };
@@ -134,6 +144,8 @@ export function contractFileInfo(
     jpeg: 'image/jpeg',
     png: 'image/png',
     webp: 'image/webp',
+    heic: 'image/heic',
+    heif: 'image/heif',
     doc: 'application/msword',
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   };
@@ -153,6 +165,12 @@ export function contractBufferLooksValid(buffer: Buffer, mime: string): boolean 
   }
   if (mime === 'image/webp') {
     return b.length > 12 && b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP';
+  }
+  // HEIC/HEIF: container ISO-BMFF, box "ftyp" ở byte 4–8 + brand HEIC/HEIF/Aple.
+  if (mime === 'image/heic' || mime === 'image/heif') {
+    if (b.length < 12 || b.toString('ascii', 4, 8) !== 'ftyp') return false;
+    const brand = b.toString('ascii', 8, 12);
+    return ['heic', 'heix', 'hevc', 'heim', 'heis', 'hevm', 'hevs', 'mif1', 'msf1', 'heif'].includes(brand);
   }
   // DOC/DOCX đều là container OLE/ZIP — chấp nhận chữ ký tương ứng.
   if (mime.includes('word') || mime.includes('officedocument')) {
