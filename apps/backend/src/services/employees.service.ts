@@ -1750,7 +1750,14 @@ export class EmployeesService {
       throw new Error(`Chỉ xác nhận được lịch đang chờ (hiện: ${cur.status})!`);
     }
     if (!cur.interview_date) throw new Error('Ứng viên chưa có lịch phỏng vấn để xác nhận!');
-    const updated = await this.repo.updateCandidate(submissionId, { status: 'CONFIRMED', interview_decline_reason: undefined } as any);
+    const updated = await this.repo.updateCandidate(submissionId, {
+      status: 'CONFIRMED',
+      interview_decline_reason: undefined,
+      interview_proposed_date: undefined,
+      interview_proposed_time_slot: undefined,
+      interview_proposed_note: undefined,
+      interview_proposed_at: undefined,
+    } as any);
     await this.repo.recordAuditLog({
       log_id: `LOG_${Date.now()}`,
       actor_id: actorId,
@@ -1876,6 +1883,11 @@ export class EmployeesService {
       interview_time_slot: time,
       interviewer_id: undefined,
       interview_reminder_at: undefined,
+      // Đã chốt theo đề xuất -> xóa đề xuất để không hiển thị lại như đang chờ.
+      interview_proposed_date: undefined,
+      interview_proposed_time_slot: undefined,
+      interview_proposed_note: undefined,
+      interview_proposed_at: undefined,
     } as any);
     await this.repo.recordAuditLog({
       log_id: `LOG_${Date.now()}`,

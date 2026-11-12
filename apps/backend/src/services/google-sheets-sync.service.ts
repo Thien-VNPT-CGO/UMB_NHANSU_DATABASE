@@ -4247,6 +4247,17 @@ export class GoogleSheetsSyncService {
               interview_date: getVal(colInterviewDate) || prev.interview_date || undefined,
               interview_time_slot: getVal(colInterviewSlot) || prev.interview_time_slot || undefined,
               interviewer_id: getVal(colInterviewer) || prev.interviewer_id || undefined,
+              // Trường vận hành chỉ có trên master (form gốc không có). Phải giữ từ
+              // bộ nhớ trước khi phủ master: nếu lần push master vừa lỗi/chậm, pull
+              // kế tiếp dựng lại từ form sẽ xóa mất lý do từ chối + lịch đề xuất
+              // (đúng lỗi "ứng viên đề xuất lịch nhưng HR không thấy ngày/giờ").
+              interview_decline_reason: (prev as any).interview_decline_reason || undefined,
+              interview_proposed_date: (prev as any).interview_proposed_date || undefined,
+              interview_proposed_time_slot: (prev as any).interview_proposed_time_slot || undefined,
+              interview_proposed_note: (prev as any).interview_proposed_note || undefined,
+              interview_proposed_at: (prev as any).interview_proposed_at || undefined,
+              blacklist_reason: (prev as any).blacklist_reason || undefined,
+              blacklist_at: (prev as any).blacklist_at || undefined,
               interview_score: prev.interview_score,
               interview_rubric: prev.interview_rubric || undefined,
               interview_score_detail: prev.interview_score_detail || undefined,
@@ -4384,17 +4395,19 @@ export class GoogleSheetsSyncService {
                   (c as any).vip = false;
                 }
                 // Lý do từ chối PV (cột 26, thêm sau): giữ bền qua restart.
+                // Chỉ phủ khi master CÓ giá trị — ô trống nghĩa là "chưa kịp ghi"
+                // (push lỗi quota/chậm), không phải HR xóa; giữ dữ liệu bộ nhớ.
                 const mDecline = nz(mr[26]);
-                if (mDecline !== undefined) (c as any).interview_decline_reason = mDecline;
+                if (mDecline) (c as any).interview_decline_reason = mDecline;
                 // Đề xuất lịch mới + lý do danh sách đen (cột 27-30, thêm sau).
                 const mPropDate = nz(mr[27]);
-                if (mPropDate !== undefined) (c as any).interview_proposed_date = mPropDate;
+                if (mPropDate) (c as any).interview_proposed_date = mPropDate;
                 const mPropTime = nz(mr[28]);
-                if (mPropTime !== undefined) (c as any).interview_proposed_time_slot = mPropTime;
+                if (mPropTime) (c as any).interview_proposed_time_slot = mPropTime;
                 const mPropNote = nz(mr[29]);
-                if (mPropNote !== undefined) (c as any).interview_proposed_note = mPropNote;
+                if (mPropNote) (c as any).interview_proposed_note = mPropNote;
                 const mBlacklist = nz(mr[30]);
-                if (mBlacklist !== undefined) (c as any).blacklist_reason = mBlacklist;
+                if (mBlacklist) (c as any).blacklist_reason = mBlacklist;
               }
             }
           }
