@@ -267,7 +267,10 @@ export const AdminDocThumbnail: React.FC<{
   uploadedAt,
   onClick,
 }) => {
-  const isImg = (fileName && /\.(jpe?g|png|webp|gif)$/i.test(fileName)) || kind.startsWith('id_card');
+  // HEIC/HEIF: trình duyệt không giải mã được -> không thử render thumbnail
+  // (tránh khung ảnh lỗi), HR vẫn bấm "Xem" để tải file gốc.
+  const isHeic = !!fileName && /\.(heic|heif)$/i.test(fileName);
+  const isImg = !isHeic && ((fileName && /\.(jpe?g|png|webp|gif)$/i.test(fileName)) || kind.startsWith('id_card'));
   const cacheKey = `${empId}:${kind}:${fileName || ''}:${uploadedAt || ''}`;
   const initialUrl = adminDocBlobCache.get(cacheKey) || '';
 
