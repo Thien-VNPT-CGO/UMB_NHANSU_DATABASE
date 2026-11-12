@@ -7952,6 +7952,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (ids.length > 0) {
         const c: any = updated || {};
         const proposed = String(c.status || '') === 'RESCHEDULE_PROPOSED';
+        const pdRaw = String(c.interview_proposed_date || '').slice(0, 10);
+        const pdVI = /^\d{4}-\d{2}-\d{2}$/.test(pdRaw) ? `${pdRaw.slice(8, 10)}/${pdRaw.slice(5, 7)}/${pdRaw.slice(0, 4)}` : pdRaw;
+        const ptRaw = String(c.interview_proposed_time_slot || '').slice(0, 5);
         await notificationsService.sendNotification({
           recipientIds: ids,
           type: proposed ? 'INTERVIEW_RESCHEDULE' : 'INTERVIEW_DECLINED',
@@ -7960,7 +7963,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
             ? `🔄 ${c.full_name || sid} từ chối lịch cũ & ĐỀ XUẤT lịch mới`
             : `❌ ${c.full_name || sid} TỪ CHỐI tham gia phỏng vấn`,
           summary: proposed
-            ? `Lý do: ${String(c.interview_decline_reason || 'không nêu lý do')}. Đề xuất: ${String(c.interview_proposed_time_slot || '?')} ngày ${String(c.interview_proposed_date || '?')}${c.interview_proposed_note ? ` — ghi chú: ${String(c.interview_proposed_note)}` : ''}. Vào tab "Đề xuất lịch mới" để chốt lịch.`
+            ? `Lý do: ${String(c.interview_decline_reason || 'không nêu lý do')}. Đề xuất: ${ptRaw || '?'}${pdVI ? ` ngày ${pdVI}` : ''}${c.interview_proposed_note ? ` — ghi chú: ${String(c.interview_proposed_note)}` : ''}. Vào tab "Đề xuất lịch mới" để chốt lịch.`
             : `Lý do: ${String(c.interview_decline_reason || 'không nêu lý do')}. Lịch cũ đã giải phóng — vào tab Lịch PV để biết thêm.`,
           targetPath: '/hr-interviews',
           actorId: 'CANDIDATE',

@@ -3576,6 +3576,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
     return { scored: false, label: '' };
   };
+  /** Ngày + giờ ứng viên đề xuất (tab "Đề xuất lịch mới") — dạng "HH:mm - dd/MM/yyyy". */
+  const pvProposalText = (c: any): string => {
+    const dd = String((c as any)?.interview_proposed_date || '').slice(0, 10);
+    const tt = String((c as any)?.interview_proposed_time_slot || '').slice(0, 5);
+    const dVI = /^\d{4}-\d{2}-\d{2}$/.test(dd) ? `${dd.slice(8, 10)}/${dd.slice(5, 7)}/${dd.slice(0, 4)}` : dd;
+    if (!tt && !dVI) return '';
+    return `${tt || '?'}${dVI ? ` - ${dVI}` : ''}`;
+  };
+  const pvProposalNoteOf = (c: any): string => String((c as any)?.interview_proposed_note || '').trim();
   const pvHasUpcomingOf = (c: any): { upcoming: boolean; label: string } => {
     const day = String((c as any)?.interview_date || '').slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return { upcoming: false, label: '' };
@@ -6382,6 +6391,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             })}
           </div>
 
+          {pvTab === 'WAIT_PROPOSAL' && pvTabRows.length > 0 && (
+            <div style={{ padding: '10px 14px', backgroundColor: '#FFF7ED', borderBottom: '1px solid #FED7AA', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+              <span style={{ fontSize: '16px', lineHeight: 1.2 }}>🔄</span>
+              <div style={{ fontSize: '12px', color: '#9A3412', lineHeight: 1.55 }}>
+                <b>{pvTabRows.length} ứng viên đã từ chối lịch cũ và đề xuất ngày/giờ mới.</b>{' '}
+                Cột <b>THỜI GIAN</b> hiển thị đúng ngày + giờ ứng viên đề xuất; bấm <b>✅ Chốt lịch đề xuất</b> để tạo lịch mới và gửi lại thư mời Zalo.
+                <div style={{ marginTop: '4px', color: '#C2410C', fontWeight: 700, whiteSpace: 'normal' }}>
+                  {pvTabRows.map((c: any) => `${c.full_name || c.submission_id}: ${pvProposalText(c) || 'chưa nêu giờ'}`).join(' • ')}
+                </div>
+              </div>
+            </div>
+          )}
+
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px' }}>
               <thead>
@@ -6469,7 +6491,26 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         })()}
                       </td>
                       <td style={{ padding: '10px 14px', verticalAlign: 'middle', fontWeight: 600, color: '#1E293B' }}>
-                        {fmtPvTime(c) || (c.interview_time || 'Chờ xếp lịch')}
+                        {String(c.status || '') === 'RESCHEDULE_PROPOSED' && pvProposalText(c) ? (
+                          <div>
+                            <span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '5px', backgroundColor: '#FFEDD5', color: '#9A3412', border: '1px solid #FDBA74', fontSize: '12px', fontWeight: 800 }}>
+                              🔄 {pvProposalText(c)}
+                            </span>
+                            <div style={{ fontSize: '10.5px', color: '#C2410C', fontWeight: 700, marginTop: '2px' }}>
+                              UV đề xuất lịch mới
+                            </div>
+                            <div style={{ fontSize: '10.5px', color: '#64748B', fontWeight: 600 }}>
+                              Lịch cũ đã hủy
+                            </div>
+                            {pvProposalNoteOf(c) && (
+                              <div style={{ fontSize: '10.5px', color: '#78350F', fontWeight: 600, marginTop: '2px', maxWidth: '220px', whiteSpace: 'normal', lineHeight: 1.4 }}>
+                                💬 {pvProposalNoteOf(c)}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          fmtPvTime(c) || (c.interview_time || 'Chờ xếp lịch')
+                        )}
                       </td>
                       <td style={{ padding: '10px 14px', verticalAlign: 'middle' }}>
                         {(() => {
@@ -6511,17 +6552,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               {['DECLINED', 'RESCHEDULE_PROPOSED'].includes(String(c.status || '')) && (c as any).interview_decline_reason && (
                                 <div style={{ fontSize: '10.5px', color: '#991B1B', fontWeight: 600, marginTop: '3px', maxWidth: '240px', whiteSpace: 'normal', lineHeight: 1.4 }}>
                                   📝 Lý do: {String((c as any).interview_decline_reason)}
-                                </div>
-                              )}
-                              {String(c.status || '') === 'RESCHEDULE_PROPOSED' && ((c as any).interview_proposed_date || (c as any).interview_proposed_time_slot) && (
-                                <div style={{ fontSize: '10.5px', color: '#9A3412', fontWeight: 700, marginTop: '3px', maxWidth: '240px', whiteSpace: 'normal', lineHeight: 1.4 }}>
-                                  📅 Đề xuất: {String((c as any).interview_proposed_time_slot || '?')} ngày {(() => {
-                                    const dd = String((c as any).interview_proposed_date || '');
-                                    return /^\d{4}-\d{2}-\d{2}$/.test(dd) ? `${dd.slice(8, 10)}/${dd.slice(5, 7)}/${dd.slice(0, 4)}` : dd;
-                                  })()}
-                                  {(c as any).interview_proposed_note && (
-                                    <div style={{ fontWeight: 600, color: '#78350F', marginTop: '2px' }}>💬 {String((c as any).interview_proposed_note)}</div>
-                                  )}
                                 </div>
                               )}
                               {String(c.status || '') === 'BLACKLIST' && (c as any).blacklist_reason && (

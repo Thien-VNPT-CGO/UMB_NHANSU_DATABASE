@@ -211,7 +211,7 @@ Chuẩn thực thể: `id` bất biến, `version` tăng (optimistic lock), `cre
 | `GET /api/sheets/status` | public | Trạng thái sync (spreadsheetId/Url, candidate, drive, authError, 21 tab) |
 | `GET /api/weekly-off-window` | public | Cửa sổ 2 OFF/tuần đang hiệu lực (phase OPEN/REMINDER/CLOSED, mở bù VIP) |
 | `GET /public/portal-maintenance` | public | Trạng thái bảo trì cổng (`CAU_HINH_HE_THONG`) |
-| `GET/POST /api/public/interview/rsvp` | public (token JWT `typ=interview-rsvp`, HẾT HẠN 7 ngày) | Trang RSVP ứng viên (không cần đăng nhập): xem đủ thông tin chi nhánh + Xác nhận / Từ chối (`/public/interview/rsvp` cũ được Nginx 302 sang đây) |
+| `GET/POST /api/public/interview/rsvp` | public (token JWT `typ=interview-rsvp`, HẾT HẠN 7 ngày) | Trang RSVP ứng viên (không cần đăng nhập): xem đủ thông tin chi nhánh + Xác nhận / Từ chối. Khi Từ chối, ứng viên **bắt buộc nhập lý do** và có thể chọn **ngày + khung giờ mới** (08:00–11:30, 13:30–16:30, bước 30 phút) → lưu `interview_proposed_date/time_slot/note`, chuyển `RESCHEDULE_PROPOSED` và báo HR. `GET /public/interview/rsvp/slots` trả các khung giờ còn trống cho ứng viên chọn |
 | `POST /hooks/sheets-edit` | webhook | Sửa Sheet trên web → onEdit → trigger pull (chống dồn 3s); header `x-webhook-secret` = `SHEETS_WEBHOOK_SECRET` |
 
 ### Auth / `/me` (nhân viên)
@@ -263,6 +263,7 @@ Chuẩn thực thể: `id` bất biến, `version` tăng (optimistic lock), `cre
 | `POST /applications/:id/approve` | **Duyệt thử việc:** chặn nếu <12 điểm → tạo NV + account + PIN + lịch 12 ngày |
 | `POST /applications/:id/reject` | Loại: xóa lịch + xóa thư mời Zalo |
 | `POST /interviews/:id/cancel` / `/confirm` / `/no-show` | Hủy (về NEW, giữ điểm) / HR xác nhận UV tham gia / vắng mặt (xóa slot) |
+| `POST /interviews/:id/approve-proposal` | HR chốt lịch theo đề xuất của ứng viên (`interview_proposed_date` + `interview_proposed_time_slot`) → về `INVITED_INTERVIEW` để UV xác nhận lại. Tab **Đề xuất lịch mới** hiển thị ngày + giờ UV đề xuất ngay ở cột **THỜI GIAN** (kèm lý do từ chối + ghi chú), có banner tổng hợp và nút ✅ Chốt lịch đề xuất |
 | `GET /admin/interviews/duplicates`, `POST /admin/interviews/dedupe` | Phát hiện + xử lý lịch trùng (về NEW, giữ giờ sớm nhất) |
 | `GET/PUT /interviews/invite-draft` | Bản nháp Thư Mời PV (riêng từng user, `ubm_invite_draft_v1`) |
 | `POST /interviews/:id/send-zalo-invite` | Gửi thư mời qua Zalo cá nhân HR (kết bạn → tin nhắn + link RSVP + link Meet) |

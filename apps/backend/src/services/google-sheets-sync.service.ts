@@ -5847,6 +5847,10 @@ export class GoogleSheetsSyncService {
       (c as any).vip ? 'VIP' : '',
       (c as any).vip_rank !== undefined && (c as any).vip_rank !== null ? String((c as any).vip_rank) : '',
       (c as any).interview_decline_reason || '',
+      (c as any).interview_proposed_date || '',
+      (c as any).interview_proposed_time_slot || '',
+      (c as any).interview_proposed_note || '',
+      (c as any).blacklist_reason || '',
     ]);
     await this.overwriteSheetData('FROM_NHAN_VIEN', candHeaders, candRows, false, 'RAW');
     return candRows.length;
