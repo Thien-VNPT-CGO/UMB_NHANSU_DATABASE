@@ -2844,7 +2844,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       setBankInfo(d);
       if (d?.count && bankCount > d.count) setBankCount(d.count);
     } catch (e: any) {
-      setBankInfo({ error: e?.message || 'Không đọc được ngân hàng câu hỏi!' });
+      const msg = String(e?.message || 'Không đọc được ngân hàng câu hỏi!');
+      // Chỉ lỗi thiếu quyền mới cần hướng dẫn chia sẻ Sheet; lỗi 502/timeout là
+      // backend đang khởi động lại — hướng dẫn chia sẻ Sheet sẽ gây hiểu nhầm.
+      const isAccessError = /TEST_BANK_NO_ACCESS|PERMISSION_DENIED|quyền Xem|403/i.test(msg);
+      setBankInfo({ error: msg, hint: isAccessError ? 'share' : 'retry' });
     } finally {
       setBankLoading(false);
     }
@@ -13308,7 +13312,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           {bankInfo?.error ? (
             <div style={{ marginTop: '10px', fontSize: '13px', fontWeight: 700, color: '#991B1B', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 12px', lineHeight: 1.6 }}>
               ⚠️ {bankInfo.error}
-              <div style={{ fontWeight: 500, marginTop: '4px' }}>Khắc phục: mở Sheet ngân hàng → Chia sẻ → thêm email service account của hệ thống với quyền Người xem, rồi bấm Đọc lại Sheet.</div>
+              {bankInfo.hint === 'share' ? (
+                <div style={{ fontWeight: 500, marginTop: '4px' }}>Khắc phục: mở Sheet ngân hàng → Chia sẻ → thêm email service account của hệ thống với quyền Người xem, rồi bấm Đọc lại Sheet.</div>
+              ) : (
+                <div style={{ fontWeight: 500, marginTop: '4px' }}>Đây là lỗi kết nối/phía máy chủ (không phải quyền Sheet). Chờ vài giây rồi bấm <strong>Đọc lại Sheet</strong>; nếu vẫn lỗi, kiểm tra backend đã chạy chưa (mở /ping).</div>
+              )}
             </div>
           ) : (
             <>

@@ -164,6 +164,19 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
       throw err;
     }
 
+    // 502/503/504: nginx báo backend chưa sẵn sàng (đang deploy/khởi động lại).
+    // GET thì tự thử lại vài lần, KHÔNG xóa phiên đăng nhập của người dùng.
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      const method = String(options.method || 'GET').toUpperCase();
+      if (method === 'GET' && retries > 0) {
+        await new Promise(r => setTimeout(r, 4000));
+        return apiRequest<T>(endpoint, options, retries - 1);
+      }
+      const err: any = new Error(`Máy chủ đang khởi động lại hoặc quá tải (${res.status}). Vui lòng thử lại sau ít giây.`);
+      err.code = `HTTP_${res.status}`;
+      throw err;
+    }
+
     if (!res.ok) {
       if (res.status === 401 && !isLoginEndpoint) {
         clearSession();
