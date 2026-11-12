@@ -4227,9 +4227,12 @@ export class GoogleSheetsSyncService {
             const rawStatus = getVal(colStatus) || '';
             const sourceCode = getVal(colSourceCode) || `UBM_FORM_${String(idx + 1).padStart(4, '0')}`;
             const submissionId = `CAND_${String(idx + 1).padStart(4, '0')}`;
+            // Ưu tiên khóa có thời gian gửi (duy nhất) rồi tới submission_id; khóa
+            // SĐT+tên không kèm thời gian bị hồ sơ trùng (nộp form 2 lần) ghi đè
+            // nên để cuối — tránh lấy nhầm dữ liệu của hồ sơ khác cùng tên/SĐT.
             const prev = prevByKey.get(candidateIdentityKey(phoneNormalized, fullName, rawCreatedAt))
-              || prevByKey.get(candidateIdentityKey(phoneNormalized, fullName))
               || prevById.get(submissionId)
+              || prevByKey.get(candidateIdentityKey(phoneNormalized, fullName))
               || {};
             // Sheet form gốc không có trạng thái -> 'NEW'/trống thì giữ trạng thái bộ nhớ (INVITED...)
             const status = (rawStatus && rawStatus !== 'NEW' ? rawStatus : (prev.status && prev.status !== 'NEW' ? prev.status : (rawStatus || 'NEW'))) as any;
