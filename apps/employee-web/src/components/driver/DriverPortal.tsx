@@ -146,7 +146,7 @@ export function DriverPortal({ employee, showToast, onLogout, refreshKey = 0, in
             {tab === 'map' && <DriverMap d={d} />}
             {tab === 'charge' && <DriverCharging d={d} />}
             {tab === 'income' && <DriverIncome d={d} />}
-            {tab === 'me' && <DriverProfile d={d} onLogout={onLogout} />}
+            {tab === 'me' && <DriverProfile d={d} onLogout={onLogout} showToast={showToast} />}
           </>
         )}
       </main>

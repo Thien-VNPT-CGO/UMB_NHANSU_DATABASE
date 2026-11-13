@@ -1,15 +1,44 @@
 /**
  * Tab "Tôi" — hồ sơ tài xế, xe được gán, lịch sử ca và đăng xuất.
  */
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  BatteryMedium, CalendarDays, ChevronRight, LogOut, MapPin, Phone, RefreshCw, ShieldCheck, Truck, User,
+  BatteryMedium, CalendarDays, ChevronRight, KeyRound, LogOut, MapPin, Phone, RefreshCw, ShieldCheck, Truck, User,
 } from 'lucide-react';
-import { Card, DC, Empty, Pill, ScreenTitle, STATUS_LABEL, fmtDay, fmtMin, fmtMoney } from './driver-shared';
+import { apiRequest } from '../../services/api';
+import { BigButton, Card, DC, Empty, Pill, ScreenTitle, STATUS_LABEL, fmtDay, fmtMin, fmtMoney } from './driver-shared';
 import type { DriverData } from './useDriverData';
 
-export function DriverProfile({ d, onLogout }: { d: DriverData; onLogout: () => void }) {
+export function DriverProfile({ d, onLogout, showToast }: { d: DriverData; onLogout: () => void; showToast: (msg: string) => void }) {
   useEffect(() => { void d.loadHistory(); }, [d.loadHistory]);
+
+  const [pinOpen, setPinOpen] = useState(false);
+  const [oldPin, setOldPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [pinBusy, setPinBusy] = useState(false);
+
+  const changePin = async () => {
+    if (!/^\d{4,8}$/.test(oldPin.trim())) { showToast('⚠️ Nhập mã PIN hiện tại (4–8 số).'); return; }
+    if (!/^\d{6}$/.test(newPin)) { showToast('⚠️ Mã PIN mới phải đúng 6 chữ số.'); return; }
+    if (newPin !== confirmPin) { showToast('⚠️ Xác nhận mã PIN chưa khớp.'); return; }
+    if (newPin === oldPin.trim()) { showToast('⚠️ Mã PIN mới phải khác PIN cũ.'); return; }
+    setPinBusy(true);
+    try {
+      await apiRequest('/auth/employee/change-pin', {
+        method: 'POST',
+        body: JSON.stringify({ oldPin: oldPin.trim(), newPin }),
+      });
+      setOldPin(''); setNewPin(''); setConfirmPin(''); setPinOpen(false);
+      showToast('🎉 Đổi mã PIN thành công! Vui lòng đăng nhập lại bằng PIN mới.');
+      // Đổi PIN làm tăng version tài khoản → token cũ bị thu hồi, phải đăng nhập lại.
+      onLogout();
+    } catch (e: any) {
+      showToast(`⚠️ ${e?.message === 'INVALID_PIN' ? 'Mã PIN hiện tại không đúng.' : e?.message || 'Đổi PIN thất bại.'}`);
+    } finally {
+      setPinBusy(false);
+    }
+  };
 
   const info = d.profile?.driver || {};
   const vehicle = d.profile?.vehicle || null;
@@ -159,6 +188,50 @@ export function DriverProfile({ d, onLogout }: { d: DriverData; onLogout: () => 
           Công việc được tính theo ca vận chuyển và điểm giao đã xác nhận — không dùng lịch hành chính,
           nghỉ phép hay đổi ca của khối văn phòng/cửa hàng.
         </div>
+      </Card>
+
+      {/* Đổi mã PIN */}
+      <Card>
+        <button
+          onClick={() => setPinOpen(v => !v)}
+          style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
+        >
+          <KeyRound size={16} color={DC.brand} />
+          <span style={{ fontSize: 13.5, fontWeight: 900, color: DC.ink, flex: 1, textAlign: 'left' }}>Đổi mã PIN đăng nhập</span>
+          <ChevronRight size={16} color={DC.muted} style={{ transform: pinOpen ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }} />
+        </button>
+
+        {pinOpen && (
+          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 9 }}>
+            <input
+              type="password" inputMode="numeric" autoComplete="current-password"
+              placeholder="PIN hiện tại (4–8 số)"
+              value={oldPin}
+              onChange={e => setOldPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
+              style={{ padding: '11px 12px', fontSize: 14, borderRadius: 10, border: `1px solid ${DC.border}`, color: DC.ink, letterSpacing: 3 }}
+            />
+            <input
+              type="password" inputMode="numeric" autoComplete="new-password"
+              placeholder="PIN mới (đúng 6 số)"
+              value={newPin}
+              onChange={e => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              style={{ padding: '11px 12px', fontSize: 14, borderRadius: 10, border: `1px solid ${DC.border}`, color: DC.ink, letterSpacing: 3 }}
+            />
+            <input
+              type="password" inputMode="numeric" autoComplete="new-password"
+              placeholder="Nhập lại PIN mới"
+              value={confirmPin}
+              onChange={e => setConfirmPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              style={{ padding: '11px 12px', fontSize: 14, borderRadius: 10, border: `1px solid ${DC.border}`, color: DC.ink, letterSpacing: 3 }}
+            />
+            <div style={{ fontSize: 11, color: DC.muted, fontWeight: 600, lineHeight: 1.6 }}>
+              Đổi PIN xong hệ thống sẽ đăng xuất — đăng nhập lại bằng PIN mới.
+            </div>
+            <BigButton onClick={changePin} disabled={pinBusy}>
+              <KeyRound size={15} /> {pinBusy ? 'ĐANG ĐỔI PIN...' : 'XÁC NHẬN ĐỔI PIN'}
+            </BigButton>
+          </div>
+        )}
       </Card>
 
       <button
