@@ -13,6 +13,7 @@ import { EVGPSService } from './ev-gps.service.js';
 import { EVPayrollService } from './ev-payroll.service.js';
 import { EVRouteChangeService } from './ev-route-change.service.js';
 import { EVRealtimeService, evRealtimeService } from './ev-realtime.service.js';
+import { EVDriveService } from './ev-drive.service.js';
 
 export class MilkRouteModule {
   public readonly vehicles: EVVehicleService;
@@ -24,6 +25,7 @@ export class MilkRouteModule {
   public readonly gps: EVGPSService;
   public readonly payroll: EVPayrollService;
   public readonly realtime: EVRealtimeService;
+  public readonly drive: EVDriveService;
 
   constructor(private readonly repo: MockSheetsAdapter) {
     this.vehicles = new EVVehicleService(repo);
@@ -35,6 +37,9 @@ export class MilkRouteModule {
     this.gps = new EVGPSService(repo);
     this.payroll = new EVPayrollService(repo, undefined, this.routes);
     this.realtime = evRealtimeService;
+    // Lưu dữ liệu EV lên Google Drive (04. VẬN CHUYỂN SỮA/THANG_MM/DD-MM-YYYY/<tab>).
+    this.drive = new EVDriveService(repo as any);
+    this.drive.bindModule(this);
   }
 
   /** Danh sách chi nhánh hiện tại (tab Quản Lý Chi Nhánh). */

@@ -253,6 +253,7 @@ import { buildZipStore } from './utils/zip-store.js';
 import { getThemeScheduleState, normalizeThemeSchedule } from './utils/theme-schedule.js';
 import { lateFineFor } from './services/payroll.service.js';
 import { createMilkRouteModule } from './services/milkroute/index.js';
+import { normalizeEvDay } from './services/milkroute/ev-drive.service.js';
 
 // Thời điểm process khởi động — đo uptime thật (không hardcode).
 const SERVER_STARTED_AT = Date.now();
@@ -495,6 +496,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // MilkRoute EV Module
   const milkRouteModule = createMilkRouteModule(adapter as any);
+  // Mirror dữ liệu EV lên Google Drive (04. VẬN CHUYỂN SỮA/THANG_MM/DD-MM-YYYY).
+  try { milkRouteModule.drive.start(); } catch { /* non-fatal */ }
   // Seed default route data (chạy nền, không chặn khởi động)
   setTimeout(() => {
     milkRouteModule.seedDefaultData().catch(err => console.warn('[milkroute] seed failed:', err?.message || err));
@@ -502,6 +505,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // Realtime WebSocket broadcast helper
   const broadcastUpdate = (entity: string, data?: any) => {
+    // EV: mọi thay đổi ca/check-in/phiếu sạc/lộ trình đều được mirror lên Google
+    // Drive theo ngày (debounce 8s) — không phụ thuộc route nào gọi broadcast.
+    try { milkRouteModule.drive.scheduleFromBroadcast(entity, data); } catch { /* non-fatal */ }
     try {
       const io = app.get('io');
       if (io) {
@@ -807,6 +813,49 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json(r);
     } catch (err: any) { evErr(res, err); }
   });
+
+  // ---------------------------------------------------------------
+  // ADMIN — Lưu dữ liệu EV lên Google Drive
+  //   04. VẬN CHUYỂN SỮA/THANG_MM/DD-MM-YYYY/<tab>
+  // ---------------------------------------------------------------
+  app.get('/ev/admin/drive/status', authMiddleware, requireRole(EV_ADMIN_ROLES), (req: AuthenticatedRequest, res) => {
+    res.json(ev.drive.status());
+  });
+
+  app.post('/ev/admin/drive/sync', authMiddleware, requireRole(EV_ADMIN_ROLES), async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!ev.drive.isEnabled()) return res.status(400).json({ error: 'DRIVE_NOT_CONFIGURED' });
+      const body: any = req.body || {};
+      const from = normalizeEvDay(body.date || body.from);
+      const to = normalizeEvDay(body.to) || from;
+      const start = from || ev.drive.today();
+      const end = to || start;
+      if (end < start) return res.status(400).json({ error: 'INVALID_DATE_RANGE' });
+
+      // Chặn backfill quá lớn (mỗi ngày 6 file Drive) — tối đa 31 ngày/lần.
+      const days: string[] = [];
+      const cursor = new Date(`${start}T00:00:00Z`);
+      const last = new Date(`${end}T00:00:00Z`);
+      while (cursor <= last && days.length < 32) {
+        days.push(cursor.toISOString().slice(0, 10));
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+      if (days.length > 31) return res.status(400).json({ error: 'DATE_RANGE_TOO_LARGE_MAX_31_DAYS' });
+
+      const results: any[] = [];
+      for (const day of days) {
+        results.push(await ev.drive.syncDay(day));
+      }
+      res.json({
+        ok: true,
+        synced_days: days.length,
+        files: results.reduce((n, r) => n + (r.files?.length || 0), 0),
+        errors: results.flatMap((r) => r.errors || []),
+        results,
+      });
+    } catch (err: any) { evErr(res, err); }
+  });
+
 
   // ---------------------------------------------------------------
   // ADMIN — Ca vận chuyển
