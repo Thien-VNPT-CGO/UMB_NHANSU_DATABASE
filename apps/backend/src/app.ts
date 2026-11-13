@@ -812,6 +812,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.put('/ev/admin/route-changes/:id', authMiddleware, requireRole(EV_ROUTE_CHANGE_CREATE_ROLES), validate({ params: evRouteChangeIdParams, body: evRouteChangeUpdateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const r = await ev.routeChanges.updateRequest(req.params.id, req.body, evActor(req));
+      // Phiếu đang hiệu lực bị sửa điểm dừng → đẩy realtime để Live Map + app tài xế vẽ lại ngay.
+      if (r.status === 'APPROVED') {
+        ev.realtime.broadcastRouteChanged({
+          requestId: r.request_id,
+          routeId: r.route_id,
+          effectiveFrom: r.effective_from,
+          effectiveTo: r.effective_to,
+          productName: r.product_name,
+          approvedBy: r.approved_by_name || r.created_by_name,
+        });
+        broadcastUpdate('ev', { area: 'route-change', id: r.request_id, routeId: r.route_id });
+      }
       broadcastUpdate('evRouteChange', { action: 'update', id: r.request_id, routeId: r.route_id });
       res.json(r);
     } catch (err: any) { evErr(res, err); }
