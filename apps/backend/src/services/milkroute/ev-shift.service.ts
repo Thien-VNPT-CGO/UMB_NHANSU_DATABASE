@@ -59,6 +59,15 @@ export interface GenerateWeekResult {
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+/**
+ * Bắt đầu / kết thúc ca: Xưởng là khuôn viên rộng, GPS điện thoại trong cabin
+ * thường sai số 30–100m. Nới bán kính tối thiểu 500m và sai số ≤120m để tài xế
+ * không bị kẹt nút "Bắt đầu ca". Điểm giao hàng vẫn giữ geofence cấu hình
+ * (100m, sai số ≤30m).
+ */
+const SHIFT_START_RADIUS_MIN_M = 500;
+const SHIFT_START_ACCURACY_MAX_M = 120;
+
 export class EVShiftService {
   constructor(
     private readonly repo: MockSheetsAdapter,
@@ -291,7 +300,9 @@ export class EVShiftService {
 
   /** Lấy ca hiện tại của tài xế (hôm nay hoặc sắp tới) */
   async getCurrentShift(driverId: string): Promise<EVShift | null> {
-    const today = new Date().toISOString().slice(0, 10);
+    // Dùng ngày giờ Việt Nam (UTC+7) — nếu dùng UTC thì 00:00–07:00 sáng sẽ
+    // trả nhầm ca của hôm qua.
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
     const shifts = this.repo.evShifts
       .filter(s => s.driver_id === driverId && s.shift_date >= today && s.status !== 'CANCELLED')
       .sort((a, b) => a.shift_date.localeCompare(b.shift_date));
@@ -333,18 +344,20 @@ export class EVShiftService {
     const startStop = stops[0];
     if (!startStop) throw new Error('NO_START_STOP: Lộ trình không có điểm xuất phát');
 
-    // Validate geofence (≤100m)
+    // Validate geofence điểm xuất phát (Xưởng là khuôn viên rộng → nới tối thiểu 500m).
     const distance = this.haversineDistance(
       driverLocation.latitude,
       driverLocation.longitude,
       startStop.latitude,
       startStop.longitude
     );
-    if (distance > startStop.geofence_radius_m) {
-      throw new Error(`OUTSIDE_GEOFENCE: Bạn đang cách ${Math.round(distance)}m so với điểm xuất phát (cho phép ≤${startStop.geofence_radius_m}m)`);
+    const radius = Math.max(Number(startStop.geofence_radius_m || 100), SHIFT_START_RADIUS_MIN_M);
+    if (distance > radius) {
+      throw new Error(`OUTSIDE_GEOFENCE: Bạn đang cách ${Math.round(distance)}m so với điểm xuất phát (cho phép ≤${radius}m)`);
     }
-    if (driverLocation.accuracy > 30) {
-      throw new Error(`GPS_ACCURACY_LOW: Độ chính xác GPS ${driverLocation.accuracy}m quá thấp (yêu cầu ≤30m)`);
+    const accuracy = Number(driverLocation.accuracy || 0);
+    if (accuracy > SHIFT_START_ACCURACY_MAX_M) {
+      throw new Error(`GPS_ACCURACY_LOW: Độ chính xác GPS ±${Math.round(accuracy)}m quá thấp (yêu cầu ≤${SHIFT_START_ACCURACY_MAX_M}m) — ra chỗ thoáng chờ GPS cập nhật`);
     }
 
     // Update shift
@@ -370,15 +383,16 @@ export class EVShiftService {
     const endStop = stops[stops.length - 1];
     if (!endStop) throw new Error('NO_END_STOP: Lộ trình không có điểm kết thúc');
 
-    // Validate geofence
+    // Validate geofence điểm kết thúc (Xưởng → nới tối thiểu 500m như lúc bắt đầu ca)
     const distance = this.haversineDistance(
       driverLocation.latitude,
       driverLocation.longitude,
       endStop.latitude,
       endStop.longitude
     );
-    if (distance > endStop.geofence_radius_m) {
-      throw new Error(`OUTSIDE_GEOFENCE: Bạn đang cách ${Math.round(distance)}m so với điểm kết thúc (cho phép ≤${endStop.geofence_radius_m}m)`);
+    const radius = Math.max(Number(endStop.geofence_radius_m || 100), SHIFT_START_RADIUS_MIN_M);
+    if (distance > radius) {
+      throw new Error(`OUTSIDE_GEOFENCE: Bạn đang cách ${Math.round(distance)}m so với điểm kết thúc (cho phép ≤${radius}m)`);
     }
 
     // Update shift

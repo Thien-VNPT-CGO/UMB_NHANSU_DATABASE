@@ -188,15 +188,19 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   // ------------------------------------------------------------------
   // Hành động
   // ------------------------------------------------------------------
-  const needCoords = (label: string): Coords | null => {
+  const needCoords = (label: string, maxAccuracy = 30): Coords | null => {
     const c = coordsRef.current;
     if (!c) { showToast(`⚠️ Chưa có vị trí GPS — ${label} cần định vị. Chờ vài giây rồi thử lại.`); return null; }
-    if (c.accuracy > 30) { showToast(`⚠️ Sai số GPS ${c.accuracy}m (yêu cầu ≤30m) — ra chỗ thoáng chờ cập nhật.`); return null; }
+    if (c.accuracy > maxAccuracy) {
+      showToast(`⚠️ Sai số GPS ±${c.accuracy}m (yêu cầu ≤${maxAccuracy}m) — ra chỗ thoáng chờ GPS cập nhật.`);
+      return null;
+    }
     return c;
   };
 
   const startShift = async () => {
-    const c = needCoords('bắt đầu ca');
+    // Bắt đầu/kết thúc ca dùng sai số rộng hơn điểm giao (GPS trong cabin).
+    const c = needCoords('bắt đầu ca', 120);
     if (!c || !current) return;
     setBusy('start');
     try {
@@ -213,7 +217,7 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   };
 
   const endShift = async () => {
-    const c = needCoords('kết thúc ca');
+    const c = needCoords('kết thúc ca', 120);
     if (!c || !current) return;
     if (!window.confirm('Kết thúc ca vận chuyển? Bạn phải ở điểm Xưởng (điểm cuối) mới đóng ca được.')) return;
     setBusy('end');
@@ -254,14 +258,19 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   };
 
   const createTicket = async (input: { date: string; battery?: string; notes?: string }): Promise<boolean> => {
-    if (!current) return false;
+    // Phiếu sạc chỉ cần gắn vào ca gần nhất của tài xế (hôm nay hoặc ca sắp tới)
+    // — không phụ thuộc tiến độ giao hàng.
+    const anchor = current || weekShifts[0] || todayShifts[0] || null;
+    if (!anchor) { showToast('⚠️ Bạn chưa có ca vận chuyển nào để gắn phiếu sạc.'); return false; }
     if (!input.date) { showToast('⚠️ Chọn ngày dự kiến sạc!'); return false; }
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    if (input.date < today) { showToast('⚠️ Ngày dự kiến sạc đã qua — chọn hôm nay hoặc ngày tới.'); return false; }
     setBusy('ticket');
     try {
       const t: any = await apiRequest('/ev/me/charging-tickets', {
         method: 'POST',
         body: JSON.stringify({
-          shift_id: current.shift_id,
+          shift_id: anchor.shift_id,
           requested_date: input.date,
           battery_level_pct: input.battery ? Number(input.battery) : undefined,
           notes: input.notes || undefined,
@@ -279,7 +288,7 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
 
   const chargingAction = async (kind: 'start' | 'end', ticketId: string) => {
     if (kind === 'start') {
-      const c = needCoords('bắt đầu sạc');
+      const c = needCoords('bắt đầu sạc', 120);
       if (!c) return;
       setBusy('cstart');
       try {
@@ -328,6 +337,14 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
     ? haversine(coords.lat, coords.lng, Number(nextStop.latitude), Number(nextStop.longitude))
     : null;
 
+  // Khoảng cách tới điểm xuất phát (Xưởng) — hiện ngay dưới nút "Bắt đầu ca"
+  // để tài xế biết vì sao chưa bấm được.
+  const startStop = stops[0] || null;
+  const startRadius = Math.max(Number(startStop?.geofence_radius_m || 100), 500);
+  const distToStart = coords && startStop
+    ? haversine(coords.lat, coords.lng, Number(startStop.latitude), Number(startStop.longitude))
+    : null;
+
   const checkedCount = stops.filter((s: any) => s.isCompleted).length;
   const mandatoryLeft = stops.filter((s: any) => !s.isCompleted && s.is_mandatory).length;
   const chargingTicket = tickets.find((t: any) => (t.status === 'APPROVED' || t.status === 'USED') && !t.charging_end_at);
@@ -335,7 +352,7 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   return {
     loading, err, profile, current, todayShifts, weekShifts, detail, tickets, payroll, history,
     busy, coords, gpsErr, gpsSent, nowMs,
-    status, isRunning, canTrack, stops, nextStop, slaLeftSec, distToNext,
+    status, isRunning, canTrack, stops, nextStop, slaLeftSec, distToNext, startStop, startRadius, distToStart,
     checkedCount, mandatoryLeft, chargingTicket,
     reload: load, loadHistory,
     startShift, endShift, checkin, createTicket, chargingAction,

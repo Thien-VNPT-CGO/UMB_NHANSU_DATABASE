@@ -15,6 +15,8 @@ export function DriverCharging({ d }: { d: DriverData }) {
 
   const active = d.chargingTicket;
   const pending = d.tickets.filter((t: any) => t.status === 'PENDING_HR' || t.status === 'PENDING_DIRECTOR');
+  // Ca để gắn phiếu: ca hôm nay/đang chạy, nếu không có thì ca gần nhất trong tuần.
+  const anchorShift = d.current || d.weekShifts[0] || d.todayShifts[0] || null;
 
   const submit = async () => {
     const ok = await d.createTicket(form);
@@ -109,9 +111,9 @@ export function DriverCharging({ d }: { d: DriverData }) {
 
         {showForm && (
           <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 9 }}>
-            {!d.current && (
+            {!anchorShift && (
               <div style={{ fontSize: 11.5, fontWeight: 700, color: DC.danger, backgroundColor: DC.dangerSoft, borderRadius: 9, padding: '8px 10px' }}>
-                Bạn chưa có ca vận chuyển hôm nay nên chưa tạo được phiếu sạc.
+                Bạn chưa có ca vận chuyển nào nên chưa tạo được phiếu sạc.
               </div>
             )}
             <div style={{ display: 'flex', gap: 8 }}>
@@ -143,9 +145,9 @@ export function DriverCharging({ d }: { d: DriverData }) {
               style={{ padding: '10px 11px', fontSize: 13, borderRadius: 10, border: `1px solid ${DC.border}`, color: DC.ink }}
             />
             <div style={{ fontSize: 11, color: DC.muted, fontWeight: 600, lineHeight: 1.6 }}>
-              Chỉ tạo được sau khi đã xác nhận điểm Văn phòng. Phiếu cần <b>HR duyệt → Giám đốc duyệt</b> rồi mới sạc được.
+              Tạo phiếu bất kỳ lúc nào — không cần chờ giao xong Văn phòng. Phiếu cần <b>HR duyệt → Giám đốc duyệt</b> rồi mới sạc được.
             </div>
-            <BigButton onClick={submit} disabled={!d.current || d.busy === 'ticket'}>
+            <BigButton onClick={submit} disabled={!anchorShift || d.busy === 'ticket'}>
               {d.busy === 'ticket' ? 'ĐANG GỬI...' : 'GỬI PHIẾU SẠC'}
             </BigButton>
           </div>

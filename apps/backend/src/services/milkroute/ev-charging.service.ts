@@ -25,16 +25,19 @@ export class EVChargingService {
   }): Promise<EVChargingTicket> {
     const shift = this.repo.evShifts.find(s => s.shift_id === input.shiftId);
     if (!shift) throw new Error('SHIFT_NOT_FOUND');
+    if (shift.status === 'CANCELLED') throw new Error('SHIFT_CANCELLED: Ca đã bị hủy');
 
     const driver = this.repo.employees.find(e => e.employee_id === shift.driver_id);
     if (!driver) throw new Error('DRIVER_NOT_FOUND');
 
-    // Check if shift is completed delivery at office (stop 4)
+    // Lộ trình phải có điểm dừng (kể cả trạm sạc) thì phiếu mới có chỗ ghim GPS.
     const stops = await this.stopsForShift(shift);
-    const officeStop = stops.find(s => s.stop_type === 'OFFICE');
-    const officeCheckin = this.repo.evShiftCheckins.find(c => c.shift_id === input.shiftId && c.stop_id === officeStop?.stop_id);
-    if (!officeCheckin) {
-      throw new Error('OFFICE_NOT_COMPLETED: Chưa hoàn thành giao hàng tại Văn phòng');
+    if (!stops.length) throw new Error('ROUTE_NOT_CONFIGURED: Lộ trình của ca chưa có điểm dừng');
+
+    // Tài xế được tạo phiếu sạc bất kỳ lúc nào trong ca (không phải chờ giao
+    // xong Văn phòng) — phiếu còn phải qua HR duyệt và Giám đốc duyệt.
+    if (input.requestedDate < new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)) {
+      throw new Error('DATE_IN_PAST: Ngày dự kiến sạc đã qua — chọn hôm nay hoặc ngày tới');
     }
 
     // Check if already has pending/approved ticket for this date

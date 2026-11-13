@@ -38,6 +38,9 @@ export function DriverToday({ d }: { d: DriverData }) {
   const gpsReady = !!coords && coords.accuracy <= 30;
   const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
   const shiftIsToday = String(current?.shift_date || '').slice(0, 10) === today;
+  // Bắt đầu ca: đủ điều kiện khi GPS đã có, sai số ≤120m và trong bán kính Xưởng.
+  const startReady = !!coords && coords.accuracy <= 120
+    && (d.distToStart == null || d.distToStart <= d.startRadius);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -109,10 +112,30 @@ export function DriverToday({ d }: { d: DriverData }) {
       </div>
 
       {/* ---------------- Nút điều khiển ca ---------------- */}
-      {current && current.status === 'SCHEDULED' && (
+      {current && current.status === 'SCHEDULED' && shiftIsToday && (
         <BigButton onClick={d.startShift} disabled={busy === 'start'}>
           <Play size={17} /> {busy === 'start' ? 'ĐANG BẮT ĐẦU...' : 'BẮT ĐẦU CA'}
         </BigButton>
+      )}
+      {current && current.status === 'SCHEDULED' && shiftIsToday && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 7, padding: '9px 12px',
+          borderRadius: 11, border: `1px solid ${startReady ? DC.successSoft : DC.warnSoft}`,
+          backgroundColor: startReady ? DC.successSoft : DC.warnSoft,
+          fontSize: 11.5, fontWeight: 700, color: startReady ? DC.success : DC.warn,
+        }}>
+          <MapPin size={14} />
+          {!coords
+            ? (d.gpsErr || 'Đang chờ GPS… bật định vị rồi thử lại.')
+            : `Cách điểm xuất phát ${Math.round(d.distToStart ?? 0)}m • sai số ±${coords.accuracy}m (cho phép ≤${d.startRadius}m, sai số ≤120m)`}
+        </div>
+      )}
+      {current && current.status === 'SCHEDULED' && !shiftIsToday && (
+        <Card style={{ backgroundColor: DC.brandSoft, borderColor: DC.brandLine, padding: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: DC.brandDark, lineHeight: 1.6 }}>
+            Ca ngày {fmtDay(current.shift_date)} chưa tới ngày bắt đầu. Đến đúng ngày, nút <b>BẮT ĐẦU CA</b> sẽ hiện tại đây.
+          </div>
+        </Card>
       )}
       {current && isRunning && (
         <BigButton tone="danger" onClick={d.endShift} disabled={busy === 'end'}>
