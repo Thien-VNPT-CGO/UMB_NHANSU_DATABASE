@@ -83,8 +83,8 @@ const TICKET_STATUS: Record<string, { text: string; fg: string; bg: string }> = 
 };
 
 const ROUTE_CHANGE_STATUS: Record<string, { text: string; fg: string; bg: string }> = {
-  PENDING: { text: 'Chờ Giám đốc duyệt', fg: '#B45309', bg: '#FEF3C7' },
-  APPROVED: { text: 'Đã duyệt — có hiệu lực', fg: '#047857', bg: '#ECFDF5' },
+  PENDING: { text: 'Chờ duyệt (bước cũ)', fg: '#B45309', bg: '#FEF3C7' },
+  APPROVED: { text: 'Đang hiệu lực', fg: '#047857', bg: '#ECFDF5' },
   REJECTED: { text: 'Từ chối', fg: '#B91C1C', bg: '#FEF2F2' },
   CANCELLED: { text: 'Đã hủy', fg: '#64748B', bg: '#F1F5F9' },
 };
@@ -1603,14 +1603,13 @@ const PayrollView: React.FC<{ allEmployees: any[]; showToast: (m: string) => voi
 };
 
 // ============================================================
-// 6. PHIẾU ĐỔI LỘ TRÌNH (Nhân sự tạo — Giám đốc duyệt)
+// 6. PHIẾU ĐỔI LỘ TRÌNH (tạo là áp dụng ngay — không cần duyệt)
 // ============================================================
 const RouteChangesView: React.FC<{
   showToast: (m: string) => void;
   canCreate: boolean;
-  canApprove: boolean;
   currentUser: any;
-}> = ({ showToast, canCreate, canApprove, currentUser }) => {
+}> = ({ showToast, canCreate, currentUser }) => {
   const [routes, setRoutes] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
   const [items, setItems] = useState<any[]>([]);
@@ -1786,41 +1785,12 @@ const RouteChangesView: React.FC<{
             stops: payloadStops,
           }),
         });
-        showToast('✅ Đã gửi phiếu — chờ Giám đốc ký duyệt.');
+        showToast('✅ Đã tạo phiếu — lộ trình mới có hiệu lực ngay theo khoảng ngày.');
       }
       closeForm();
       await load();
     } catch (e: any) {
       showToast(`⚠️ ${e?.message || 'Lưu phiếu thất bại.'}`);
-    } finally { setBusy(''); }
-  };
-
-  const approve = async (r: any) => {
-    const notes = window.prompt('Ghi chú duyệt (không bắt buộc):') ?? '';
-    setBusy(`${r.request_id}:approve`);
-    try {
-      await apiRequest(`/ev/admin/route-changes/${encodeURIComponent(r.request_id)}/approve`, {
-        method: 'POST', body: JSON.stringify({ notes: notes.trim() || undefined }),
-      });
-      showToast('✅ Giám đốc đã duyệt — bản đồ và app tài xế cập nhật lộ trình ngay.');
-      await load();
-    } catch (e: any) {
-      showToast(`⚠️ ${e?.message || 'Duyệt phiếu thất bại.'}`);
-    } finally { setBusy(''); }
-  };
-
-  const reject = async (r: any) => {
-    const reason = window.prompt('Lý do từ chối phiếu đổi lộ trình?');
-    if (!reason || !reason.trim()) return;
-    setBusy(`${r.request_id}:reject`);
-    try {
-      await apiRequest(`/ev/admin/route-changes/${encodeURIComponent(r.request_id)}/reject`, {
-        method: 'POST', body: JSON.stringify({ reason: reason.trim() }),
-      });
-      showToast('❌ Đã từ chối phiếu đổi lộ trình.');
-      await load();
-    } catch (e: any) {
-      showToast(`⚠️ ${e?.message || 'Từ chối thất bại.'}`);
     } finally { setBusy(''); }
   };
 
@@ -1846,7 +1816,7 @@ const RouteChangesView: React.FC<{
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
         <RouteIcon size={17} color="#7C3AED" />
         <span style={{ fontSize: '14px', fontWeight: 900, color: 'var(--text)' }}>Phiếu đổi lộ trình theo sản phẩm</span>
-        <span style={{ fontSize: '11px', fontWeight: 700, color: MUTED }}>Nhân sự / Kế toán tạo → Giám đốc duyệt → có hiệu lực theo khoảng ngày</span>
+        <span style={{ fontSize: '11px', fontWeight: 700, color: MUTED }}>Admin / Kế toán / Giám đốc / Nhân sự tạo → có hiệu lực ngay (không cần duyệt)</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '7px', flexWrap: 'wrap', alignItems: 'center' }}>
           <select value={statusF} onChange={(e) => setStatusF(e.target.value)}
             style={{ padding: '6px 8px', fontSize: '12px', fontWeight: 700, borderRadius: '8px', border: `1px solid ${BORDER}` }}>
@@ -1868,7 +1838,7 @@ const RouteChangesView: React.FC<{
 
       {String(currentUser?.role || '').toUpperCase() === 'FINANCE' && (
         <div style={{ marginBottom: '10px', padding: '8px 11px', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '9px', fontSize: '11.5px', fontWeight: 700, color: '#1D4ED8', lineHeight: 1.7 }}>
-          Tài khoản Kế toán: được tạo / sửa / hủy phiếu đổi lộ trình. Phiếu chỉ có hiệu lực sau khi <b>Giám đốc ký duyệt</b>.
+          Tài khoản Kế toán: được tạo / sửa / hủy phiếu đổi lộ trình. Phiếu <b>có hiệu lực ngay</b> khi tạo — không cần Giám đốc duyệt.
         </div>
       )}
 
@@ -2005,7 +1975,7 @@ const RouteChangesView: React.FC<{
           <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
             <button className="btn-primary" disabled={busy === 'save'} onClick={save}
               style={{ padding: '8px 16px', fontSize: '13px', fontWeight: 800 }}>
-              {busy === 'save' ? 'Đang lưu…' : editingId ? 'Lưu thay đổi' : 'Gửi Giám đốc duyệt'}
+              {busy === 'save' ? 'Đang lưu…' : editingId ? 'Lưu thay đổi' : 'Tạo phiếu & áp dụng ngay'}
             </button>
             <button className="btn-secondary" onClick={closeForm} disabled={busy === 'save'}
               style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 700 }}>
@@ -2045,7 +2015,7 @@ const RouteChangesView: React.FC<{
                   <div style={{ fontSize: '11.5px', color: MUTED, fontWeight: 600, lineHeight: 1.8, marginBottom: '8px' }}>
                     <div>👤 Tạo bởi {personName(r.created_by_name, r.created_by)} • {fmtTime(r.submitted_at)}</div>
                     {r.reason && <div>📝 {r.reason}</div>}
-                    {r.approved_at && <div style={{ color: '#047857', fontWeight: 700 }}>✅ Giám đốc {personName(r.approved_by_name, r.approved_by)} duyệt {fmtTime(r.approved_at)}{r.approval_notes ? ` — ${r.approval_notes}` : ''}</div>}
+                    {r.approved_at && <div style={{ color: '#047857', fontWeight: 700 }}>✅ Áp dụng bởi {personName(r.approved_by_name, r.approved_by)} • {fmtTime(r.approved_at)}{r.approval_notes ? ` — ${r.approval_notes}` : ''}</div>}
                     {r.rejected_at && <div style={{ color: '#B91C1C', fontWeight: 700 }}>❌ Từ chối bởi {personName(r.rejected_by_name, r.rejected_by)}: {r.rejected_reason || '—'}</div>}
                     {r.cancelled_at && <div>🗑️ Hủy {fmtTime(r.cancelled_at)}{r.cancel_reason ? ` — ${r.cancel_reason}` : ''}</div>}
                   </div>
@@ -2063,25 +2033,13 @@ const RouteChangesView: React.FC<{
                   </div>
 
                   <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
-                    {canApprove && isPending && (
-                      <>
-                        <button className="btn-primary" disabled={busy === `${r.request_id}:approve`} onClick={() => approve(r)}
-                          style={{ padding: '7px 14px', fontSize: '12px', fontWeight: 800, backgroundColor: '#047857' }}>
-                          <CheckCircle2 size={14} /> Giám đốc duyệt
-                        </button>
-                        <button className="btn-secondary" disabled={busy === `${r.request_id}:reject`} onClick={() => reject(r)}
-                          style={{ padding: '7px 14px', fontSize: '12px', fontWeight: 800, color: '#B91C1C' }}>
-                          <XCircle size={14} /> Từ chối
-                        </button>
-                      </>
-                    )}
-                    {canCreate && isPending && (
+                    {canCreate && (isPending || r.status === 'APPROVED') && (
                       <button className="btn-secondary" onClick={() => openEdit(r)}
                         style={{ padding: '7px 14px', fontSize: '12px', fontWeight: 800 }}>
                         Sửa phiếu
                       </button>
                     )}
-                    {(canCreate || canApprove) && (isPending || r.status === 'APPROVED') && (
+                    {canCreate && (isPending || r.status === 'APPROVED') && (
                       <button className="btn-secondary" disabled={busy === `${r.request_id}:cancel`} onClick={() => cancel(r)}
                         style={{ padding: '7px 14px', fontSize: '12px', fontWeight: 800, color: '#B91C1C' }}>
                         Hủy phiếu
@@ -2095,15 +2053,15 @@ const RouteChangesView: React.FC<{
         })}
         {!items.length && busy !== 'load' && (
           <div style={{ fontSize: '12.5px', color: MUTED, fontWeight: 600, padding: '14px 4px', lineHeight: 1.7 }}>
-            Chưa có phiếu đổi lộ trình nào. Nhân sự / Kế toán bấm <b>“Tạo phiếu”</b> để đề xuất lộ trình mới theo sản phẩm;
-            sau khi Giám đốc duyệt, bản đồ và app tài xế tự cập nhật trong khoảng ngày hiệu lực.
+            Chưa có phiếu đổi lộ trình nào. Bấm <b>“Tạo phiếu”</b> để đổi lộ trình theo sản phẩm —
+            phiếu có hiệu lực ngay, bản đồ và app tài xế tự cập nhật trong khoảng ngày hiệu lực.
           </div>
         )}
       </div>
 
       <div style={{ marginTop: '14px', padding: '10px 12px', backgroundColor: '#F5F3FF', border: '1px solid #DDD6FE', borderRadius: '9px', fontSize: '11.5px', fontWeight: 600, color: '#5B21B6', lineHeight: 1.7 }}>
-        <b>Quy trình:</b> Nhân sự / Kế toán tạo phiếu (chọn lộ trình + sản phẩm + khoảng ngày + điểm dừng) →
-        <b> Giám đốc ký duyệt</b> → mọi ca có ngày nằm trong khoảng hiệu lực và đúng sản phẩm sẽ dùng lộ trình mới;
+        <b>Quy trình:</b> Admin / Kế toán / Giám đốc / Nhân sự tạo phiếu (chọn lộ trình + sản phẩm + khoảng ngày + điểm dừng) →
+        <b> có hiệu lực ngay, không cần duyệt</b> → mọi ca có ngày nằm trong khoảng hiệu lực và đúng sản phẩm sẽ dùng lộ trình mới;
         ca ngoài khoảng ngày hoặc khác sản phẩm vẫn chạy lộ trình gốc.
       </div>
     </Card>
@@ -2116,14 +2074,12 @@ const RouteChangesView: React.FC<{
 const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, allEmployees = [], showToast = () => {} }) => {
   const role = String(currentUser?.role || '').toUpperCase();
   const isEvAdmin = ['ADMIN', 'HR', 'DIRECTOR', 'FLEET_MANAGER', 'FINANCE'].includes(role);
-  const canHr = ['ADMIN', 'HR'].includes(role);
-  const canDirector = ['ADMIN', 'DIRECTOR'].includes(role);
   // Phiếu sạc: bỏ bước HR — Giám đốc hoặc Kế toán duyệt trực tiếp.
   const canApproveCharging = ['ADMIN', 'DIRECTOR', 'FINANCE'].includes(role);
   const canManage = ['ADMIN', 'FLEET_MANAGER'].includes(role);
-  // Phiếu đổi lộ trình: Nhân sự (HR) và Kế toán (FINANCE) được tạo/sửa/hủy phiếu;
-  // riêng bước ký duyệt vẫn chỉ Giám đốc (DIRECTOR) — xem canDirector.
-  const canCreateRouteChange = ['ADMIN', 'HR', 'FINANCE'].includes(role);
+  // Phiếu đổi lộ trình: Admin / Nhân sự / Kế toán / Giám đốc tạo là có hiệu lực
+  // ngay, không cần bước ký duyệt.
+  const canCreateRouteChange = ['ADMIN', 'HR', 'FINANCE', 'DIRECTOR'].includes(role);
   // Bảng lương tài xế: CHỈ tài khoản Kế toán (FINANCE) thấy tab con này.
   const canPayroll = role === 'FINANCE';
 
@@ -2197,7 +2153,7 @@ const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, al
       {tab === 'map' && <LiveMapView showToast={toast} />}
       {tab === 'fleet' && <FleetView allEmployees={allEmployees} showToast={toast} canManage={canManage} />}
       {tab === 'route-changes' && (
-        <RouteChangesView showToast={toast} canCreate={canCreateRouteChange} canApprove={canDirector} currentUser={currentUser} />
+        <RouteChangesView showToast={toast} canCreate={canCreateRouteChange} currentUser={currentUser} />
       )}
       {tab === 'shifts' && <ShiftsView allEmployees={allEmployees} showToast={toast} canManage={canManage} />}
       {tab === 'charging' && <ChargingView showToast={toast} canApprove={canApproveCharging} allEmployees={allEmployees} />}

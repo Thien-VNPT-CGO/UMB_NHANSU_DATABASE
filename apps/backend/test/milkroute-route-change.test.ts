@@ -7,13 +7,13 @@ import { EVShiftService } from '../src/services/milkroute/ev-shift.service.js';
 import { EVCheckinService } from '../src/services/milkroute/ev-checkin.service.js';
 
 /**
- * Phiếu đổi lộ trình giao sữa (Nhân sự tạo — Giám đốc duyệt).
+ * Phiếu đổi lộ trình giao sữa (tạo là áp dụng ngay — không cần Giám đốc duyệt).
  *
  * Kịch bản:
  *   - Lộ trình gốc có 4 điểm dừng.
  *   - HR tạo phiếu đổi lộ trình cho sản phẩm "Sữa tươi", hiệu lực 08–15/12.
- *   - Giám đốc duyệt → ca trong khoảng ngày + đúng sản phẩm dùng 3 điểm mới;
- *     ca ngoài khoảng ngày hoặc khác sản phẩm vẫn dùng lộ trình gốc.
+ *   - Phiếu có hiệu lực NGAY: ca trong khoảng ngày + đúng sản phẩm dùng 3 điểm
+ *     mới; ca ngoài khoảng ngày hoặc khác sản phẩm vẫn dùng lộ trình gốc.
  *   - Check-in tại điểm mới (id RCS_...) lưu đúng tên điểm.
  *   - Snapshot khởi động giữ nguyên phiếu.
  */
@@ -106,7 +106,7 @@ function changedStops(baseStops: any[]) {
   ] as any[];
 }
 
-test('phiếu đổi lộ trình: tạo → chặn trùng → duyệt → ca trong ngày dùng điểm mới', async () => {
+test('phiếu đổi lộ trình: tạo là có hiệu lực ngay, chặn trùng khoảng ngày', async () => {
   const { route, baseStops, changes, routes } = await setup();
 
   const request = await changes.createRequest({
@@ -118,7 +118,10 @@ test('phiếu đổi lộ trình: tạo → chặn trùng → duyệt → ca tro
     stops: changedStops(baseStops),
   }, { employeeId: 'EMP_HR_1', fullName: 'Nhân sự A', role: 'HR' });
 
-  assert.equal(request.status, 'PENDING');
+  // Không cần duyệt: tạo xong là APPROVED và có hiệu lực ngay.
+  assert.equal(request.status, 'APPROVED');
+  assert.equal(request.approved_by_name, 'Nhân sự A');
+  assert.ok(request.approved_at, 'phải ghi nhận thời điểm áp dụng');
   assert.equal(request.product_name, 'Sữa tươi');
   assert.ok(request.request_code && request.request_code.startsWith('RCR-'), 'phải có mã phiếu');
   assert.equal(request.created_by_name, 'Nhân sự A');
@@ -135,27 +138,7 @@ test('phiếu đổi lộ trình: tạo → chặn trùng → duyệt → ca tro
     /ROUTE_CHANGE_OVERLAP/,
   );
 
-  // Chưa duyệt → vẫn dùng lộ trình gốc.
-  const before = await routes.getEffectiveStops(route.route_id, '2026-12-10', 'Sữa tươi');
-  assert.equal(before.length, 4);
-  assert.equal(before.some((s) => s.change_request_id), false);
-
-  // Giám đốc duyệt.
-  const approved = await changes.approveRequest(request.request_id, {
-    employeeId: 'EMP_DIR_1', fullName: 'Giám đốc A', role: 'DIRECTOR',
-  }, 'Đồng ý điều chỉnh');
-  assert.equal(approved.status, 'APPROVED');
-  assert.equal(approved.approved_by_name, 'Giám đốc A');
-  assert.ok(approved.approved_at);
-  assert.equal(approved.approval_notes, 'Đồng ý điều chỉnh');
-
-  // Không duyệt lại lần 2.
-  await assert.rejects(
-    () => changes.approveRequest(request.request_id, { employeeId: 'EMP_DIR_2' }),
-    /ROUTE_CHANGE_NOT_PENDING/,
-  );
-
-  // Ca trong khoảng ngày + đúng sản phẩm → dùng điểm mới.
+  // Ca trong khoảng ngày + đúng sản phẩm → dùng điểm mới ngay.
   const inside = await routes.getEffectiveStops(route.route_id, '2026-12-10', 'Sữa tươi');
   assert.equal(inside.length, 3);
   assert.equal(inside[1].name, 'CH130 - Điểm mới');
@@ -194,7 +177,7 @@ test('ca vận chuyển: điểm dừng hiệu lực theo ngày + sản phẩm, 
     effective_to: TO,
     stops: changedStops(baseStops),
   }, { employeeId: 'EMP_HR_1', fullName: 'Nhân sự A' });
-  await changes.approveRequest(request.request_id, { employeeId: 'EMP_DIR_1', fullName: 'Giám đốc A' });
+  assert.equal(request.status, 'APPROVED', 'phiếu có hiệu lực ngay, không cần duyệt');
 
   const makeShift = (date: string, productName?: string) => shifts.createShift({
     routeId: route.route_id,
@@ -257,4 +240,24 @@ test('ca vận chuyển: điểm dừng hiệu lực theo ngày + sản phẩm, 
   assert.equal(restored.evRouteChangeRequests[0].request_id, request.request_id);
   assert.equal(restored.evRouteChangeRequests[0].status, 'APPROVED');
   assert.equal(restored.evRouteChangeRequests[0].stops.length, 3);
+});
+
+test('phiếu cũ còn PENDING vẫn duyệt được (tương thích luồng trước đây)', async () => {
+  const { repo, route, baseStops, changes } = await setup();
+
+  const request = await changes.createRequest({
+    route_id: route.route_id,
+    effective_from: FROM,
+    effective_to: TO,
+    stops: changedStops(baseStops),
+  }, { employeeId: 'EMP_HR_1', fullName: 'Nhân sự A' });
+
+  // Mô phỏng phiếu tạo trước khi bỏ bước duyệt.
+  await repo.updateEVRouteChangeRequest(request.request_id, { status: 'PENDING' });
+
+  const approved = await changes.approveRequest(request.request_id, {
+    employeeId: 'EMP_DIR_1', fullName: 'Giám đốc A', role: 'DIRECTOR',
+  }, 'Duyệt phiếu cũ');
+  assert.equal(approved.status, 'APPROVED');
+  assert.equal(approved.approved_by_name, 'Giám đốc A');
 });

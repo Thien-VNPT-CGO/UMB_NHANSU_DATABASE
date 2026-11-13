@@ -751,12 +751,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // ---------------------------------------------------------------
-  // ADMIN — Phiếu đổi lộ trình (Nhân sự/Kế toán tạo — Giám đốc duyệt)
+  // ADMIN — Phiếu đổi lộ trình theo sản phẩm (tạo là có hiệu lực ngay)
   // ---------------------------------------------------------------
-  // Nhân sự (ADMIN/HR) hoặc Kế toán (FINANCE) lập phiếu đổi lộ trình.
-  // Giám đốc (ADMIN/DIRECTOR) luôn là cấp ký duyệt cuối cùng.
-  const EV_ROUTE_CHANGE_CREATE_ROLES: Array<'ADMIN' | 'HR' | 'FINANCE'> =
-    ['ADMIN', 'HR', 'FINANCE'];
+  // Admin / Kế toán / Giám đốc / Nhân sự lập phiếu đổi lộ trình → áp dụng ngay,
+  // KHÔNG cần bước Giám đốc ký duyệt.
+  const EV_ROUTE_CHANGE_CREATE_ROLES: Array<'ADMIN' | 'HR' | 'FINANCE' | 'DIRECTOR'> =
+    ['ADMIN', 'HR', 'FINANCE', 'DIRECTOR'];
 
   const evActor = (req: AuthenticatedRequest) => ({
     employeeId: req.user?.employeeId,
@@ -794,7 +794,17 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/ev/admin/route-changes', authMiddleware, requireRole(EV_ROUTE_CHANGE_CREATE_ROLES), validate({ body: evRouteChangeCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const r = await ev.routeChanges.createRequest(req.body, evActor(req));
+      // Tạo là có hiệu lực ngay → Live Map + app tài xế cập nhật lộ trình ngay.
+      ev.realtime.broadcastRouteChanged({
+        requestId: r.request_id,
+        routeId: r.route_id,
+        effectiveFrom: r.effective_from,
+        effectiveTo: r.effective_to,
+        productName: r.product_name,
+        approvedBy: r.approved_by_name || r.created_by_name,
+      });
       broadcastUpdate('evRouteChange', { action: 'create', id: r.request_id, routeId: r.route_id });
+      broadcastUpdate('ev', { area: 'route-change', id: r.request_id, routeId: r.route_id });
       res.status(201).json(r);
     } catch (err: any) { evErr(res, err); }
   });

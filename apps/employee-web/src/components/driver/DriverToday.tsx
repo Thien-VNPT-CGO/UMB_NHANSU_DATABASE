@@ -63,7 +63,7 @@ export function DriverToday({ d }: { d: DriverData }) {
 
   // ------------------------------------------------------------------
   // Xem trước lộ trình của ca trong lịch 7 ngày (đặc biệt ngày mai).
-  // Mỗi lần mở đều tải mới để thấy ngay phiếu đổi lộ trình HR vừa duyệt.
+  // Mỗi lần mở đều tải mới để thấy ngay phiếu đổi lộ trình vừa áp dụng.
   // ------------------------------------------------------------------
   const [previewId, setPreviewId] = useState('');
   const [preview, setPreview] = useState<any>(null);
@@ -518,7 +518,7 @@ export function DriverToday({ d }: { d: DriverData }) {
                         </div>
 
                         <div style={{ fontSize: 10, color: DC.muted, fontWeight: 600, marginTop: 8, lineHeight: 1.6 }}>
-                          Lộ trình hiển thị theo phiếu đổi lộ trình đã được Giám đốc duyệt cho đúng ngày &amp; sản phẩm của ca.
+                          Lộ trình hiển thị theo phiếu đổi lộ trình đã áp dụng cho đúng ngày &amp; sản phẩm của ca.
                         </div>
                       </>
                     )}

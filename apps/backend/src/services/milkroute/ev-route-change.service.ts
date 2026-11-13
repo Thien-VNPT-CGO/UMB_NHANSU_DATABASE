@@ -2,11 +2,13 @@
  * Phiếu đổi lộ trình giao sữa (MilkRoute EV).
  *
  * Luồng nghiệp vụ:
- *   1. Nhân sự (HR/ADMIN) hoặc Kế toán (FINANCE) tạo phiếu: chọn lộ trình + sản phẩm
+ *   1. Admin / Kế toán / Giám đốc / Nhân sự tạo phiếu: chọn lộ trình + sản phẩm
  *      + khoảng ngày hiệu lực + danh sách điểm dừng mới.
- *   2. Phiếu ở trạng thái PENDING và chờ Giám đốc (DIRECTOR/ADMIN) ký duyệt.
- *   3. Khi APPROVED, mọi ca có `shift_date` trong [effective_from, effective_to]
- *      sẽ dùng danh sách điểm dừng của phiếu (xem EVRouteService.getEffectiveStops).
+ *   2. Phiếu CÓ HIỆU LỰC NGAY khi tạo — không cần bước Giám đốc ký duyệt.
+ *   3. Mọi ca có `shift_date` trong [effective_from, effective_to] và đúng sản
+ *      phẩm sẽ dùng danh sách điểm dừng của phiếu (EVRouteService.getEffectiveStops).
+ *
+ * Phiếu PENDING của luồng cũ (trước khi bỏ duyệt) vẫn duyệt được để không kẹt dữ liệu.
  *
  * Mọi ghi dữ liệu đi qua repo method (createEVRouteChangeRequest/...)
  * → persist PostgreSQL hoặc snapshot (chế độ Google Sheets).
@@ -142,6 +144,9 @@ export class EVRouteChangeService {
     const stops = this.normalizeStops(input.stops);
     this.assertNoOverlap(route.route_id, productName, from, to);
 
+    // Không cần duyệt: phiếu có hiệu lực ngay. Ghi nhận người tạo vào cả
+    // approved_by để màn hình hiển thị "áp dụng bởi ...".
+    const now = new Date().toISOString();
     return this.repo.createEVRouteChangeRequest({
       route_id: route.route_id,
       route_name: route.name,
@@ -149,11 +154,14 @@ export class EVRouteChangeService {
       effective_from: from,
       effective_to: to,
       reason: String(input.reason || '').trim() || undefined,
-      status: 'PENDING',
+      status: 'APPROVED',
       stops,
       created_by: actorId(actor),
       created_by_name: actorName(actor),
-      submitted_at: new Date().toISOString(),
+      submitted_at: now,
+      approved_by: actorId(actor),
+      approved_by_name: actorName(actor),
+      approved_at: now,
     });
   }
 
@@ -166,8 +174,9 @@ export class EVRouteChangeService {
   }, _actor?: RouteChangeActor): Promise<EVRouteChangeRequest> {
     const current = this.repo.evRouteChangeRequests.find(r => r.request_id === requestId);
     if (!current) throw new Error('ROUTE_CHANGE_NOT_FOUND: Không tìm thấy phiếu đổi lộ trình');
-    if (current.status !== 'PENDING') {
-      throw new Error('ROUTE_CHANGE_NOT_PENDING: Chỉ sửa được phiếu đang chờ duyệt');
+    // Phiếu tạo mới đã có hiệu lực luôn nên vẫn cho sửa; phiếu đã hủy/từ chối thì không.
+    if (!['PENDING', 'APPROVED'].includes(current.status)) {
+      throw new Error('ROUTE_CHANGE_INVALID_STATUS: Chỉ sửa được phiếu đang hiệu lực hoặc chờ duyệt');
     }
 
     const from = String(input.effective_from ?? current.effective_from).slice(0, 10);
