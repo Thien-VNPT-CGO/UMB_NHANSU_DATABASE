@@ -121,15 +121,15 @@ export class EVChargingService {
     if (ticket.status !== 'APPROVED') throw new Error('TICKET_NOT_APPROVED: Phiếu chưa được duyệt đủ 2 cấp');
     if (ticket.charging_start_at) throw new Error('ALREADY_CHARGING: Đang sạc');
 
-    // Validate date: chỉ được sạc trong ngày đăng ký
-    const today = new Date().toISOString().slice(0, 10);
+    // Validate date: chỉ được sạc trong ngày đăng ký (ngày Việt Nam UTC+7)
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
     if (ticket.requested_date !== today) {
       throw new Error('INVALID_DATE: Phiếu chỉ có hiệu lực trong ngày đăng ký');
     }
 
-    // Validate GPS accuracy
-    if (location.accuracy > 30) {
-      throw new Error(`GPS_ACCURACY_LOW: Độ chính xác GPS ${location.accuracy}m quá thấp (yêu cầu ≤30m)`);
+    // Validate GPS accuracy (nới 120m: GPS điện thoại trong cabin/hầm hay sai số)
+    if (location.accuracy > 120) {
+      throw new Error(`GPS_ACCURACY_LOW: Độ chính xác GPS ±${Math.round(location.accuracy)}m quá thấp (yêu cầu ≤120m)`);
     }
 
     // Reverse geocode (optional - just store name if available)

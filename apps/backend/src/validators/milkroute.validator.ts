@@ -172,11 +172,14 @@ export const evShiftGenerateWeekBody = z.object({
 });
 
 // Driver Shift Actions
+// accuracy: validator chỉ chặn giá trị vô lý; ngưỡng nghiệp vụ (≤120m khi
+// bắt đầu/kết thúc ca, ≤30m khi bấm điểm) do service kiểm tra để trả thông báo
+// tiếng Việt rõ ràng thay vì lỗi VALIDATION_ERROR khó hiểu.
 export const evStartShiftBody = z.object({
   shift_id: idSchema,
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
-  accuracy: z.number().min(0).max(100),
+  accuracy: z.number().min(0).max(500),
 });
 
 export const evCheckinBody = z.object({
@@ -191,7 +194,7 @@ export const evEndShiftBody = z.object({
   shift_id: idSchema,
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
-  accuracy: z.number().min(0).max(100),
+  accuracy: z.number().min(0).max(500),
 });
 
 // EV Charging Ticket
@@ -214,7 +217,8 @@ export const evChargingStartBody = z.object({
   ticket_id: idSchema,
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
-  accuracy: z.number().min(0).max(100),
+  // Ngưỡng nghiệp vụ do service kiểm tra (GPS ghim trạm sạc).
+  accuracy: z.number().min(0).max(500),
 });
 
 export const evChargingEndBody = z.object({

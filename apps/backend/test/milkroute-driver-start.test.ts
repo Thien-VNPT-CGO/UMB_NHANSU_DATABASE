@@ -4,6 +4,7 @@ import { MockSheetsAdapter } from '../src/repositories/mock-sheets.adapter.js';
 import { EVRouteService } from '../src/services/milkroute/ev-route.service.js';
 import { EVShiftService } from '../src/services/milkroute/ev-shift.service.js';
 import { EVChargingService } from '../src/services/milkroute/ev-charging.service.js';
+import { evStartShiftBody, evChargingStartBody } from '../src/validators/milkroute.validator.js';
 
 /**
  * Tài xế bấm "Bắt đầu ca" và tạo phiếu sạc trên app.
@@ -174,4 +175,16 @@ test('Tạo phiếu sạc trùng ngày → TICKET_EXISTS', async () => {
     () => charging.createChargingTicket({ shiftId: shift.shift_id, requestedDate: day }),
     /TICKET_EXISTS/,
   );
+});
+
+test('Validator: sai số GPS 80–200m vẫn gửi được (để service báo lỗi tiếng Việt)', () => {
+  const base = { shift_id: 'SHIFT_1', latitude: 10.9, longitude: 106.6 };
+  for (const accuracy of [8, 80, 120, 200]) {
+    assert.equal(evStartShiftBody.safeParse({ ...base, accuracy }).success, true, `accuracy ${accuracy} phải qua validator`);
+    assert.equal(
+      evChargingStartBody.safeParse({ ticket_id: 'TC_1', latitude: 10.9, longitude: 106.6, accuracy }).success,
+      true,
+    );
+  }
+  assert.equal(evStartShiftBody.safeParse({ ...base, accuracy: 600 }).success, false, 'giá trị vô lý vẫn bị chặn');
 });
