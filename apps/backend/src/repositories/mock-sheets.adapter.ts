@@ -1893,7 +1893,9 @@ export class MockSheetsAdapter implements ISheetsRepository {
       requested_date: String(input?.requested_date ?? '').trim(),
       battery_level_pct: Number.isFinite(Number(input?.battery_level_pct)) ? Number(input.battery_level_pct) : undefined,
       notes: String(input?.notes ?? '').trim() || undefined,
-      status: 'PENDING_HR',
+      // Phiếu sạc do tài xế tạo đi thẳng tới Giám đốc hoặc Kế toán duyệt
+      // (bỏ bước HR duyệt cấp 1).
+      status: 'PENDING_DIRECTOR',
       created_at: now,
       updated_at: now,
     };

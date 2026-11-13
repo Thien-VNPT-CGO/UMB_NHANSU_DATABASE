@@ -543,7 +543,7 @@ export function DriverToday({ d }: { d: DriverData }) {
           • Mở app là chia sẻ vị trí xe với quản lý (kể cả trước khi bắt đầu ca).<br />
           • Mỗi chặng có SLA riêng — trễ bị trừ điểm phạt vào lương.<br />
           • Quên bấm điểm bắt buộc = điểm bỏ lọt, tính phạt khi kết thúc ca.<br />
-          • Sạc xe: tạo phiếu → HR duyệt → Giám đốc duyệt → sạc đúng ngày đăng ký.
+          • Sạc xe: tạo phiếu → Giám đốc hoặc Kế toán duyệt → sạc đúng ngày đăng ký.
         </div>
       </Card>
     </div>

@@ -1,5 +1,5 @@
 /**
- * Tab "Sạc" — phiếu sạc xe điện: tạo phiếu, theo dõi duyệt 2 cấp, bắt đầu/kết thúc sạc.
+ * Tab "Sạc" — phiếu sạc xe điện: tạo phiếu, theo dõi duyệt (Giám đốc/Kế toán), bắt đầu/kết thúc sạc.
  */
 import { useState } from 'react';
 import { BatteryCharging, ChevronDown, ChevronUp, Clock, Plus, Zap } from 'lucide-react';
@@ -28,7 +28,7 @@ export function DriverCharging({ d }: { d: DriverData }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <ScreenTitle title="Phiếu sạc xe điện" sub="Tạo phiếu → HR duyệt → Giám đốc duyệt → sạc đúng ngày. Trạm sạc chỉ hiện trên lộ trình khi bạn có phiếu." />
+      <ScreenTitle title="Phiếu sạc xe điện" sub="Tạo phiếu → Giám đốc hoặc Kế toán duyệt → sạc đúng ngày. Trạm sạc chỉ hiện trên lộ trình khi bạn có phiếu." />
 
       {/* Đang sạc */}
       {active && active.charging_start_at && (
@@ -90,7 +90,7 @@ export function DriverCharging({ d }: { d: DriverData }) {
             </span>
           </div>
           <div style={{ fontSize: 11.5, color: '#92400E', fontWeight: 600, marginTop: 4 }}>
-            HR duyệt xong chuyển Giám đốc; khi cả 2 cấp duyệt, phiếu sẽ hiện nút "Bắt đầu sạc".
+            Phiếu đang chờ Giám đốc hoặc Kế toán duyệt; duyệt xong phiếu sẽ hiện nút "Bắt đầu sạc".
           </div>
         </Card>
       )}
@@ -145,7 +145,7 @@ export function DriverCharging({ d }: { d: DriverData }) {
               style={{ padding: '10px 11px', fontSize: 13, borderRadius: 10, border: `1px solid ${DC.border}`, color: DC.ink }}
             />
             <div style={{ fontSize: 11, color: DC.muted, fontWeight: 600, lineHeight: 1.6 }}>
-              Tạo phiếu bất kỳ lúc nào — không cần chờ giao xong Văn phòng. Phiếu cần <b>HR duyệt → Giám đốc duyệt</b> rồi mới sạc được.
+              Tạo phiếu bất kỳ lúc nào — không cần chờ giao xong Văn phòng. Phiếu chuyển thẳng tới <b>Giám đốc hoặc Kế toán</b> duyệt rồi mới sạc được.
             </div>
             <BigButton onClick={submit} disabled={!anchorShift || d.busy === 'ticket'}>
               {d.busy === 'ticket' ? 'ĐANG GỬI...' : 'GỬI PHIẾU SẠC'}
@@ -180,8 +180,13 @@ export function DriverCharging({ d }: { d: DriverData }) {
                 </div>
                 {t.hr_approved_at && (
                   <div style={{ fontSize: 10.5, color: DC.muted, fontWeight: 600, marginTop: 4 }}>
-                    HR duyệt {fmtTime(t.hr_approved_at)}
-                    {t.director_approved_at ? ` • GĐ duyệt ${fmtTime(t.director_approved_at)}` : ''}
+                    HR duyệt (bước cũ) {fmtTime(t.hr_approved_at)}
+                    {t.director_approved_at ? ` • GĐ/KT duyệt ${fmtTime(t.director_approved_at)}` : ''}
+                  </div>
+                )}
+                {!t.hr_approved_at && t.director_approved_at && (
+                  <div style={{ fontSize: 10.5, color: DC.muted, fontWeight: 600, marginTop: 4 }}>
+                    GĐ/Kế toán duyệt {fmtTime(t.director_approved_at)}
                   </div>
                 )}
                 {t.charging_start_at && (
@@ -204,10 +209,9 @@ export function DriverCharging({ d }: { d: DriverData }) {
       <Card style={{ backgroundColor: DC.brandSoft, borderColor: DC.brandLine }}>
         <div style={{ fontSize: 12, fontWeight: 900, color: DC.brandDark, marginBottom: 4 }}>Quy trình duyệt phiếu sạc</div>
         <div style={{ fontSize: 11.5, color: '#9D174D', lineHeight: 1.7, fontWeight: 600 }}>
-          1. Tài xế tạo phiếu sau khi giao xong điểm Văn phòng.<br />
-          2. HR kiểm tra & duyệt cấp 1.<br />
-          3. Giám đốc duyệt cấp 2.<br />
-          4. Tài xế bấm bắt đầu sạc đúng ngày đăng ký — GPS ghim vị trí trạm.
+          1. Tài xế tạo phiếu sạc trong ca.<br />
+          2. Phiếu chuyển thẳng tới Giám đốc hoặc Kế toán duyệt.<br />
+          3. Tài xế bấm bắt đầu sạc đúng ngày đăng ký — GPS ghim vị trí trạm.
         </div>
       </Card>
     </div>

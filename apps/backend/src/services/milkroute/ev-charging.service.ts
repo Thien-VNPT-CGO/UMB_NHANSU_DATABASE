@@ -35,7 +35,7 @@ export class EVChargingService {
     if (!stops.length) throw new Error('ROUTE_NOT_CONFIGURED: Lộ trình của ca chưa có điểm dừng');
 
     // Tài xế được tạo phiếu sạc bất kỳ lúc nào trong ca (không phải chờ giao
-    // xong Văn phòng) — phiếu còn phải qua HR duyệt và Giám đốc duyệt.
+    // xong Văn phòng) — phiếu đi thẳng tới Giám đốc hoặc Kế toán duyệt.
     if (input.requestedDate < new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)) {
       throw new Error('DATE_IN_PAST: Ngày dự kiến sạc đã qua — chọn hôm nay hoặc ngày tới');
     }
@@ -86,11 +86,14 @@ export class EVChargingService {
     });
   }
 
-  /** Giám đốc duyệt phiếu sạc (Cấp 2) */
+  /** Giám đốc / Kế toán duyệt phiếu sạc (duyệt 1 cấp, bỏ bước HR).
+   *  Nhận cả phiếu cũ còn kẹt ở PENDING_HR để duyệt thay HR. */
   async approveByDirector(ticketId: string, directorId: string, notes?: string): Promise<EVChargingTicket | null> {
     const ticket = this.repo.evChargingTickets.find(t => t.ticket_id === ticketId);
     if (!ticket) return null;
-    if (ticket.status !== 'PENDING_DIRECTOR') throw new Error('INVALID_STATUS: Phiếu không ở trạng thái chờ Giám đốc duyệt');
+    if (!['PENDING_HR', 'PENDING_DIRECTOR'].includes(ticket.status)) {
+      throw new Error('INVALID_STATUS: Phiếu không ở trạng thái chờ Giám đốc/Kế toán duyệt');
+    }
 
     return this.repo.updateEVChargingTicket(ticketId, {
       status: 'APPROVED',
@@ -100,11 +103,13 @@ export class EVChargingService {
     });
   }
 
-  /** Giám đốc từ chối phiếu sạc */
+  /** Giám đốc / Kế toán từ chối phiếu sạc */
   async rejectByDirector(ticketId: string, directorId: string, notes: string): Promise<EVChargingTicket | null> {
     const ticket = this.repo.evChargingTickets.find(t => t.ticket_id === ticketId);
     if (!ticket) return null;
-    if (ticket.status !== 'PENDING_DIRECTOR') throw new Error('INVALID_STATUS: Phiếu không ở trạng thái chờ Giám đốc duyệt');
+    if (!['PENDING_HR', 'PENDING_DIRECTOR'].includes(ticket.status)) {
+      throw new Error('INVALID_STATUS: Phiếu không ở trạng thái chờ Giám đốc/Kế toán duyệt');
+    }
 
     return this.repo.updateEVChargingTicket(ticketId, {
       status: 'REJECTED',
@@ -118,7 +123,7 @@ export class EVChargingService {
   async startCharging(ticketId: string, location: { latitude: number; longitude: number; accuracy: number }): Promise<EVChargingTicket | null> {
     const ticket = this.repo.evChargingTickets.find(t => t.ticket_id === ticketId);
     if (!ticket) return null;
-    if (ticket.status !== 'APPROVED') throw new Error('TICKET_NOT_APPROVED: Phiếu chưa được duyệt đủ 2 cấp');
+    if (ticket.status !== 'APPROVED') throw new Error('TICKET_NOT_APPROVED: Phiếu chưa được Giám đốc/Kế toán duyệt');
     if (ticket.charging_start_at) throw new Error('ALREADY_CHARGING: Đang sạc');
 
     // Validate date: chỉ được sạc trong ngày đăng ký (ngày Việt Nam UTC+7)
@@ -238,9 +243,12 @@ export class EVChargingService {
     return this.repo.evChargingTickets.filter(t => t.status === 'PENDING_HR').sort((a, b) => a.created_at.localeCompare(b.created_at));
   }
 
-  /** Lấy phiếu chờ duyệt Giám đốc */
+  /** Lấy phiếu chờ duyệt (Giám đốc/Kế toán). Gồm cả phiếu cũ còn kẹt ở
+   *  PENDING_HR để duyệt thay bước HR đã bỏ. */
   async getPendingDirectorTickets(): Promise<EVChargingTicket[]> {
-    return this.repo.evChargingTickets.filter(t => t.status === 'PENDING_DIRECTOR').sort((a, b) => a.created_at.localeCompare(b.created_at));
+    return this.repo.evChargingTickets
+      .filter(t => t.status === 'PENDING_DIRECTOR' || t.status === 'PENDING_HR')
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
   }
 
   /** Reverse geocode đơn giản (có thể tích hợp Google Maps API sau) */

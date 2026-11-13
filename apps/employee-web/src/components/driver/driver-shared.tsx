@@ -50,8 +50,8 @@ export const STATUS_LABEL: Record<string, { text: string; fg: string; bg: string
 
 export const TICKET_STATUS: Record<string, { text: string; fg: string; bg: string }> = {
   DRAFT: { text: 'Nháp', fg: DC.muted, bg: '#F1F5F9' },
-  PENDING_HR: { text: 'Chờ HR duyệt', fg: DC.warn, bg: DC.warnSoft },
-  PENDING_DIRECTOR: { text: 'Chờ Giám đốc', fg: DC.blue, bg: DC.blueSoft },
+  PENDING_HR: { text: 'Chờ duyệt', fg: DC.warn, bg: DC.warnSoft },
+  PENDING_DIRECTOR: { text: 'Chờ GĐ/Kế toán duyệt', fg: DC.blue, bg: DC.blueSoft },
   APPROVED: { text: 'Đã duyệt', fg: DC.success, bg: DC.successSoft },
   REJECTED: { text: 'Từ chối', fg: DC.danger, bg: DC.dangerSoft },
   USED: { text: 'Đã sạc', fg: DC.purple, bg: DC.purpleSoft },

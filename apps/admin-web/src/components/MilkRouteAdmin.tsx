@@ -5,7 +5,7 @@
  *   1. Live Map    — Leaflet + GPS realtime (poll /ev/admin/live/* 10s).
  *   2. Xe & Lộ trình — CRUD xe điện, xem lộ trình + điểm dừng/geofence/SLA.
  *   3. Ca vận chuyển — tạo/sắp xếp ca tài xế, xem tiến độ check-in, hủy ca.
- *   4. Phiếu sạc   — duyệt 2 cấp: HR (cấp 1) → Giám đốc (cấp 2).
+ *   4. Phiếu sạc   — duyệt 1 cấp: Giám đốc hoặc Kế toán (bỏ bước HR).
  *   5. Lương tài xế — sinh bảng lương theo kỳ (28 ngày chuẩn + 2 ngày cuối).
  *
  * Mọi call đi qua apiRequest (tự refresh token, tự đánh thức backend).
@@ -74,8 +74,8 @@ const SHIFT_STATUS: Record<string, { text: string; fg: string; bg: string }> = {
 
 const TICKET_STATUS: Record<string, { text: string; fg: string; bg: string }> = {
   DRAFT: { text: 'Nháp', fg: '#475569', bg: '#F1F5F9' },
-  PENDING_HR: { text: 'Chờ HR duyệt', fg: '#B45309', bg: '#FEF3C7' },
-  PENDING_DIRECTOR: { text: 'Chờ Giám đốc', fg: '#1D4ED8', bg: '#EFF6FF' },
+  PENDING_HR: { text: 'Chờ duyệt (bước cũ)', fg: '#B45309', bg: '#FEF3C7' },
+  PENDING_DIRECTOR: { text: 'Chờ GĐ/Kế toán duyệt', fg: '#1D4ED8', bg: '#EFF6FF' },
   APPROVED: { text: 'Đã duyệt', fg: '#047857', bg: '#ECFDF5' },
   REJECTED: { text: 'Từ chối', fg: '#B91C1C', bg: '#FEF2F2' },
   USED: { text: 'Đã dùng sạc', fg: '#6D28D9', bg: '#F5F3FF' },
@@ -1301,26 +1301,21 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
 };
 
 // ============================================================
-// 4. PHIẾU SẠC (DUYỆT 2 CẤP)
+// 4. PHIẾU SẠC (DUYỆT 1 CẤP: GIÁM ĐỐC HOẶC KẾ TOÁN)
 // ============================================================
-const ChargingView: React.FC<{ showToast: (m: string) => void; canHr: boolean; canDirector: boolean; allEmployees: any[] }> = ({
-  showToast, canHr, canDirector, allEmployees,
+const ChargingView: React.FC<{ showToast: (m: string) => void; canApprove: boolean; allEmployees: any[] }> = ({
+  showToast, canApprove, allEmployees,
 }) => {
-  // Mặc định mở đúng hàng đợi của vai trò: HR → cấp 1, Giám đốc → cấp 2,
-  // vai trò khác (Kế toán/Admin xem) → tất cả. Tránh chọn sẵn tab bị ẩn.
-  const [filter, setFilter] = useState<string>(canHr ? 'PENDING_HR' : canDirector ? 'PENDING_DIRECTOR' : 'ALL');
+  // Phiếu sạc đi thẳng tới Giám đốc hoặc Kế toán duyệt (bỏ bước HR).
+  const [filter, setFilter] = useState<string>(canApprove ? 'PENDING_DIRECTOR' : 'ALL');
   const [items, setItems] = useState<any[]>([]);
   const [busy, setBusy] = useState('');
 
   // Đổi vai trò/khả năng duyệt → đưa bộ lọc về hàng đợi còn được phép xem.
   useEffect(() => {
-    const allowed = [
-      ...(canHr ? ['PENDING_HR'] : []),
-      ...(canDirector ? ['PENDING_DIRECTOR'] : []),
-      'APPROVED', 'REJECTED', 'ALL',
-    ];
-    if (!allowed.includes(filter)) setFilter(canHr ? 'PENDING_HR' : canDirector ? 'PENDING_DIRECTOR' : 'ALL');
-  }, [canHr, canDirector, filter]);
+    const allowed = ['PENDING_DIRECTOR', 'APPROVED', 'REJECTED', 'ALL'];
+    if (!allowed.includes(filter)) setFilter(canApprove ? 'PENDING_DIRECTOR' : 'ALL');
+  }, [canApprove, filter]);
 
   const load = useCallback(async () => {
     try {
@@ -1335,9 +1330,9 @@ const ChargingView: React.FC<{ showToast: (m: string) => void; canHr: boolean; c
 
   useEffect(() => { void load(); }, [load]);
 
-  const act = async (t: any, action: 'approve-hr' | 'reject-hr' | 'approve-director' | 'reject-director') => {
+  const act = async (t: any, action: 'approve-director' | 'reject-director') => {
     let notes: string | undefined;
-    if (action.startsWith('reject')) {
+    if (action === 'reject-director') {
       const reason = window.prompt('Lý do từ chối phiếu sạc?');
       if (!reason || !reason.trim()) return;
       notes = reason.trim();
@@ -1349,9 +1344,9 @@ const ChargingView: React.FC<{ showToast: (m: string) => void; canHr: boolean; c
         body: JSON.stringify({ notes }),
       });
       showToast(
-        action === 'approve-hr' ? '✅ HR duyệt — chuyển sang Giám đốc duyệt.'
-          : action === 'approve-director' ? '✅ Giám đốc duyệt — tài xế sạc được trong ngày đăng ký.'
-            : '❌ Đã từ chối phiếu sạc.',
+        action === 'approve-director'
+          ? '✅ Đã duyệt phiếu sạc — tài xế sạc được trong ngày đăng ký.'
+          : '❌ Đã từ chối phiếu sạc.',
       );
       await load();
     } catch (e: any) {
@@ -1360,8 +1355,7 @@ const ChargingView: React.FC<{ showToast: (m: string) => void; canHr: boolean; c
   };
 
   const TABS: Array<{ id: string; label: string; need: boolean }> = [
-    { id: 'PENDING_HR', label: 'Chờ HR (cấp 1)', need: canHr },
-    { id: 'PENDING_DIRECTOR', label: 'Chờ Giám đốc (cấp 2)', need: canDirector },
+    { id: 'PENDING_DIRECTOR', label: 'Chờ duyệt', need: true },
     { id: 'APPROVED', label: 'Đã duyệt', need: true },
     { id: 'REJECTED', label: 'Từ chối', need: true },
     { id: 'ALL', label: 'Tất cả', need: true },
@@ -1378,7 +1372,7 @@ const ChargingView: React.FC<{ showToast: (m: string) => void; canHr: boolean; c
     <Card>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
         <BatteryCharging size={17} color="#6D28D9" />
-        <span style={{ fontSize: '14px', fontWeight: 900, color: 'var(--text)' }}>Phiếu sạc xe điện — duyệt 2 cấp</span>
+        <span style={{ fontSize: '14px', fontWeight: 900, color: 'var(--text)' }}>Phiếu sạc xe điện — Giám đốc/Kế toán duyệt</span>
         <button className="btn-secondary" style={{ marginLeft: 'auto', padding: '6px 11px', fontSize: '12px', fontWeight: 700 }} onClick={() => void load()}>
           <RefreshCw size={13} /> Làm mới
         </button>
@@ -1401,10 +1395,11 @@ const ChargingView: React.FC<{ showToast: (m: string) => void; canHr: boolean; c
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {items.map((t: any) => {
           const st = TICKET_STATUS[t.status] || TICKET_STATUS.DRAFT;
-          const pendingHr = t.status === 'PENDING_HR' && canHr;
-          const pendingDir = t.status === 'PENDING_DIRECTOR' && canDirector;
+          // Phiếu mới đi thẳng PENDING_DIRECTOR; phiếu cũ còn kẹt PENDING_HR
+          // vẫn duyệt được tại đây (duyệt thay bước HR đã bỏ).
+          const canAct = (t.status === 'PENDING_DIRECTOR' || t.status === 'PENDING_HR') && canApprove;
           return (
-            <div key={t.ticket_id} style={{ border: `1.5px solid ${pendingHr || pendingDir ? '#FDE68A' : BORDER}`, borderRadius: '10px', padding: '12px 13px', backgroundColor: pendingHr || pendingDir ? '#FFFBEB' : 'var(--bg)' }}>
+            <div key={t.ticket_id} style={{ border: `1.5px solid ${canAct ? '#FDE68A' : BORDER}`, borderRadius: '10px', padding: '12px 13px', backgroundColor: canAct ? '#FFFBEB' : 'var(--bg)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '13px', fontWeight: 900, color: 'var(--text)' }}>
                   🎫 Ngày sạc {fmtDay(t.requested_date)} • tài xế {driverLabel(t.driver_id)}
@@ -1416,8 +1411,8 @@ const ChargingView: React.FC<{ showToast: (m: string) => void; canHr: boolean; c
               </div>
 
               <div style={{ fontSize: '11.5px', color: MUTED, fontWeight: 600, marginTop: '6px', lineHeight: 1.7 }}>
-                {t.hr_approved_at && <div>✅ HR duyệt {fmtTime(t.hr_approved_at)}{t.hr_notes ? ` — ${t.hr_notes}` : ''}</div>}
-                {t.director_approved_at && <div>✅ Giám đốc duyệt {fmtTime(t.director_approved_at)}{t.director_notes ? ` — ${t.director_notes}` : ''}</div>}
+                {t.hr_approved_at && <div>✅ HR duyệt (bước cũ) {fmtTime(t.hr_approved_at)}{t.hr_notes ? ` — ${t.hr_notes}` : ''}</div>}
+                {t.director_approved_at && <div>✅ Giám đốc/Kế toán duyệt {fmtTime(t.director_approved_at)}{t.director_notes ? ` — ${t.director_notes}` : ''}</div>}
                 {t.status === 'REJECTED' && (t.hr_notes || t.director_notes) && (
                   <div style={{ color: '#B91C1C', fontWeight: 700 }}>❌ Lý do: {t.hr_notes || t.director_notes}</div>
                 )}
@@ -1432,15 +1427,15 @@ const ChargingView: React.FC<{ showToast: (m: string) => void; canHr: boolean; c
                 {t.notes && <div>📝 {t.notes}</div>}
               </div>
 
-              {(pendingHr || pendingDir) && (
+              {canAct && (
                 <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
                   <button className="btn-primary" disabled={!!busy}
-                    onClick={() => act(t, pendingHr ? 'approve-hr' : 'approve-director')}
+                    onClick={() => act(t, 'approve-director')}
                     style={{ padding: '7px 15px', fontSize: '12.5px', fontWeight: 800, backgroundColor: '#047857' }}>
-                    <CheckCircle2 size={14} /> {pendingHr ? 'HR duyệt' : 'Giám đốc duyệt'}
+                    <CheckCircle2 size={14} /> Duyệt phiếu
                   </button>
                   <button className="btn-secondary" disabled={!!busy}
-                    onClick={() => act(t, pendingHr ? 'reject-hr' : 'reject-director')}
+                    onClick={() => act(t, 'reject-director')}
                     style={{ padding: '7px 15px', fontSize: '12.5px', fontWeight: 800, color: '#B91C1C' }}>
                     <XCircle size={14} /> Từ chối
                   </button>
@@ -1457,7 +1452,7 @@ const ChargingView: React.FC<{ showToast: (m: string) => void; canHr: boolean; c
       </div>
 
       <div style={{ marginTop: '14px', padding: '10px 12px', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '9px', fontSize: '11.5px', fontWeight: 600, color: '#1E40AF', lineHeight: 1.7 }}>
-        <b>Quy trình:</b> tài xế tạo phiếu sau khi giao xong ở Văn phòng → <b>HR duyệt (cấp 1)</b> → <b>Giám đốc duyệt (cấp 2)</b> →
+        <b>Quy trình:</b> tài xế tạo phiếu sạc → <b>Giám đốc hoặc Kế toán duyệt</b> (bỏ bước HR) →
         tài xế bắt đầu sạc đúng ngày đăng ký (ghim GPS tại trạm) → kết thúc sạc tự ghi kWh.
       </div>
     </Card>
@@ -2123,6 +2118,8 @@ const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, al
   const isEvAdmin = ['ADMIN', 'HR', 'DIRECTOR', 'FLEET_MANAGER', 'FINANCE'].includes(role);
   const canHr = ['ADMIN', 'HR'].includes(role);
   const canDirector = ['ADMIN', 'DIRECTOR'].includes(role);
+  // Phiếu sạc: bỏ bước HR — Giám đốc hoặc Kế toán duyệt trực tiếp.
+  const canApproveCharging = ['ADMIN', 'DIRECTOR', 'FINANCE'].includes(role);
   const canManage = ['ADMIN', 'FLEET_MANAGER'].includes(role);
   // Phiếu đổi lộ trình: Nhân sự (HR) và Kế toán (FINANCE) được tạo/sửa/hủy phiếu;
   // riêng bước ký duyệt vẫn chỉ Giám đốc (DIRECTOR) — xem canDirector.
@@ -2173,7 +2170,7 @@ const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, al
             <Truck size={21} color="#0F766E" /> Vận chuyển sữa — Quản lý tài xế & định vị GPS
           </h1>
           <p style={{ fontSize: '12.5px', color: 'var(--text-muted)', margin: '4px 0 0', fontWeight: 600 }}>
-            Live Map realtime • SLA + phạt tự động • phiếu sạc duyệt 2 cấp • phân ca tài xế • bảng lương theo kỳ
+            Live Map realtime • SLA + phạt tự động • phiếu sạc duyệt 1 cấp • phân ca tài xế • bảng lương theo kỳ
           </p>
         </div>
       </div>
@@ -2203,7 +2200,7 @@ const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, al
         <RouteChangesView showToast={toast} canCreate={canCreateRouteChange} canApprove={canDirector} currentUser={currentUser} />
       )}
       {tab === 'shifts' && <ShiftsView allEmployees={allEmployees} showToast={toast} canManage={canManage} />}
-      {tab === 'charging' && <ChargingView showToast={toast} canHr={canHr} canDirector={canDirector} allEmployees={allEmployees} />}
+      {tab === 'charging' && <ChargingView showToast={toast} canApprove={canApproveCharging} allEmployees={allEmployees} />}
       {tab === 'payroll' && canPayroll && <PayrollView allEmployees={allEmployees} showToast={toast} canManage={canPayroll} />}
     </div>
   );

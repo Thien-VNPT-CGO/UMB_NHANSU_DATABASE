@@ -974,7 +974,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // ---------------------------------------------------------------
-  // ADMIN — Phiếu sạc (duyệt 2 cấp: HR → Giám đốc)
+  // ADMIN — Phiếu sạc (duyệt 1 cấp: Giám đốc hoặc Kế toán)
   // ---------------------------------------------------------------
   app.get('/ev/admin/charging-tickets', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ query: evChargingTicketsQuery }), async (req: AuthenticatedRequest, res) => {
     try {
@@ -1012,7 +1012,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     } catch (err: any) { evErr(res, err); }
   });
 
-  app.post('/ev/admin/charging-tickets/:id/approve-director', authMiddleware, requireRole(['ADMIN', 'DIRECTOR']), validate({ params: evChargingTicketIdParams, body: evChargingTicketApproveBody }), async (req: AuthenticatedRequest, res) => {
+  app.post('/ev/admin/charging-tickets/:id/approve-director', authMiddleware, requireRole(['ADMIN', 'DIRECTOR', 'FINANCE']), validate({ params: evChargingTicketIdParams, body: evChargingTicketApproveBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const t = await ev.charging.approveByDirector(req.params.id, req.user!.id, req.body?.notes);
       if (!t) return res.status(404).json({ error: 'TICKET_NOT_FOUND' });
@@ -1022,7 +1022,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     } catch (err: any) { evErr(res, err); }
   });
 
-  app.post('/ev/admin/charging-tickets/:id/reject-director', authMiddleware, requireRole(['ADMIN', 'DIRECTOR']), validate({ params: evChargingTicketIdParams, body: evChargingTicketRejectBody }), async (req: AuthenticatedRequest, res) => {
+  app.post('/ev/admin/charging-tickets/:id/reject-director', authMiddleware, requireRole(['ADMIN', 'DIRECTOR', 'FINANCE']), validate({ params: evChargingTicketIdParams, body: evChargingTicketRejectBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const t = await ev.charging.rejectByDirector(req.params.id, req.user!.id, req.body.notes);
       if (!t) return res.status(404).json({ error: 'TICKET_NOT_FOUND' });
@@ -1316,7 +1316,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         batteryLevelPct: req.body.battery_level_pct,
         notes: req.body.notes,
       });
-      ev.realtime.broadcastChargingStatus(t.ticket_id, t.shift_id, t.driver_id, 'PENDING_HR', { status: t.status });
+      ev.realtime.broadcastChargingStatus(t.ticket_id, t.shift_id, t.driver_id, 'PENDING_DIRECTOR', { status: t.status });
       broadcastUpdate('evChargingTicket', { action: 'create', id: t.ticket_id });
       res.status(201).json(t);
     } catch (err: any) { evErr(res, err); }

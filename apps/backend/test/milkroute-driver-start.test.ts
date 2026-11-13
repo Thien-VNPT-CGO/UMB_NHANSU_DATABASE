@@ -127,7 +127,7 @@ test('Kết thúc ca: nới bán kính Xưởng 500m (GPS 150m vẫn đóng ca �
   assert.equal(updated.status, 'COMPLETED');
 });
 
-test('Tạo phiếu sạc: không cần check-in Văn phòng, phiếu vào trạng thái PENDING_HR', async () => {
+test('Tạo phiếu sạc: không cần check-in Văn phòng, phiếu đi thẳng Giám đốc/Kế toán duyệt', async () => {
   const { repo, charging, makeShift } = await setup();
   const shift = await makeShift();
   assert.equal(repo.evShiftCheckins.length, 0, 'chưa có check-in nào');
@@ -138,10 +138,45 @@ test('Tạo phiếu sạc: không cần check-in Văn phòng, phiếu vào trạ
     batteryLevelPct: 22,
     notes: 'Sạc sau khi giao xong',
   });
-  assert.equal(ticket.status, 'PENDING_HR');
+  assert.equal(ticket.status, 'PENDING_DIRECTOR', 'bỏ bước HR — chờ Giám đốc/Kế toán duyệt');
   assert.equal(ticket.driver_id, 'EMP_DRIVER_S1');
   assert.equal(ticket.requested_date, shiftDate(1));
   assert.equal(repo.evChargingTickets.length, 1);
+});
+
+test('Phiếu sạc: Kế toán/Giám đốc duyệt 1 cấp là sạc được (không qua HR)', async () => {
+  const { charging, makeShift } = await setup();
+  const shift = await makeShift();
+
+  const ticket = await charging.createChargingTicket({
+    shiftId: shift.shift_id,
+    requestedDate: shiftDate(1),
+  });
+  // Không thể duyệt 2 lần / không có bước HR.
+  const approved = await charging.approveByDirector(ticket.ticket_id, 'ACC_FINANCE');
+  assert.equal(approved?.status, 'APPROVED');
+  assert.equal(approved?.director_approved_by, 'ACC_FINANCE');
+  assert.equal(approved?.hr_approved_at, undefined, 'không ghi nhận bước HR');
+
+  await assert.rejects(
+    () => charging.approveByDirector(ticket.ticket_id, 'ACC_FINANCE'),
+    /INVALID_STATUS/,
+  );
+});
+
+test('Phiếu sạc cũ còn kẹt PENDING_HR vẫn được Giám đốc/Kế toán duyệt thay', async () => {
+  const { repo, charging, makeShift } = await setup();
+  const shift = await makeShift();
+  const created = await repo.createEVChargingTicket({
+    shift_id: shift.shift_id,
+    driver_id: 'EMP_DRIVER_S1',
+    requested_date: shiftDate(1),
+  } as any);
+  const legacy = (await repo.updateEVChargingTicket(created.ticket_id, { status: 'PENDING_HR' }))!;
+  assert.equal(legacy.status, 'PENDING_HR');
+
+  const approved = await charging.approveByDirector(legacy.ticket_id, 'ACC_DIRECTOR');
+  assert.equal(approved?.status, 'APPROVED');
 });
 
 test('Tạo phiếu sạc: ngày dự kiến đã qua → DATE_IN_PAST', async () => {

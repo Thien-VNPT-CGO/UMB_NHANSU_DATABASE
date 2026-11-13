@@ -18,7 +18,7 @@ export const BETA_FEATURES: Record<string, BetaFeatureNote> = {
   // ==== VÍ DỤ (bỏ dòng dưới khi tính năng chính thức) ====
   'hr-schedule': { note: 'Nhập lịch làm việc bằng Excel đang chạy thử (Beta) — dùng thử, góp ý rồi chốt chính thức.' },
   'fin-salary-config': { note: 'Cấu hình Lương cơ bản + Phụ cấp theo khối cho từng nhân viên đang chạy thử (Beta) — lương = LCB + phụ cấp, HR chỉ xem, Kế toán cấu hình.' },
-  'ev-transport': { note: 'Quản lý tài xế giao sữa bằng định vị GPS (MilkRoute EV) đang chạy thử (Beta) — Live Map, SLA/phạt, phiếu sạc duyệt 2 cấp, phân ca & lương tài xế.' },
+  'ev-transport': { note: 'Quản lý tài xế giao sữa bằng định vị GPS (MilkRoute EV) đang chạy thử (Beta) — Live Map, SLA/phạt, phiếu sạc duyệt 1 cấp (Giám đốc/Kế toán), phân ca & lương tài xế.' },
 };
 
 /** id tab có nổi Beta không */

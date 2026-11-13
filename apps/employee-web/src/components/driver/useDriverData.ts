@@ -276,7 +276,7 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
           notes: input.notes || undefined,
         }),
       });
-      showToast('🎫 Đã gửi phiếu sạc — chờ HR duyệt rồi Giám đốc duyệt.');
+      showToast('🎫 Đã gửi phiếu sạc — chờ Giám đốc hoặc Kế toán duyệt.');
       setTickets((p) => [t, ...p]);
       void load(true);
       return true;
