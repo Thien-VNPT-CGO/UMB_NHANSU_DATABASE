@@ -1077,6 +1077,29 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     } catch (err: any) { evErr(res, err); }
   });
 
+  // Hồ sơ tài khoản tài xế: 1 call trả đủ thông tin cho app tài xế (5 tab).
+  // Đặt trước /ev/me/shifts/:id để không bị route động nuốt mất.
+  app.get('/ev/me/profile', authMiddleware, requireRole(evDriverRoles), async (req: AuthenticatedRequest, res) => {
+    try {
+      const driverId = evDriverId(req);
+      if (!driverId) return res.status(403).json({ error: 'DRIVER_NOT_FOUND: Tài khoản không gắn nhân viên' });
+      res.json(await ev.profile.getProfile(driverId));
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.get('/ev/me/history', authMiddleware, requireRole(evDriverRoles), async (req: AuthenticatedRequest, res) => {
+    try {
+      const driverId = evDriverId(req);
+      if (!driverId) return res.status(403).json({ error: 'DRIVER_NOT_FOUND: Tài khoản không gắn nhân viên' });
+      const q: any = req.query || {};
+      res.json(await ev.profile.getHistory(driverId, {
+        from: q.from ? String(q.from) : undefined,
+        to: q.to ? String(q.to) : undefined,
+        limit: q.limit ? Number(q.limit) : undefined,
+      }));
+    } catch (err: any) { evErr(res, err); }
+  });
+
   app.get('/ev/me/shifts/:id', authMiddleware, requireRole(evDriverRoles), validate({ params: evShiftIdParams }), async (req: AuthenticatedRequest, res) => {
     try {
       await evOwnShift(req, req.params.id);

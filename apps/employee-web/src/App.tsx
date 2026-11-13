@@ -18,7 +18,7 @@ import {
   OfficeTimesheetView,
   OfficeAdjustmentView,
 } from './components/OfficePortal';
-import { MilkRouteDriverView } from './components/MilkRouteDriver';
+import { DriverPortal } from './components/driver/DriverPortal';
 import {
   Home,
   Calendar,
@@ -46,7 +46,6 @@ import {
   Briefcase,
   Palmtree,
   Filter,
-  Truck,
 } from 'lucide-react';
 import {
   EmployeeEventLogoAccessory,
@@ -1039,15 +1038,28 @@ export function App() {
   const [schedWeekSel, setSchedWeekSel] = useState<SchedWeek>('THIS');
   const schedWeekTouched = useRef(false);
   const [schedRefresh, setSchedRefresh] = useState(0);
-  // MilkRoute EV: tài khoản có CA VẬN CHUYỂN (tài xế giao sữa) thì mới hiện tab
-  // "12. Vận chuyển" — NV thường không thấy tab thừa. Chạy 1 lần sau đăng nhập.
+  // MilkRoute EV: tài khoản TÀI XẾ có APP RIÊNG (5 tab dưới đáy), khác hoàn toàn
+  // cổng nhân viên văn phòng/cửa hàng. /ev/me/profile trả is_driver dựa trên xe
+  // được gán / ca vận chuyển / bảng lương tài xế. Chạy lại khi dữ liệu realtime đổi.
   const [isEvDriver, setIsEvDriver] = useState(false);
+  const [evProfile, setEvProfile] = useState<any>(null);
+  const [evCheckedFor, setEvCheckedFor] = useState('');
   useEffect(() => {
-    if (!isLoggedIn || !employee?.employee_id) return;
+    if (!isLoggedIn || !employee?.employee_id) {
+      setIsEvDriver(false);
+      setEvProfile(null);
+      setEvCheckedFor('');
+      return;
+    }
     let alive = true;
-    apiRequest('/ev/me/shifts')
-      .then((d: any) => { if (alive && (d?.current || (Array.isArray(d?.items) && d.items.length > 0))) setIsEvDriver(true); })
-      .catch(() => { /* không có ca vận chuyển / API lỗi → ẩn tab */ });
+    apiRequest('/ev/me/profile', { _noCache: true } as any)
+      .then((d: any) => {
+        if (!alive) return;
+        setIsEvDriver(!!d?.is_driver);
+        setEvProfile(d || null);
+      })
+      .catch(() => { if (alive) { setIsEvDriver(false); setEvProfile(null); } })
+      .finally(() => { if (alive) setEvCheckedFor(String(employee.employee_id)); });
     return () => { alive = false; };
   }, [isLoggedIn, employee?.employee_id, schedRefresh]);
   // Tab Dữ Liệu Công theo THÁNG (chu kỳ lương): tải ca + sự kiện cả tháng đang xem.
@@ -2460,6 +2472,8 @@ export function App() {
           // app tài xế tải lại ca + điểm dừng ngay.
           entity === 'ev' ||
           entity === 'evShift' ||
+          entity === 'evChargingTicket' ||
+          entity === 'evDriverPayroll' ||
           entity === 'evRouteChange' ||
           entity === 'evRouteStop' ||
           entity === 'all'
@@ -3933,16 +3947,13 @@ export function App() {
     { id: 'test_training', label: '9. TEST / Đào tạo', icon: Award },
     { id: 'notifs_salary', label: '10. Thông báo & Lương', icon: Bell },
     { id: 'profile', label: '11. Hồ Sơ', icon: User },
-    // MilkRoute EV — tài xế giao sữa. Chỉ hiện khi tài khoản có ca vận chuyển
-    // (xác nhận qua /ev/me/shifts) để NV thường không thấy tab thừa.
-    { id: 'ev_route', label: '12. Vận chuyển', icon: Truck, beta: true },
   ];
 
   // Tab "7. Cập Nhật Ca Làm" CHỈ hiển thị khi Admin BẬT phiếu "Cập Nhật Ca" (enabled === true).
   // Mặc định ẩn hoàn toàn nếu Admin chưa bật hoặc đã đóng.
   const reRegEnabled = !!reRegStatus?.enabled;
   const currentTabs = (isOffice ? officeTabs : isProbation ? probationTabs : officialTabs).filter(
-    (t) => (t.id !== 'rereg' || reRegEnabled) && (t.id !== 'ev_route' || isEvDriver)
+    (t) => (t.id !== 'rereg' || reRegEnabled)
   );
 
   // Tự động về trang chủ nếu tab đang mở không còn tồn tại (VD: tab Cập Nhật Ca bị Admin đóng).
@@ -4272,6 +4283,46 @@ export function App() {
         />
         {updateReady && <UpdateBanner />}
       </>
+    );
+  }
+
+  // =========================================================================
+  // VIEW: TÀI KHOẢN TÀI XẾ — APP RIÊNG (MilkRoute EV)
+  // =========================================================================
+  // Nhân sự Xưởng chờ xác nhận 1 nhịp để không nháy cổng HR trước khi biết
+  // tài khoản có phải tài xế hay không.
+  const couldBeEvDriver = (() => {
+    const g = String((employee as any)?.group || '').toUpperCase();
+    const b = String((employee as any)?.default_branch_id || '').toUpperCase();
+    return g === 'XUONG' || b.startsWith('XUONG');
+  })();
+  if (couldBeEvDriver && evCheckedFor !== String(employee?.employee_id || '')) {
+    return (
+      <div style={{
+        minHeight: '100vh', display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', gap: 12,
+        background: 'linear-gradient(160deg,#0F766E 0%,#115E59 100%)', color: '#FFF', padding: 24,
+      }}>
+        <div style={{
+          width: 56, height: 56, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.16)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26,
+        }}>🚐</div>
+        <div style={{ fontSize: 15, fontWeight: 900 }}>Đang mở ứng dụng tài xế...</div>
+        <div style={{ fontSize: 11.5, fontWeight: 600, opacity: 0.85, textAlign: 'center', lineHeight: 1.6 }}>
+          Kiểm tra ca vận chuyển & xe được gán
+        </div>
+      </div>
+    );
+  }
+  if (isEvDriver) {
+    return (
+      <DriverPortal
+        employee={employee}
+        showToast={showToast}
+        onLogout={handleLogout}
+        refreshKey={schedRefresh}
+        initialProfile={evProfile}
+      />
     );
   }
 
@@ -8611,11 +8662,8 @@ export function App() {
         )}
 
         {/* ========================================================= */}
-        {/* TAB 12: VẬN CHUYỂN SỮA (MilkRoute EV — tài xế, BETA)      */}
+        {/* TÀI XẾ: app riêng ở trên — không render tab HR tại đây.   */}
         {/* ========================================================= */}
-        {activeTab === 'ev_route' && isEvDriver && (
-          <MilkRouteDriverView employee={employee} showToast={showToast} refreshKey={schedRefresh} />
-        )}
       </main>
       {updateReady && <UpdateBanner />}
 

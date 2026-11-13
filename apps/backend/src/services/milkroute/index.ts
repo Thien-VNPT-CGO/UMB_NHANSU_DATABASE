@@ -14,6 +14,7 @@ import { EVPayrollService } from './ev-payroll.service.js';
 import { EVRouteChangeService } from './ev-route-change.service.js';
 import { EVRealtimeService, evRealtimeService } from './ev-realtime.service.js';
 import { EVDriveService } from './ev-drive.service.js';
+import { EVDriverProfileService } from './ev-profile.service.js';
 
 export class MilkRouteModule {
   public readonly vehicles: EVVehicleService;
@@ -24,6 +25,7 @@ export class MilkRouteModule {
   public readonly charging: EVChargingService;
   public readonly gps: EVGPSService;
   public readonly payroll: EVPayrollService;
+  public readonly profile: EVDriverProfileService;
   public readonly realtime: EVRealtimeService;
   public readonly drive: EVDriveService;
 
@@ -36,6 +38,7 @@ export class MilkRouteModule {
     this.charging = new EVChargingService(repo, this.routes);
     this.gps = new EVGPSService(repo);
     this.payroll = new EVPayrollService(repo, undefined, this.routes);
+    this.profile = new EVDriverProfileService(repo, this.routes, this.payroll);
     this.realtime = evRealtimeService;
     // Lưu dữ liệu EV lên Google Drive (04. VẬN CHUYỂN SỮA/THANG_MM/DD-MM-YYYY/<tab>).
     this.drive = new EVDriveService(repo as any);
