@@ -1018,7 +1018,37 @@ select.input,
   display: grid;
   grid-template-columns: minmax(0, 1.04fr) minmax(440px, 0.96fr);
   min-height: 100vh;
+  min-height: 100dvh;
   overflow: hidden;
+}
+
+/* Nút quay về hệ thống nhân sự ở màn đăng nhập. */
+.login-back {
+  position: absolute;
+  z-index: 5;
+  top: max(18px, env(safe-area-inset-top));
+  left: max(18px, env(safe-area-inset-left));
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 15px 0 11px;
+  border: 1px solid rgba(227, 184, 102, 0.28);
+  border-radius: 12px;
+  background: rgba(8, 13, 23, 0.62);
+  backdrop-filter: blur(14px);
+  color: var(--gold-2);
+  font-size: 0.76rem;
+  font-weight: 650;
+  text-decoration: none;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.login-back:hover,
+.login-back:focus-visible {
+  background: rgba(227, 184, 102, 0.14);
+  border-color: rgba(227, 184, 102, 0.5);
+  color: var(--gold);
 }
 
 .login-aurora {
@@ -1532,6 +1562,7 @@ select.input,
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .app-bg {
@@ -1553,9 +1584,51 @@ select.input,
   gap: 18px;
   min-height: 70px;
   padding: 10px clamp(16px, 3vw, 34px);
+  padding-top: max(10px, env(safe-area-inset-top));
+  padding-left: max(clamp(16px, 3vw, 34px), env(safe-area-inset-left));
+  padding-right: max(clamp(16px, 3vw, 34px), env(safe-area-inset-right));
   border-bottom: 1px solid var(--line);
   background: rgba(7, 11, 20, 0.82);
   backdrop-filter: blur(20px);
+}
+
+/* Nút quay lại — luôn hiển thị (kể cả trên mobile/webview của App). */
+.header-back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  height: 36px;
+  padding: 0 13px 0 10px;
+  border: 1px solid rgba(227, 184, 102, 0.26);
+  border-radius: 11px;
+  background: rgba(227, 184, 102, 0.07);
+  color: var(--gold-2);
+  font-family: inherit;
+  font-size: 0.74rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.header-back-btn:hover {
+  background: rgba(227, 184, 102, 0.14);
+  border-color: rgba(227, 184, 102, 0.45);
+}
+
+.header-back-btn:active {
+  transform: translateX(-1px);
+}
+
+.header-back-btn:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.header-back-label {
+  white-space: nowrap;
 }
 
 .app-brand {
@@ -1724,10 +1797,30 @@ select.input,
   justify-content: space-between;
   gap: 16px;
   padding: 18px clamp(16px, 3vw, 34px) 24px;
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+  padding-left: max(clamp(16px, 3vw, 34px), env(safe-area-inset-left));
+  padding-right: max(clamp(16px, 3vw, 34px), env(safe-area-inset-right));
   border-top: 1px solid var(--line);
   color: var(--muted-2);
   font-size: 0.68rem;
   flex-wrap: wrap;
+}
+
+.app-footer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--gold-2);
+  font-weight: 650;
+  text-decoration: none;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 0.18s ease, color 0.18s ease;
+}
+
+.app-footer-link:hover,
+.app-footer-link:focus-visible {
+  color: var(--gold);
+  border-bottom-color: currentColor;
 }
 
 .app-footer span {
@@ -2438,6 +2531,7 @@ select.input,
   display: flex;
   flex-direction: column;
   max-height: calc(100vh - 110px);
+  max-height: calc(100dvh - 110px);
   padding: 16px;
 }
 
@@ -3859,6 +3953,62 @@ select.input,
   .app-header {
     min-height: 62px;
     padding: 8px 14px;
+    padding-top: max(8px, env(safe-area-inset-top));
+    gap: 9px;
+  }
+
+  /* Nút back thu gọn còn icon để vừa màn hình điện thoại. */
+  .header-back-btn {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 11px;
+  }
+
+  .header-back-label {
+    display: none;
+  }
+
+  .app-brand {
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+
+  .app-brand-copy {
+    min-width: 0;
+  }
+
+  .app-brand-copy strong {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Nút quay về hệ thống ở màn đăng nhập: chỉ còn icon, dời sang góc phải. */
+  .login-back {
+    top: max(14px, env(safe-area-inset-top));
+    left: auto;
+    right: max(14px, env(safe-area-inset-right));
+    width: 38px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .login-back span {
+    display: none;
+  }
+
+  .login-brand {
+    padding-top: 64px;
+  }
+
+  /* Tránh iOS/webview tự zoom trang khi focus ô nhập (font < 16px). */
+  .input,
+  .money-input input,
+  .search-box input,
+  .field select,
+  .field textarea {
+    font-size: 16px;
   }
 
   .app-brand-copy strong {
@@ -4051,7 +4201,7 @@ select.input,
 
 @media (max-width: 540px) {
   .login-brand {
-    padding: 26px 20px 8px;
+    padding: 64px 20px 8px;
   }
 
   .brand-rule,

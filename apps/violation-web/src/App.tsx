@@ -47,6 +47,7 @@ export function App() {
   const [mustChange, setMustChange] = useState(false);
   const [knownPin, setKnownPin] = useState('');
   const [view, setView] = useState<ViewKey>('dashboard');
+  const [viewHistory, setViewHistory] = useState<ViewKey[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [realtime, setRealtime] = useState<RealtimeStatus>('connecting');
   const [notice, setNotice] = useState('');
@@ -83,6 +84,7 @@ export function App() {
     setMustChange(false);
     setKnownPin('');
     setView('dashboard');
+    setViewHistory([]);
     setRealtime('connecting');
     setNotice(message || '');
   }, []);
@@ -117,6 +119,7 @@ export function App() {
     setMustChange(result.mustChangePin || result.account.must_change_pin === true);
     setNotice('');
     setView('dashboard');
+    setViewHistory([]);
   };
 
   const handlePinChanged = (result: AuthResult, newPin: string) => {
@@ -130,7 +133,10 @@ export function App() {
     leaveSession(message);
   };
 
-  const navigate = (next: ViewKey) => {
+  const navigate = (next: ViewKey, opts?: { replace?: boolean }) => {
+    if (next !== view && !opts?.replace) {
+      setViewHistory(history => [...history, view].slice(-20));
+    }
     setView(next);
     try {
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -139,9 +145,28 @@ export function App() {
     }
   };
 
+  /**
+   * Nút "quay lại": lùi về màn hình vừa xem trong cổng vi phạm; khi đang ở
+   * Trung tâm điều hành thì trở ra hệ thống nhân sự chính (nền tảng hiển thị App).
+   */
+  const goBack = () => {
+    const previous = viewHistory[viewHistory.length - 1];
+    if (previous) {
+      setViewHistory(history => history.slice(0, -1));
+      setView(previous);
+      try {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch {
+        window.scrollTo(0, 0);
+      }
+      return;
+    }
+    window.location.assign('/');
+  };
+
   const handleSaved = (status: 'PENDING' | 'APPROVED') => {
     bumpRefresh();
-    navigate(status === 'PENDING' ? 'pending' : 'approved');
+    navigate(status === 'PENDING' ? 'pending' : 'approved', { replace: true });
   };
 
   const currentLabel = useMemo(() => VIEW_LABELS[view], [view]);
@@ -213,6 +238,19 @@ export function App() {
     <div className="app-shell">
       <div className="app-bg" aria-hidden="true" />
       <header className="app-header">
+        <button
+          type="button"
+          className="header-back-btn"
+          onClick={goBack}
+          aria-label={viewHistory.length > 0 ? 'Quay lại màn hình trước' : 'Về hệ thống nhân sự'}
+          title={viewHistory.length > 0 ? 'Quay lại màn hình trước' : 'Về hệ thống nhân sự'}
+        >
+          <ArrowLeft size={17} />
+          <span className="header-back-label">
+            {viewHistory.length > 0 ? 'Quay lại' : 'Hệ thống'}
+          </span>
+        </button>
+
         <button type="button" className="app-brand" onClick={() => navigate('dashboard')} aria-label="Về trang chủ">
           <span className="app-brand-seal">
             <Landmark size={20} />
@@ -224,16 +262,9 @@ export function App() {
         </button>
 
         <div className="app-header-center">
-          {view !== 'dashboard' ? (
-            <button type="button" className="btn btn-ghost btn-sm header-back" onClick={() => navigate('dashboard')}>
-              <ArrowLeft size={15} /> Trang chủ
-            </button>
-          ) : (
-            <span className="header-context">
-              <LayoutDashboard size={14} /> {currentLabel}
-            </span>
-          )}
-          {view !== 'dashboard' ? <span className="header-context header-context-muted">{currentLabel}</span> : null}
+          <span className="header-context">
+            {view === 'dashboard' ? <LayoutDashboard size={14} /> : null} {currentLabel}
+          </span>
         </div>
 
         <div className="app-header-right">
@@ -267,6 +298,9 @@ export function App() {
         <span>
           <Gavel size={13} /> Phiếu đã duyệt tự động lưu Drive &amp; cấn trừ KPI
         </span>
+        <a className="app-footer-link" href="/">
+          <ArrowLeft size={13} /> Về hệ thống nhân sự
+        </a>
       </footer>
     </div>
   );

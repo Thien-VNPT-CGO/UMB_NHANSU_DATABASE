@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   ArrowRight,
   BadgeCheck,
   CloudUpload,
@@ -97,6 +98,11 @@ export function LoginScreen({ onSuccess, notice }: Props) {
     <div className="login-screen">
       <div className="login-aurora" aria-hidden="true" />
       <div className="login-grid" aria-hidden="true" />
+
+      <a className="login-back" href="/" aria-label="Về hệ thống nhân sự">
+        <ArrowLeft size={16} />
+        <span>Về hệ thống nhân sự</span>
+      </a>
 
       <section className="login-brand">
         <div className="brand-rule">
