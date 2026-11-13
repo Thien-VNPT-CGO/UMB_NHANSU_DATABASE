@@ -116,7 +116,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
   public evChargingTickets: EVChargingTicket[] = [];
   public evGpsPoints: EVGPSPoint[] = [];
   public evDriverPayroll: EVDriverPayroll[] = [];
-  /** Phiếu đề xuất đổi lộ trình (Nhân sự tạo — Giám đốc duyệt). */
+  /** Phiếu đổi lộ trình theo sản phẩm (tạo là APPROVED, có hiệu lực ngay). */
   public evRouteChangeRequests: EVRouteChangeRequest[] = [];
 
   // Nhân viên TERMINATED đã thu hồi token (tránh audit spam mỗi lần pull)
@@ -1698,7 +1698,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return true;
   }
 
-  // ---------- Phiếu đổi lộ trình (Nhân sự tạo — Giám đốc duyệt) ----------
+  // ---------- Phiếu đổi lộ trình (tạo là có hiệu lực ngay) ----------
   async createEVRouteChangeRequest(input: Partial<EVRouteChangeRequest>): Promise<EVRouteChangeRequest> {
     this.checkErrors();
     const routeId = String(input?.route_id ?? '').trim();

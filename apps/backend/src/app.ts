@@ -817,6 +817,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     } catch (err: any) { evErr(res, err); }
   });
 
+  // Duyệt/từ chối chỉ còn dùng cho phiếu PENDING của luồng cũ (phiếu tạo mới là APPROVED ngay).
   app.post('/ev/admin/route-changes/:id/approve', authMiddleware, requireRole(['ADMIN', 'DIRECTOR']), validate({ params: evRouteChangeIdParams, body: evRouteChangeApproveBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const r = await ev.routeChanges.approveRequest(req.params.id, evActor(req), req.body?.notes);

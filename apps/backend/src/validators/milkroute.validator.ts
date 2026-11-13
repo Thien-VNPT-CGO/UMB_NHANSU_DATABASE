@@ -278,7 +278,7 @@ export const evLiveShiftsQuery = z.object({
 });
 
 // ============================================================
-// PHIẾU ĐỔI LỘ TRÌNH (Nhân sự tạo — Giám đốc duyệt)
+// PHIẾU ĐỔI LỘ TRÌNH (tạo là có hiệu lực ngay; bước duyệt chỉ còn cho phiếu cũ)
 // ============================================================
 
 const evRouteChangeStopBody = z.object({
