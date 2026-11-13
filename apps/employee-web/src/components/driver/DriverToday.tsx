@@ -1,14 +1,26 @@
 /**
  * Tab "Hôm nay" — ca đang chạy, tiến độ giao, SLA và bấm xác nhận điểm.
  */
+import { useRef, useState } from 'react';
 import {
-  AlertTriangle, CalendarDays, CheckCircle2, Clock, MapPin, Navigation, Play, RefreshCw, Square, Truck,
+  AlertTriangle, CalendarDays, CheckCircle2, ChevronDown, ChevronUp, Clock, MapPin, Navigation, Play, RefreshCw, Square, Truck,
 } from 'lucide-react';
+import { apiRequest } from '../../services/api';
 import {
   BigButton, Card, DC, Empty, Pill, ScreenTitle, STATUS_LABEL, Stat,
   fmtDay, fmtMin, fmtTime, haversine, openDirections,
 } from './driver-shared';
 import type { DriverData } from './useDriverData';
+
+/** Nhãn loại điểm dừng hiển thị trong phần xem trước lộ trình. */
+const STOP_TYPE_LABEL: Record<string, string> = {
+  START: 'Xuất phát',
+  DELIVERY: 'Giao hàng',
+  OFFICE: 'Văn phòng',
+  CHARGING: 'Trạm sạc',
+  END: 'Kết thúc',
+};
+
 
 function HeroStat({ label, value, alert }: { label: string; value: string; alert?: boolean }) {
   return (
@@ -37,10 +49,54 @@ export function DriverToday({ d }: { d: DriverData }) {
   const within = nextStop && distToNext != null && distToNext <= Number(nextStop.geofence_radius_m || 100);
   const gpsReady = !!coords && coords.accuracy <= 30;
   const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+  const tomorrow = new Date(Date.parse(`${today}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
   const shiftIsToday = String(current?.shift_date || '').slice(0, 10) === today;
   // Bắt đầu ca: đủ điều kiện khi GPS đã có, sai số ≤120m và trong bán kính Xưởng.
   const startReady = !!coords && coords.accuracy <= 120
     && (d.distToStart == null || d.distToStart <= d.startRadius);
+
+  // ------------------------------------------------------------------
+  // Xem trước lộ trình của ca trong lịch 7 ngày (đặc biệt ngày mai).
+  // Mỗi lần mở đều tải mới để thấy ngay phiếu đổi lộ trình HR vừa duyệt.
+  // ------------------------------------------------------------------
+  const [previewId, setPreviewId] = useState('');
+  const [preview, setPreview] = useState<any>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewErr, setPreviewErr] = useState('');
+  const previewReqRef = useRef(0);
+
+  const fetchPreview = async (shiftId: string) => {
+    const token = ++previewReqRef.current;
+    setPreviewBusy(true);
+    setPreviewErr('');
+    try {
+      const det: any = await apiRequest(`/ev/me/shifts/${encodeURIComponent(shiftId)}`, { _noCache: true } as any);
+      if (token === previewReqRef.current) setPreview(det);
+    } catch (e: any) {
+      if (token === previewReqRef.current) {
+        setPreview(null);
+        setPreviewErr(e?.message || 'Không tải được lộ trình của ca này.');
+      }
+    } finally {
+      if (token === previewReqRef.current) setPreviewBusy(false);
+    }
+  };
+
+  const togglePreview = (shift: any) => {
+    const id = String(shift?.shift_id || '');
+    if (!id) return;
+    if (previewId === id) {
+      previewReqRef.current += 1; // huỷ phản hồi đang chờ (nếu có)
+      setPreviewId('');
+      setPreview(null);
+      setPreviewErr('');
+      setPreviewBusy(false);
+      return;
+    }
+    setPreviewId(id);
+    setPreview(null);
+    void fetchPreview(id);
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -306,31 +362,146 @@ export function DriverToday({ d }: { d: DriverData }) {
         </Card>
       )}
 
-      {/* ---------------- Lịch ca tuần ---------------- */}
+      {/* ---------------- Lịch ca tuần + xem trước lộ trình ---------------- */}
       {weekShifts.length > 0 && (
         <Card>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 5 }}>
             <CalendarDays size={16} color={DC.brand} />
-            <div style={{ fontSize: 13.5, fontWeight: 900, color: DC.ink }}>Lịch ca 7 ngày tới</div>
+            <div style={{ fontSize: 13.5, fontWeight: 900, color: DC.ink }}>Lịch ca & lộ trình 7 ngày tới</div>
             <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, color: DC.muted }}>{weekShifts.length} ca</span>
+          </div>
+          <div style={{ fontSize: 10.5, color: DC.muted, fontWeight: 600, marginBottom: 9, lineHeight: 1.6 }}>
+            Bấm vào một ngày để xem trước lộ trình di chuyển — kể cả khi HR vừa đổi lộ trình.
           </div>
           {weekShifts.map((s: any) => {
             const sl = STATUS_LABEL[s.status] || STATUS_LABEL.SCHEDULED;
             const isToday = String(s.shift_date).slice(0, 10) === today;
+            const isTomorrow = String(s.shift_date).slice(0, 10) === tomorrow;
+            const isOpen = previewId === s.shift_id;
             return (
-              <div key={s.shift_id} style={{
-                display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
-                borderRadius: 10, marginBottom: 5,
-                border: `1px solid ${isToday ? DC.brandLine : DC.border}`,
-                backgroundColor: isToday ? DC.brandSoft : '#FFFFFF',
-              }}>
-                <span style={{ fontSize: 11.5, fontWeight: 900, color: isToday ? DC.brandDark : DC.ink, minWidth: 0, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {isToday ? 'Hôm nay • ' : ''}{fmtDay(s.shift_date)}
-                </span>
-                <span style={{ fontSize: 11, fontWeight: 700, color: DC.muted, fontVariantNumeric: 'tabular-nums' }}>
-                  {fmtTime(s.planned_start_at)}{s.planned_end_at ? `–${fmtTime(s.planned_end_at)}` : ''}
-                </span>
-                <Pill text={sl.text} fg={sl.fg} bg={sl.bg} />
+              <div key={s.shift_id} style={{ marginBottom: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => togglePreview(s)}
+                  aria-expanded={isOpen}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px',
+                    borderRadius: isOpen ? '10px 10px 0 0' : 10,
+                    border: `1px solid ${isOpen || isToday ? DC.brandLine : DC.border}`,
+                    backgroundColor: isToday ? DC.brandSoft : '#FFFFFF',
+                    cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
+                  }}
+                >
+                  <span style={{ fontSize: 11.5, fontWeight: 900, color: isToday || isOpen ? DC.brandDark : DC.ink, minWidth: 0, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {isToday ? 'Hôm nay • ' : isTomorrow ? 'Ngày mai • ' : ''}{fmtDay(s.shift_date)}
+                  </span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: DC.muted, fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtTime(s.planned_start_at)}{s.planned_end_at ? `–${fmtTime(s.planned_end_at)}` : ''}
+                  </span>
+                  <Pill text={sl.text} fg={sl.fg} bg={sl.bg} />
+                  {isOpen
+                    ? <ChevronUp size={15} color={DC.brand} />
+                    : <ChevronDown size={15} color={DC.muted} />}
+                </button>
+
+                {isOpen && (
+                  <div style={{
+                    border: `1px solid ${DC.brandLine}`, borderTop: 'none',
+                    borderRadius: '0 0 12px 12px', backgroundColor: '#FFFFFF', padding: '10px 11px 12px',
+                  }}>
+                    {previewBusy && (
+                      <div style={{ fontSize: 12, color: DC.muted, fontWeight: 700, padding: '6px 0' }}>
+                        ⏳ Đang tải lộ trình…
+                      </div>
+                    )}
+
+                    {!previewBusy && previewErr && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, fontWeight: 700, color: DC.danger }}>
+                        ⚠️ {previewErr}
+                        <button
+                          type="button"
+                          onClick={() => void fetchPreview(s.shift_id)}
+                          style={{ padding: '4px 9px', borderRadius: 8, border: `1px solid ${DC.danger}`, backgroundColor: '#FFFFFF', color: DC.danger, fontSize: 11, fontWeight: 800, cursor: 'pointer' }}
+                        >
+                          Thử lại
+                        </button>
+                      </div>
+                    )}
+
+                    {!previewBusy && !previewErr && preview && (
+                      <>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 900, color: DC.ink }}>
+                            🛣️ {preview.routeName || 'Lộ trình giao sữa'}
+                          </span>
+                          {preview.shift?.product_name && (
+                            <Pill text={preview.shift.product_name} fg={DC.blue} bg={DC.blueSoft} />
+                          )}
+                          <span style={{ fontSize: 10.5, fontWeight: 700, color: DC.muted }}>
+                            {preview.stops?.length || 0} điểm
+                          </span>
+                          <button
+                            type="button"
+                            title="Tải lại lộ trình"
+                            onClick={() => void fetchPreview(s.shift_id)}
+                            style={{ marginLeft: 'auto', width: 28, height: 28, borderRadius: 8, border: `1px solid ${DC.border}`, backgroundColor: '#FFFFFF', color: DC.muted, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                          >
+                            <RefreshCw size={12} />
+                          </button>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {(preview.stops || []).map((stop: any) => {
+                            const lat = Number(stop.latitude);
+                            const lng = Number(stop.longitude);
+                            const hasGeo = Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0);
+                            return (
+                              <div key={stop.stop_id || stop.stop_order} style={{
+                                display: 'flex', alignItems: 'flex-start', gap: 8,
+                                padding: '7px 8px', borderRadius: 9,
+                                border: `1px solid ${DC.border}`, backgroundColor: '#FAFAFB',
+                              }}>
+                                <span style={{
+                                  width: 20, height: 20, borderRadius: 999, flexShrink: 0,
+                                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                  fontSize: 10.5, fontWeight: 900,
+                                  backgroundColor: DC.brandSoft, color: DC.brandDark,
+                                }}>{stop.stop_order}</span>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 12, fontWeight: 800, color: DC.ink, lineHeight: 1.4 }}>{stop.name}</div>
+                                  {stop.address && (
+                                    <div style={{ fontSize: 10.5, color: DC.muted, fontWeight: 600, lineHeight: 1.5, marginTop: 1 }}>
+                                      {stop.address}
+                                    </div>
+                                  )}
+                                  <div style={{ fontSize: 9.5, color: DC.muted, fontWeight: 700, marginTop: 2 }}>
+                                    {STOP_TYPE_LABEL[stop.stop_type] || stop.stop_type}
+                                    {stop.sla_minutes ? ` • SLA ${fmtMin(Number(stop.sla_minutes))}` : ''}
+                                    {stop.is_mandatory === false ? ' • tùy chọn' : ''}
+                                  </div>
+                                </div>
+                                {hasGeo && (
+                                  <button
+                                    type="button"
+                                    title="Chỉ đường"
+                                    onClick={() => openDirections(lat, lng, stop.name)}
+                                    style={{ width: 28, height: 28, borderRadius: 8, flexShrink: 0, border: `1px solid ${DC.border}`, backgroundColor: '#FFFFFF', color: DC.brand, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                                  >
+                                    <Navigation size={12} />
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div style={{ fontSize: 10, color: DC.muted, fontWeight: 600, marginTop: 8, lineHeight: 1.6 }}>
+                          Lộ trình hiển thị theo phiếu đổi lộ trình đã được Giám đốc duyệt cho đúng ngày &amp; sản phẩm của ca.
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
