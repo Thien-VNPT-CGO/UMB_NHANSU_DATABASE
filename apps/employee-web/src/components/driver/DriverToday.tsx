@@ -2,7 +2,7 @@
  * Tab "Hôm nay" — ca đang chạy, tiến độ giao, SLA và bấm xác nhận điểm.
  */
 import {
-  AlertTriangle, CheckCircle2, Clock, MapPin, Navigation, Play, RefreshCw, Square, Truck,
+  AlertTriangle, CalendarDays, CheckCircle2, Clock, MapPin, Navigation, Play, RefreshCw, Square, Truck,
 } from 'lucide-react';
 import {
   BigButton, Card, DC, Empty, Pill, ScreenTitle, STATUS_LABEL, Stat,
@@ -28,7 +28,7 @@ function HeroStat({ label, value, alert }: { label: string; value: string; alert
 
 export function DriverToday({ d }: { d: DriverData }) {
   const {
-    profile, current, todayShifts, detail, status, isRunning, stops, nextStop,
+    profile, current, todayShifts, weekShifts, detail, status, isRunning, stops, nextStop,
     slaLeftSec, distToNext, checkedCount, mandatoryLeft, busy, coords,
   } = d;
   const st = STATUS_LABEL[status] || STATUS_LABEL.SCHEDULED;
@@ -280,6 +280,40 @@ export function DriverToday({ d }: { d: DriverData }) {
               })}
             </div>
           )}
+        </Card>
+      )}
+
+      {/* ---------------- Lịch ca tuần ---------------- */}
+      {weekShifts.length > 0 && (
+        <Card>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
+            <CalendarDays size={16} color={DC.brand} />
+            <div style={{ fontSize: 13.5, fontWeight: 900, color: DC.ink }}>Lịch ca 7 ngày tới</div>
+            <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, color: DC.muted }}>{weekShifts.length} ca</span>
+          </div>
+          {weekShifts.map((s: any) => {
+            const sl = STATUS_LABEL[s.status] || STATUS_LABEL.SCHEDULED;
+            const isToday = String(s.shift_date).slice(0, 10) === today;
+            return (
+              <div key={s.shift_id} style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+                borderRadius: 10, marginBottom: 5,
+                border: `1px solid ${isToday ? DC.brandLine : DC.border}`,
+                backgroundColor: isToday ? DC.brandSoft : '#FFFFFF',
+              }}>
+                <span style={{ fontSize: 11.5, fontWeight: 900, color: isToday ? DC.brandDark : DC.ink, minWidth: 0, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {isToday ? 'Hôm nay • ' : ''}{fmtDay(s.shift_date)}
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: DC.muted, fontVariantNumeric: 'tabular-nums' }}>
+                  {fmtTime(s.planned_start_at)}{s.planned_end_at ? `–${fmtTime(s.planned_end_at)}` : ''}
+                </span>
+                <Pill text={sl.text} fg={sl.fg} bg={sl.bg} />
+              </div>
+            );
+          })}
+          <div style={{ fontSize: 10.5, color: DC.muted, fontWeight: 600, marginTop: 5, lineHeight: 1.6 }}>
+            Hệ thống tự tạo ca 08:00–14:00 cho cả tuần. Quản lý vận chuyển có thể sửa giờ từng ngày.
+          </div>
         </Card>
       )}
 

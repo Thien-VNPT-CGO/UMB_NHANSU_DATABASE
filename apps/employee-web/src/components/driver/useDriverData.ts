@@ -17,6 +17,7 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   const [profile, setProfile] = useState<any>(initialProfile || null);
   const [current, setCurrent] = useState<any>(null);
   const [todayShifts, setTodayShifts] = useState<any[]>([]);
+  const [weekShifts, setWeekShifts] = useState<any[]>([]);
   const [detail, setDetail] = useState<any>(null);
   const [tickets, setTickets] = useState<any[]>([]);
   const [payroll, setPayroll] = useState<any[]>([]);
@@ -49,6 +50,7 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
       setCurrent(cur);
       shiftRef.current = cur;
       setTodayShifts(Array.isArray(p?.today_shifts) ? p.today_shifts : []);
+      setWeekShifts(Array.isArray(p?.week_shifts) ? p.week_shifts : []);
 
       if (cur) {
         const det: any = await apiRequest(`/ev/me/shifts/${cur.shift_id}`, NO_CACHE).catch(() => null);
@@ -327,7 +329,7 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   const chargingTicket = tickets.find((t: any) => (t.status === 'APPROVED' || t.status === 'USED') && !t.charging_end_at);
 
   return {
-    loading, err, profile, current, todayShifts, detail, tickets, payroll, history,
+    loading, err, profile, current, todayShifts, weekShifts, detail, tickets, payroll, history,
     busy, coords, gpsErr, gpsSent, nowMs,
     status, isRunning, stops, nextStop, slaLeftSec, distToNext,
     checkedCount, mandatoryLeft, chargingTicket,

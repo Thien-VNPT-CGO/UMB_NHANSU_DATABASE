@@ -234,9 +234,29 @@ export class EVRouteService {
     return this.applyBranchCoords(mapped);
   }
 
-  /** Điểm dừng hiệu lực của một ca (theo ngày ca + sản phẩm của ca). */
+  /**
+   * Ca đã có phiếu sạc do tài xế tạo (chưa bị từ chối/hết hạn)?
+   * Trạm sạc chỉ được đưa lên lộ trình khi tài xế thực sự đăng ký sạc; chưa
+   * có phiếu thì ẩn hẳn để tài xế không thấy điểm dừng thừa trên app.
+   */
+  private shiftHasChargingTicket(shiftId: string): boolean {
+    const tickets: any[] = Array.isArray((this.repo as any).evChargingTickets)
+      ? (this.repo as any).evChargingTickets
+      : [];
+    const ACTIVE_TICKET = ['PENDING_HR', 'PENDING_DIRECTOR', 'APPROVED', 'USED'];
+    return tickets.some(t => String(t.shift_id) === String(shiftId)
+      && ACTIVE_TICKET.includes(String(t.status)));
+  }
+
+  /**
+   * Điểm dừng hiệu lực của một ca (theo ngày ca + sản phẩm của ca).
+   * Trạm sạc bị ẩn nếu ca chưa có phiếu sạc — có phiếu thì tự hiện lại
+   * đúng vị trí trong lộ trình (kể cả khi ca đang chạy).
+   */
   async getEffectiveStopsForShift(shift: EVShift): Promise<EVRouteStop[]> {
-    return this.getEffectiveStops(shift.route_id, shift.shift_date, shift.product_name);
+    const stops = await this.getEffectiveStops(shift.route_id, shift.shift_date, shift.product_name);
+    if (this.shiftHasChargingTicket(shift.shift_id)) return stops;
+    return stops.filter(s => s.stop_type !== 'CHARGING');
   }
 
   /** Tìm điểm dừng hiệu lực của ca (dùng cho check-in). */

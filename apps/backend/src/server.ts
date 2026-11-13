@@ -336,6 +336,21 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
   weeklyOffTick();
   setInterval(weeklyOffTick, 60_000);
 
+  // MilkRoute EV: tự tạo ca vận chuyển cho tuần hiện tại + tuần sau
+  // (mặc định 08:00–14:00, T2→T7). Idempotent: ngày đã có ca (kể cả ca admin
+  // đã sửa) được giữ nguyên, chỉ bổ sung ngày còn thiếu.
+  const evWeeklyShiftTick = () => {
+    services.milkRoute?.shifts.ensureUpcomingWeeks({ createdBy: 'SYSTEM_AUTO' })
+      .then((res) => {
+        const created = res.reduce((n, r) => n + r.created.length, 0);
+        if (created > 0) console.log(`[milkroute] Tự tạo ${created} ca vận chuyển cho tuần hiện tại + tuần sau.`);
+      })
+      .catch(err => console.warn('[milkroute] auto weekly shifts failed:', err?.message || err));
+  };
+  // Chờ pull Sheets + seed lộ trình xong rồi mới tạo ca.
+  setTimeout(evWeeklyShiftTick, 60_000);
+  setInterval(evWeeklyShiftTick, 6 * 60 * 60_000);
+
   // Background Auto-Sync Worker: tự động kéo dữ liệu từ Google Sheets mỗi 5 giây
   // (SHEETS_SYNC_INTERVAL_MS). Việc phát hiện thay đổi + bắn socket nằm ở
   // syncService.onDataChanged phía trên (hash nội dung, không phải counts).

@@ -99,6 +99,23 @@ const fmtDay = (iso?: string) => {
   const t = Date.parse(iso.length <= 10 ? `${iso}T00:00:00` : iso);
   return Number.isFinite(t) ? new Date(t).toLocaleDateString('vi-VN') : '—';
 };
+
+/** Hôm nay theo giờ Việt Nam (YYYY-MM-DD). */
+const vnDay = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+/** Thứ Hai của tuần chứa `day` (YYYY-MM-DD). */
+const mondayOf = (day: string) => {
+  const d = new Date(`${day}T00:00:00Z`);
+  const dow = d.getUTCDay(); // 0 = CN
+  return new Date(d.getTime() - ((dow + 6) % 7) * 86_400_000).toISOString().slice(0, 10);
+};
+/** ISO → 'YYYY-MM-DDTHH:mm' theo giờ máy (dùng cho input datetime-local). */
+const toLocalInput = (iso?: string) => {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const d = new Date(t);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
 const agoLabel = (iso?: string, now = Date.now()) => {
   if (!iso) return '—';
   const t = Date.parse(iso);
@@ -845,6 +862,13 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
     route_id: '', driver_id: '', vehicle_id: '', shift_date: '',
     planned_start_at: '', planned_end_at: '', product_name: '', notes: '',
   });
+  /** Đang sửa ca nào (rỗng = đang tạo ca mới). */
+  const [editId, setEditId] = useState('');
+  const [showWeek, setShowWeek] = useState(false);
+  const [weekForm, setWeekForm] = useState({
+    week_start: mondayOf(vnDay()), driver_id: '', route_id: '',
+    start_time: '08:00', end_time: '14:00',
+  });
   // Chặn gọi chồng khi filter đổi nhanh / realtime dội nhiều sự kiện.
   const inflightRef = useRef(false);
 
@@ -872,6 +896,7 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
         const firstRouteId = rRes.value[0]?.route_id || '';
         // Không tạo object form mới nếu route_id không đổi (tránh re-render thừa).
         setForm((f) => (f.route_id || !firstRouteId ? f : { ...f, route_id: firstRouteId }));
+        setWeekForm((f) => (f.route_id || !firstRouteId ? f : { ...f, route_id: firstRouteId }));
       }
     } catch (e: any) {
       showToast(`⚠️ ${e?.message || 'Không tải được danh sách ca.'}`);
@@ -893,31 +918,93 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
     }
   };
 
-  const createShift = async () => {
+  const resetForm = () => {
+    setEditId('');
+    setForm((f) => ({
+      ...f, driver_id: '', vehicle_id: '', shift_date: '', planned_start_at: '', planned_end_at: '', product_name: '', notes: '',
+    }));
+  };
+
+  const openEdit = (s: any) => {
+    setEditId(String(s.shift_id));
+    setForm({
+      route_id: String(s.route_id || ''),
+      driver_id: String(s.driver_id || ''),
+      vehicle_id: String(s.vehicle_id || ''),
+      shift_date: String(s.shift_date || '').slice(0, 10),
+      planned_start_at: toLocalInput(s.planned_start_at),
+      planned_end_at: toLocalInput(s.planned_end_at),
+      product_name: String(s.product_name || ''),
+      notes: String(s.notes || ''),
+    });
+    setShowWeek(false);
+    setShowForm(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const saveShift = async () => {
     if (!form.route_id || !form.driver_id || !form.vehicle_id || !form.shift_date || !form.planned_start_at) {
       return showToast('⚠️ Điền đủ: lộ trình, tài xế, xe, ngày ca và giờ bắt đầu!');
     }
-    setBusy('create');
+    setBusy(editId ? 'edit' : 'create');
     try {
-      await apiRequest('/ev/admin/shifts', {
-        method: 'POST',
-        body: JSON.stringify({
-          route_id: form.route_id,
-          driver_id: form.driver_id,
-          vehicle_id: form.vehicle_id,
-          shift_date: form.shift_date,
-          planned_start_at: new Date(form.planned_start_at).toISOString(),
-          planned_end_at: form.planned_end_at ? new Date(form.planned_end_at).toISOString() : undefined,
-          product_name: form.product_name.trim() || undefined,
-          notes: form.notes || undefined,
-        }),
-      });
-      showToast('✅ Đã tạo ca vận chuyển — tài xế thấy ca trong app ngay.');
+      const body: any = {
+        route_id: form.route_id,
+        driver_id: form.driver_id,
+        vehicle_id: form.vehicle_id,
+        shift_date: form.shift_date,
+        planned_start_at: new Date(form.planned_start_at).toISOString(),
+        product_name: form.product_name.trim() || undefined,
+        notes: form.notes || undefined,
+      };
+      if (form.planned_end_at) body.planned_end_at = new Date(form.planned_end_at).toISOString();
+      if (editId) {
+        await apiRequest(`/ev/admin/shifts/${encodeURIComponent(editId)}`, {
+          method: 'PUT',
+          body: JSON.stringify(body),
+        });
+        showToast('✅ Đã cập nhật ca — tài xế thấy giờ mới ngay.');
+      } else {
+        await apiRequest('/ev/admin/shifts', { method: 'POST', body: JSON.stringify(body) });
+        showToast('✅ Đã tạo ca vận chuyển — tài xế thấy ca trong app ngay.');
+      }
       setShowForm(false);
-      setForm((f) => ({ ...f, driver_id: '', vehicle_id: '', shift_date: '', planned_start_at: '', planned_end_at: '', product_name: '', notes: '' }));
+      resetForm();
       await load();
     } catch (e: any) {
-      showToast(`⚠️ ${e?.message || 'Tạo ca thất bại.'}`);
+      showToast(`⚠️ ${e?.message || (editId ? 'Cập nhật ca thất bại.' : 'Tạo ca thất bại.')}`);
+    } finally { setBusy(''); }
+  };
+
+  /** Tạo ca cho cả tuần: 08:00–14:00, T2→T7, bỏ qua ngày đã có ca. */
+  const generateWeek = async () => {
+    if (!weekForm.route_id) return showToast('⚠️ Chọn lộ trình trước khi tạo ca tuần!');
+    setBusy('week');
+    try {
+      const r: any = await apiRequest('/ev/admin/shifts/generate-week', {
+        method: 'POST',
+        body: JSON.stringify({
+          week_start: weekForm.week_start || undefined,
+          driver_ids: weekForm.driver_id ? [weekForm.driver_id] : undefined,
+          route_id: weekForm.route_id,
+          start_time: weekForm.start_time || '08:00',
+          end_time: weekForm.end_time || '14:00',
+        }),
+      });
+      const created = Number(r?.created?.length || 0);
+      const skipped = Number(r?.skipped?.length || 0);
+      const reasons = Array.isArray(r?.skipped)
+        ? Array.from(new Set(r.skipped.map((x: any) => String(x.reason || '').split(':')[0]))).slice(0, 3)
+        : [];
+      showToast(
+        created > 0
+          ? `✅ Đã tạo ${created} ca cho tuần ${fmtDay(r.week_start)} → ${fmtDay(r.week_end)}${skipped ? ` • bỏ qua ${skipped} (${reasons.join(', ')})` : ''}`
+          : `ℹ️ Không có ca mới — ${skipped} mục bị bỏ qua${reasons.length ? ` (${reasons.join(', ')})` : ''}.`,
+      );
+      setShowWeek(false);
+      await load();
+    } catch (e: any) {
+      showToast(`⚠️ ${e?.message || 'Tạo ca tuần thất bại.'}`);
     } finally { setBusy(''); }
   };
 
@@ -967,7 +1054,13 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
               <RefreshCw size={13} /> Tải lại
             </button>
             {canManage && (
-              <button className="btn-primary" onClick={() => setShowForm((s) => !s)}
+              <button className="btn-secondary" onClick={() => { setShowWeek((s) => !s); setShowForm(false); }}
+                style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 800 }}>
+                {showWeek ? <><ChevronUp size={14} /> Đóng</> : <><CalendarClock size={14} /> Tạo ca tuần</>}
+              </button>
+            )}
+            {canManage && (
+              <button className="btn-primary" onClick={() => { setShowForm((s) => !s); setShowWeek(false); if (showForm) resetForm(); else setEditId(''); }}
                 style={{ padding: '6px 13px', fontSize: '12px', fontWeight: 800 }}>
                 {showForm ? <><ChevronUp size={14} /> Đóng</> : <><Plus size={14} /> Tạo ca</>}
               </button>
@@ -976,7 +1069,11 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
         </div>
 
         {showForm && canManage && (
-          <div style={{ display: 'flex', gap: '9px', flexWrap: 'wrap', padding: '12px', backgroundColor: BG, border: `1px solid ${BORDER}`, borderRadius: '10px', marginBottom: '12px', alignItems: 'flex-end' }}>
+          <div style={{ padding: '12px', backgroundColor: BG, border: `1px solid ${editId ? '#93C5FD' : BORDER}`, borderRadius: '10px', marginBottom: '12px' }}>
+            <div style={{ fontSize: '12.5px', fontWeight: 900, color: 'var(--text)', marginBottom: '9px' }}>
+              {editId ? `Sửa ca ${fmtDay(form.shift_date)} — cập nhật lại đúng ngày này` : 'Tạo ca vận chuyển mới'}
+            </div>
+            <div style={{ display: 'flex', gap: '9px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
             <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)' }}>
               Ngày ca *
               <input type="date" value={form.shift_date} onChange={(e) => setForm((f) => ({ ...f, shift_date: e.target.value }))}
@@ -1028,10 +1125,65 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
                 {vehicles.map((v: any) => <option key={v.vehicle_id} value={v.vehicle_id}>{v.license_plate}</option>)}
               </select>
             </label>
-            <button className="btn-primary" disabled={busy === 'create'} onClick={createShift}
+            <button className="btn-primary" disabled={busy === 'create' || busy === 'edit'} onClick={() => void saveShift()}
               style={{ padding: '8px 16px', fontSize: '13px', fontWeight: 800 }}>
-              {busy === 'create' ? 'Đang tạo…' : 'Tạo ca'}
+              {busy === 'edit' ? 'Đang lưu…' : busy === 'create' ? 'Đang tạo…' : editId ? 'Lưu thay đổi' : 'Tạo ca'}
             </button>
+            <button className="btn-secondary" onClick={() => { setShowForm(false); resetForm(); }}
+              style={{ padding: '8px 14px', fontSize: '13px', fontWeight: 800 }}>
+              Hủy
+            </button>
+            </div>
+          </div>
+        )}
+
+        {showWeek && canManage && (
+          <div style={{ padding: '12px', backgroundColor: BG, border: `1px solid ${BORDER}`, borderRadius: '10px', marginBottom: '12px' }}>
+            <div style={{ fontSize: '12.5px', fontWeight: 900, color: 'var(--text)', marginBottom: '8px' }}>
+              Tạo ca tự động cả tuần — mặc định 08:00 → 14:00, Thứ 2 → Thứ 7
+            </div>
+            <div style={{ fontSize: '11.5px', color: MUTED, fontWeight: 600, marginBottom: '10px', lineHeight: 1.6 }}>
+              Ngày đã có ca sẽ được giữ nguyên (kể cả ca đã sửa tay), hệ thống chỉ bổ sung ngày còn thiếu.
+              Tài xế chưa gán xe sẽ bị bỏ qua.
+            </div>
+            <div style={{ display: 'flex', gap: '9px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)' }}>
+                Tuần chứa ngày
+                <input type="date" value={weekForm.week_start} onChange={(e) => setWeekForm((f) => ({ ...f, week_start: e.target.value }))}
+                  style={{ display: 'block', marginTop: '3px', padding: '7px 9px', fontSize: '13px', borderRadius: '8px', border: `1px solid ${BORDER}` }} />
+              </label>
+              <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)' }}>
+                Tài xế
+                <select value={weekForm.driver_id} onChange={(e) => setWeekForm((f) => ({ ...f, driver_id: e.target.value }))}
+                  style={{ display: 'block', marginTop: '3px', padding: '7px 9px', fontSize: '13px', borderRadius: '8px', border: `1px solid ${BORDER}`, maxWidth: '230px' }}>
+                  <option value="">Tất cả tài xế khối Xưởng</option>
+                  {workshopDrivers.map((e: any) => (
+                    <option key={e.employee_id} value={e.employee_id}>{e.full_name} ({e.employee_code || e.employee_id})</option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)' }}>
+                Lộ trình *
+                <select value={weekForm.route_id} onChange={(e) => setWeekForm((f) => ({ ...f, route_id: e.target.value }))}
+                  style={{ display: 'block', marginTop: '3px', padding: '7px 9px', fontSize: '13px', borderRadius: '8px', border: `1px solid ${BORDER}` }}>
+                  {routes.map((r: any) => <option key={r.route_id} value={r.route_id}>{r.name}</option>)}
+                </select>
+              </label>
+              <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)' }}>
+                Giờ bắt đầu
+                <input type="time" value={weekForm.start_time} onChange={(e) => setWeekForm((f) => ({ ...f, start_time: e.target.value }))}
+                  style={{ display: 'block', marginTop: '3px', padding: '7px 9px', fontSize: '13px', borderRadius: '8px', border: `1px solid ${BORDER}` }} />
+              </label>
+              <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)' }}>
+                Giờ kết thúc
+                <input type="time" value={weekForm.end_time} onChange={(e) => setWeekForm((f) => ({ ...f, end_time: e.target.value }))}
+                  style={{ display: 'block', marginTop: '3px', padding: '7px 9px', fontSize: '13px', borderRadius: '8px', border: `1px solid ${BORDER}` }} />
+              </label>
+              <button className="btn-primary" disabled={busy === 'week'} onClick={() => void generateWeek()}
+                style={{ padding: '8px 16px', fontSize: '13px', fontWeight: 800 }}>
+                {busy === 'week' ? 'Đang tạo…' : 'Tạo ca cho tuần'}
+              </button>
+            </div>
           </div>
         )}
 
@@ -1089,6 +1241,12 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
                         ))}
                         {canManage && (
                           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', paddingTop: '4px' }}>
+                            {['SCHEDULED', 'PAUSED'].includes(s.status) && (
+                              <button className="btn-secondary" disabled={busy === s.shift_id} onClick={() => openEdit(s)}
+                                style={{ padding: '7px 13px', fontSize: '12px', fontWeight: 800 }}>
+                                ✏️ Sửa ngày/giờ ca
+                              </button>
+                            )}
                             {['SCHEDULED', 'PAUSED', 'CANCELLED'].includes(s.status) && (
                               <button className="btn-primary" disabled={busy === s.shift_id} onClick={() => setStatus(s, 'CANCELLED')}
                                 style={{ padding: '7px 13px', fontSize: '12px', fontWeight: 800, backgroundColor: '#B91C1C' }}>

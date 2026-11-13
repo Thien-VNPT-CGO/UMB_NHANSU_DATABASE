@@ -26,7 +26,7 @@ export function DriverCharging({ d }: { d: DriverData }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <ScreenTitle title="Phiếu sạc xe điện" sub="Tạo phiếu → HR duyệt → Giám đốc duyệt → sạc đúng ngày" />
+      <ScreenTitle title="Phiếu sạc xe điện" sub="Tạo phiếu → HR duyệt → Giám đốc duyệt → sạc đúng ngày. Trạm sạc chỉ hiện trên lộ trình khi bạn có phiếu." />
 
       {/* Đang sạc */}
       {active && active.charging_start_at && (

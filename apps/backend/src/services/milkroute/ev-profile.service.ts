@@ -24,6 +24,10 @@ function todayVN(): string {
   return new Date(Date.now() + VN_OFFSET_MS).toISOString().slice(0, 10);
 }
 
+function addDaysVN(day: string, days: number): string {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
 export interface DriverHistoryOptions {
   from?: string;
   to?: string;
@@ -76,6 +80,13 @@ export class EVDriverProfileService {
 
     const currentShift = isDriver ? await this.currentShift(id) : null;
     const todayShifts = allShifts.filter((s: any) => String(s.shift_date) === day);
+    // Lịch 7 ngày tới (hôm nay → +6) để app tài xế hiển thị ca tuần đã tạo sẵn.
+    const weekEnd = addDaysVN(day, 6);
+    const weekShifts = allShifts
+      .filter((s: any) => String(s.shift_date) >= day && String(s.shift_date) <= weekEnd && s.status !== 'CANCELLED')
+      .sort((a: any, b: any) =>
+        String(a.shift_date).localeCompare(String(b.shift_date))
+        || String(a.planned_start_at).localeCompare(String(b.planned_start_at)));
 
     const stats = await this.monthStats(id, period, allShifts);
     const payroll = isDriver
@@ -110,6 +121,7 @@ export class EVDriverProfileService {
         : null,
       current_shift: currentShift,
       today_shifts: todayShifts,
+      week_shifts: weekShifts,
       period,
       stats,
       payroll,

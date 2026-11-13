@@ -2,6 +2,63 @@ import { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
 import { EVShift, EVRouteStop, EVRoute, EVVehicle } from '@ubm/shared';
 import { EVRouteService } from './ev-route.service.js';
 
+const VN_OFFSET_MS = 7 * 3_600_000;
+
+/** Ngày hôm nay theo giờ Việt Nam (YYYY-MM-DD). */
+function vnToday(): string {
+  return new Date(Date.now() + VN_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** Cộng/trừ ngày trên chuỗi YYYY-MM-DD (không phụ thuộc múi giờ máy chủ). */
+function addDays(day: string, days: number): string {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** Thứ Hai của tuần chứa `day`. */
+function mondayOf(day: string): string {
+  const dow = new Date(Date.parse(`${day}T00:00:00Z`)).getUTCDay(); // 0 = CN
+  return addDays(day, -((dow + 6) % 7));
+}
+
+/** 'YYYY-MM-DD' + 'HH:MM' (giờ VN) → ISO timestamp. */
+function vnDateTimeToIso(day: string, time: string): string {
+  return new Date(`${day}T${time}:00+07:00`).toISOString();
+}
+
+export interface GenerateWeekInput {
+  /** Ngày bất kỳ trong tuần cần tạo (mặc định tuần hiện tại). */
+  weekStart?: string;
+  /** Danh sách tài xế; bỏ trống = mọi nhân sự khối Xưởng còn làm việc. */
+  driverIds?: string[];
+  routeId?: string;
+  /** Chỉ dùng khi tạo cho đúng 1 tài xế; nhiều tài xế thì lấy xe được gán. */
+  vehicleId?: string;
+  /** Giờ bắt đầu mặc định 08:00 (giờ VN). */
+  startTime?: string;
+  /** Giờ kết thúc mặc định 14:00 (giờ VN). */
+  endTime?: string;
+  createdBy?: string;
+  /** Có tạo bù cho những ngày đã qua trong tuần hay không (mặc định không). */
+  includePast?: boolean;
+  /**
+   * true  = chỉ bổ sung ngày còn thiếu (nút "Tạo ca tuần" của admin).
+   * false = chỉ tạo khi tài xế CHƯA có ca nào trong tuần (chạy tự động), nhờ
+   *         vậy ca admin đã xóa/chỉnh không bị tạo lại ngoài ý muốn.
+   */
+  fillMissing?: boolean;
+  /** Các thứ cần tạo: 1=T2 … 6=T7, 0=CN. Mặc định T2 → T7. */
+  days?: number[];
+}
+
+export interface GenerateWeekResult {
+  week_start: string;
+  week_end: string;
+  created: EVShift[];
+  skipped: Array<{ driver_id: string; shift_date: string; reason: string }>;
+}
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
 export class EVShiftService {
   constructor(
     private readonly repo: MockSheetsAdapter,
@@ -58,6 +115,23 @@ export class EVShiftService {
 
   /** Cập nhật ca vận chuyển */
   async updateShift(shiftId: string, input: Partial<Omit<EVShift, 'shift_id' | 'created_at' | 'version'>>): Promise<EVShift | null> {
+    const current = this.repo.evShifts.find(s => s.shift_id === shiftId);
+    if (!current) return null;
+
+    // Đổi ngày/tài xế/xe → kiểm tra trùng như lúc tạo ca (bỏ qua ca đã hủy).
+    const nextDate = String(input.shift_date ?? current.shift_date);
+    const nextDriver = String(input.driver_id ?? current.driver_id);
+    const nextVehicle = String(input.vehicle_id ?? current.vehicle_id);
+    const nextStatus = String(input.status ?? current.status);
+    if (nextStatus !== 'CANCELLED') {
+      const dupDriver = this.repo.evShifts.find(s => s.shift_id !== shiftId
+        && s.driver_id === nextDriver && s.shift_date === nextDate && s.status !== 'CANCELLED');
+      if (dupDriver) throw new Error('DRIVER_HAS_SHIFT: Tài xế đã có ca vào ngày này');
+      const dupVehicle = this.repo.evShifts.find(s => s.shift_id !== shiftId
+        && s.vehicle_id === nextVehicle && s.shift_date === nextDate && s.status !== 'CANCELLED');
+      if (dupVehicle) throw new Error('VEHICLE_HAS_SHIFT: Xe đã được phân ca vào ngày này');
+    }
+
     try {
       return await this.repo.updateEVShift(shiftId, input);
     } catch (err: any) {
@@ -69,6 +143,140 @@ export class EVShiftService {
   /** Xóa ca vận chuyển */
   async deleteShift(shiftId: string): Promise<boolean> {
     return this.repo.deleteEVShift(shiftId);
+  }
+
+  // ============================================================
+  // TẠO CA TỰ ĐỘNG THEO TUẦN (mặc định 08:00 – 14:00, T2 → T7)
+  // ============================================================
+
+  /**
+   * Tạo ca vận chuyển cho cả tuần của từng tài xế.
+   *
+   * Nguyên tắc:
+   *  - Chỉ tạo ca còn thiếu — ca đã có (kể cả ca đã hủy) được giữ nguyên, nên
+   *    mọi chỉnh sửa của Quản lý vận chuyển trên một ngày không bị ghi đè.
+   *  - Mỗi tài xế dùng xe được gán (evVehicles.assigned_driver_id); tài xế chưa
+   *    có xe bị bỏ qua và ghi lý do để admin bổ sung.
+   *  - Giờ mặc định 08:00 → 14:00 theo giờ Việt Nam.
+   */
+  async generateWeek(input: GenerateWeekInput = {}): Promise<GenerateWeekResult> {
+    const baseDay = /^\d{4}-\d{2}-\d{2}$/.test(String(input.weekStart || ''))
+      ? String(input.weekStart)
+      : vnToday();
+    const weekStart = mondayOf(baseDay);
+    const weekEnd = addDays(weekStart, 6);
+
+    const startTime = String(input.startTime || '08:00').trim();
+    const endTime = String(input.endTime || '14:00').trim();
+    if (!TIME_RE.test(startTime)) throw new Error('INVALID_TIME: Giờ bắt đầu phải dạng HH:MM');
+    if (!TIME_RE.test(endTime)) throw new Error('INVALID_TIME: Giờ kết thúc phải dạng HH:MM');
+
+    const route = input.routeId
+      ? this.repo.evRoutes.find(r => r.route_id === input.routeId)
+      : (this.repo.evRoutes.find(r => r.is_active) || this.repo.evRoutes[0]);
+    if (!route) throw new Error('ROUTE_NOT_FOUND: Chưa có lộ trình để phân ca');
+
+    const repoAny: any = this.repo as any;
+    const employees: any[] = Array.isArray(repoAny.employees) ? repoAny.employees : [];
+    const vehicles: any[] = Array.isArray(repoAny.evVehicles) ? repoAny.evVehicles : [];
+
+    let driverIds = (input.driverIds || []).map(id => String(id || '').trim()).filter(Boolean);
+    if (!driverIds.length) {
+      driverIds = employees
+        .filter(e => String(e?.group || '').toUpperCase() === 'XUONG')
+        .filter(e => String(e?.employment_status || '').toUpperCase() !== 'TERMINATED')
+        .map(e => String(e.employee_id));
+    }
+
+    // Mặc định Thứ 2 → Thứ 7. Chủ nhật để trống, admin có thể tạo tay nếu chạy.
+    const wantedDays = Array.isArray(input.days) && input.days.length
+      ? input.days.map(Number).filter(n => n >= 0 && n <= 6)
+      : [1, 2, 3, 4, 5, 6];
+    const today = vnToday();
+    const dates: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const day = addDays(weekStart, i);
+      const dow = new Date(Date.parse(`${day}T00:00:00Z`)).getUTCDay();
+      if (!wantedDays.includes(dow)) continue;
+      if (!input.includePast && day < today) continue;
+      dates.push(day);
+    }
+
+    const created: EVShift[] = [];
+    const skipped: GenerateWeekResult['skipped'] = [];
+
+    for (const driverId of driverIds) {
+      const assigned = vehicles.filter(v => String(v?.assigned_driver_id || '') === driverId);
+      const vehicleId = (input.vehicleId && driverIds.length === 1)
+        ? String(input.vehicleId)
+        : String((assigned.find(v => String(v?.status || 'ACTIVE') === 'ACTIVE') || assigned[0])?.vehicle_id || '');
+      if (!vehicleId) {
+        skipped.push({ driver_id: driverId, shift_date: '', reason: 'NO_VEHICLE: Chưa gán xe cho tài xế' });
+        continue;
+      }
+
+      // Chế độ tự động: tuần đã có ca của tài xế thì không đụng vào nữa.
+      if (input.fillMissing === false) {
+        const planned = this.repo.evShifts.some(s => s.driver_id === driverId
+          && s.shift_date >= weekStart && s.shift_date <= weekEnd);
+        if (planned) {
+          skipped.push({ driver_id: driverId, shift_date: '', reason: 'WEEK_ALREADY_PLANNED: Tuần này đã có ca' });
+          continue;
+        }
+      }
+
+      for (const day of dates) {
+        const exists = this.repo.evShifts.find(s => s.driver_id === driverId && s.shift_date === day);
+        if (exists) {
+          skipped.push({ driver_id: driverId, shift_date: day, reason: 'SHIFT_EXISTS: Ngày này đã có ca' });
+          continue;
+        }
+        const vehicleBusy = this.repo.evShifts.find(s => s.vehicle_id === vehicleId
+          && s.shift_date === day && s.status !== 'CANCELLED');
+        if (vehicleBusy) {
+          skipped.push({ driver_id: driverId, shift_date: day, reason: 'VEHICLE_HAS_SHIFT: Xe đã được phân ca' });
+          continue;
+        }
+        try {
+          const shift = await this.repo.createEVShift({
+            route_id: route.route_id,
+            driver_id: driverId,
+            vehicle_id: vehicleId,
+            shift_date: day,
+            planned_start_at: vnDateTimeToIso(day, startTime),
+            planned_end_at: vnDateTimeToIso(day, endTime),
+            notes: `Ca tự động theo tuần (${startTime}–${endTime})`,
+            created_by: String(input.createdBy || 'SYSTEM').trim() || 'SYSTEM',
+          });
+          created.push(shift);
+        } catch (err: any) {
+          skipped.push({
+            driver_id: driverId,
+            shift_date: day,
+            reason: String(err?.message || 'CREATE_FAILED'),
+          });
+        }
+      }
+    }
+
+    return { week_start: weekStart, week_end: weekEnd, created, skipped };
+  }
+
+  /**
+   * Bảo đảm tuần hiện tại + tuần sau luôn có ca cho mọi tài xế.
+   * Chạy lúc khởi động và định kỳ; idempotent nên không nhân đôi ca.
+   */
+  async ensureUpcomingWeeks(input: { createdBy?: string } = {}): Promise<GenerateWeekResult[]> {
+    const weekStart = mondayOf(vnToday());
+    const out: GenerateWeekResult[] = [];
+    for (const week of [weekStart, addDays(weekStart, 7)]) {
+      out.push(await this.generateWeek({
+        weekStart: week,
+        createdBy: input.createdBy || 'SYSTEM_AUTO',
+        fillMissing: false,
+      }));
+    }
+    return out;
   }
 
   /** Lấy ca theo ID */

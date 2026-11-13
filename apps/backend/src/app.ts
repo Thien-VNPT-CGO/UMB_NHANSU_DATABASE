@@ -233,6 +233,7 @@ import {
   evRouteChangeRejectBody,
   evRouteChangeCancelBody,
   evRouteChangeQuery,
+  evShiftGenerateWeekBody,
 } from './validators/milkroute.validator.js';
 import {
   requirePermission,
@@ -894,6 +895,28 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
       broadcastUpdate('evShift', { action: 'create', id: s.shift_id });
       res.status(201).json(s);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // Tạo ca tự động cho cả tuần (mặc định 08:00–14:00, T2→T7).
+  // Bỏ qua ngày đã có ca nên mọi chỉnh sửa trước đó của admin được giữ nguyên.
+  app.post('/ev/admin/shifts/generate-week', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ body: evShiftGenerateWeekBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const b = req.body;
+      const result = await ev.shifts.generateWeek({
+        weekStart: b.week_start,
+        driverIds: b.driver_ids,
+        routeId: b.route_id,
+        vehicleId: b.vehicle_id,
+        startTime: b.start_time,
+        endTime: b.end_time,
+        includePast: b.include_past === true,
+        createdBy: req.user!.id,
+      });
+      if (result.created.length) {
+        broadcastUpdate('evShift', { action: 'create', id: result.created[0].shift_id });
+      }
+      res.status(result.created.length ? 201 : 200).json(result);
     } catch (err: any) { evErr(res, err); }
   });
 
@@ -9357,6 +9380,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       payrollService,
       notificationsService,
       zaloService,
+      milkRoute: milkRouteModule,
     },
   };
 }

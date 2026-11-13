@@ -160,6 +160,17 @@ export const evShiftsQuery = z.object({
   offset: z.coerce.number().int().nonnegative().default(0),
 });
 
+/** Tạo ca tự động cho cả tuần (mặc định 08:00–14:00, T2→T7). */
+export const evShiftGenerateWeekBody = z.object({
+  week_start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  driver_ids: z.array(idSchema).max(200).optional(),
+  route_id: idSchema.optional(),
+  vehicle_id: idSchema.optional(),
+  start_time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+  end_time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+  include_past: z.boolean().optional(),
+});
+
 // Driver Shift Actions
 export const evStartShiftBody = z.object({
   shift_id: idSchema,
