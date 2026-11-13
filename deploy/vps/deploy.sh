@@ -18,7 +18,7 @@ git checkout -f vps 2>/dev/null || git checkout -f -B vps origin/vps
 # File untracked nhu apps/backend/.env, data/ van duoc giu nguyen.
 git reset --hard origin/vps
 
-echo "==> 2. Build 2 web tro ve API VPS (${API_BASE})"
+echo "==> 2. Build 3 web tro ve API VPS (${API_BASE})"
 export GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
 node apps/backend/scripts/gen-version.cjs 2>/dev/null || true
 
@@ -48,12 +48,14 @@ npm run build:shared
 
 VITE_API_URL="${API_BASE}" npm run build:admin
 VITE_API_URL="${API_BASE}" npm run build:employee
+VITE_VIOLATION_API_URL="${API_BASE}" npm run build:violation
 
 echo "==> 3. Publish static cho Nginx"
-sudo mkdir -p /opt/ubm/admin-web /opt/ubm/employee-web
-sudo rm -rf /opt/ubm/admin-web/* /opt/ubm/employee-web/*
+sudo mkdir -p /opt/ubm/admin-web /opt/ubm/employee-web /opt/ubm/violation-web
+sudo rm -rf /opt/ubm/admin-web/* /opt/ubm/employee-web/* /opt/ubm/violation-web/*
 sudo cp -r apps/admin-web/dist/* /opt/ubm/admin-web/
 sudo cp -r apps/employee-web/dist/* /opt/ubm/employee-web/
+sudo cp -r apps/violation-web/dist/* /opt/ubm/violation-web/
 
 echo "==> 4. Build + chay backend (Docker)"
 test -f apps/backend/.env || { echo "THIEU apps/backend/.env (copy tu deploy/vps/.env.vps.example)"; exit 1; }
@@ -112,6 +114,7 @@ else
   docker compose logs --tail 30 backend || true
 fi
 echo "XONG:"
-echo "  NV:    https://umbomilk-nhansu-diemdanh.duckdns.org/"
-echo "  Admin: https://umbomilk-nhansu-diemdanh.duckdns.org/admin/"
-echo "  API:   https://umbomilk-nhansu-diemdanh.duckdns.org/api/health"
+echo "  NV:        https://umbomilk-nhansu-diemdanh.duckdns.org/"
+echo "  Admin:     https://umbomilk-nhansu-diemdanh.duckdns.org/admin/"
+echo "  Vi pham:   https://umbomilk-nhansu-diemdanh.duckdns.org/violations/"
+echo "  API:       https://umbomilk-nhansu-diemdanh.duckdns.org/api/health"

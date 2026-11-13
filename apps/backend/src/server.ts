@@ -46,6 +46,7 @@ import { isPostgresMode } from './repositories/repository.factory.js';
 import { evRealtimeService } from './services/milkroute/ev-realtime.service.js';
 import { getDriveBackupScheduler } from './services/backup-drive.service.js';
 import { getSheetsBackupScheduler } from './services/sheets-backup.service.js';
+import { verifyViolationToken } from './services/violation.service.js';
 
 const PORT = process.env.PORT || 4005;
 
@@ -221,7 +222,23 @@ io.use((socket, next) => {
       next();
     })
     .catch(() => {
-      next(new Error('AUTHENTICATION_ERROR: Invalid token'));
+      // Cổng vi phạm dùng token riêng (typ=violation-access) — vẫn cho nhận
+      // realtime nhưng chỉ join phòng hệ thống, không lẫn quyền admin nghiệp vụ.
+      verifyViolationToken(adapter, token)
+        .then(payload => {
+          (socket as any).user = {
+            sub: 'VIOLATION_PORTAL',
+            role: 'VIOLATION_PORTAL',
+            branchScope: '*',
+            fullName: payload.account.display_name,
+            permissions: [],
+            violationPortal: true,
+          };
+          next();
+        })
+        .catch(() => {
+          next(new Error('AUTHENTICATION_ERROR: Invalid token'));
+        });
     });
 });
 

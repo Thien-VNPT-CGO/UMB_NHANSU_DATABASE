@@ -12,12 +12,14 @@
     "build:backend": "npm run build --workspace=@ubm/backend",
     "build:admin": "npm run build --workspace=@ubm/admin-web",
     "build:employee": "npm run build --workspace=@ubm/employee-web",
-    "build": "npm run build:shared && npm run build:backend && npm run build:admin && npm run build:employee",
+    "build:violation": "npm run build --workspace=@ubm/violation-web",
+    "build": "npm run build:shared && npm run build:backend && npm run build:admin && npm run build:employee && npm run build:violation",
     "test": "npm run test --workspace=@ubm/backend",
     "start": "node apps/backend/dist/server.js",
     "dev:backend": "npm run dev --workspace=apps/backend",
     "dev:admin": "npm run dev --workspace=apps/admin-web",
     "dev:employee": "npm run dev --workspace=apps/employee-web",
+    "dev:violation": "npm run dev --workspace=apps/violation-web",
     "format:sheets": "node scripts/format-sheets.cjs"
   },
   "engines": {

@@ -175,6 +175,21 @@ export class DriveStorageService {
     return fileId ? `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view` : '';
   }
 
+  /** Đọc metadata tối thiểu của 1 file/folder (dùng để nhận diện thư mục gốc). */
+  public async getFileMetadata(fileId: string): Promise<{ id: string; name: string; mimeType: string } | null> {
+    if (!this.drive || !fileId) return null;
+    const meta = await this.drive.files.get({
+      fileId,
+      fields: 'id,name,mimeType',
+      supportsAllDrives: true,
+    } as any);
+    return {
+      id: String(meta.data.id || fileId),
+      name: String(meta.data.name || ''),
+      mimeType: String(meta.data.mimeType || ''),
+    };
+  }
+
   /** Tạo/tìm folder theo tên trong parent; cache theo parent + tên. */
   public async ensureFolder(name: string, parentId?: string): Promise<string> {
     if (!this.drive) throw new Error('DRIVE_NOT_CONFIGURED');

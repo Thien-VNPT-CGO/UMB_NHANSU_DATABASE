@@ -11,6 +11,7 @@ COPY packages/shared/package.json packages/shared/
 COPY apps/backend/package.json apps/backend/
 COPY apps/admin-web/package.json apps/admin-web/
 COPY apps/employee-web/package.json apps/employee-web/
+COPY apps/violation-web/package.json apps/violation-web/
 RUN npm ci
 
 # ---------- build: build toàn bộ workspaces ----------
@@ -29,6 +30,7 @@ COPY packages/shared/package.json packages/shared/
 COPY apps/backend/package.json apps/backend/
 COPY apps/admin-web/package.json apps/admin-web/
 COPY apps/employee-web/package.json apps/employee-web/
+COPY apps/violation-web/package.json apps/violation-web/
 RUN npm ci --omit=dev --ignore-scripts \
  && npm cache clean --force \
  && rm -rf /tmp/npm-cache
@@ -41,6 +43,7 @@ COPY --from=build /app/apps/backend/dist ./apps/backend/dist
 COPY --from=build /app/apps/backend/assets ./apps/backend/assets
 COPY --from=build /app/apps/admin-web/dist ./apps/admin-web/dist
 COPY --from=build /app/apps/employee-web/dist ./apps/employee-web/dist
+COPY --from=build /app/apps/violation-web/dist ./apps/violation-web/dist
 
 RUN chown -R node:node /app
 USER node
