@@ -1943,13 +1943,20 @@ const RouteChangesView: React.FC<{
                     </select>
                   </label>
                   <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, minWidth: '150px' }}>
-                    Chi nhánh (tự lấy toạ độ)
+                    Chi nhánh (tự lấy tên, địa chỉ & toạ độ)
                     <select value={s.branch_id} onChange={(e) => {
                       const bid = e.target.value;
                       const b = branches.find((x: any) => String(x.id) === bid);
                       patchStop(idx, {
                         branch_id: bid,
-                        ...(b ? { latitude: Number(b.latitude) || 0, longitude: Number(b.longitude) || 0, address: s.address || b.address || '' } : {}),
+                        // Chọn chi nhánh → tự điền Tên điểm + cập nhật Địa chỉ & toạ độ
+                        // theo đúng dữ liệu cấu hình ở tab Quản Lý Chi Nhánh.
+                        ...(b ? {
+                          name: String(b.name || '').trim() || s.name,
+                          latitude: Number(b.latitude) || 0,
+                          longitude: Number(b.longitude) || 0,
+                          address: String(b.address || '').trim() || s.address,
+                        } : {}),
                       });
                     }}
                       style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12px', borderRadius: '7px', border: `1px solid ${BORDER}` }}>
