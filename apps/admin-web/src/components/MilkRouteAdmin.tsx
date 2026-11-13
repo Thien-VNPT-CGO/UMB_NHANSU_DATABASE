@@ -1838,7 +1838,7 @@ const RouteChangesView: React.FC<{
 
       {String(currentUser?.role || '').toUpperCase() === 'FINANCE' && (
         <div style={{ marginBottom: '10px', padding: '8px 11px', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '9px', fontSize: '11.5px', fontWeight: 700, color: '#1D4ED8', lineHeight: 1.7 }}>
-          Tài khoản Kế toán: được tạo / sửa / hủy phiếu đổi lộ trình. Phiếu <b>có hiệu lực ngay</b> khi tạo — không cần Giám đốc duyệt.
+          Tài khoản Kế toán: được tạo / sửa / hủy phiếu đổi lộ trình. Phiếu <b>có hiệu lực ngay</b> khi tạo — áp dụng trực tiếp cho ca &amp; app tài xế.
         </div>
       )}
 
