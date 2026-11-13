@@ -36,6 +36,19 @@ import {
 /** Leaflet là UMD/CJS: namespace import có thể là default hoặc named tùy bundler. */
 const L = ((LeafletModule as any).default ?? LeafletModule) as typeof LeafletModule;
 
+/**
+ * Icon xe trên Live Map.
+ *  - Xanh ngọc: xe đang chạy ca.
+ *  - Xanh dương: tài xế mở app, đã chia sẻ vị trí nhưng chưa bắt đầu ca.
+ */
+const vehicleDivIcon = (active: boolean) => L.divIcon({
+  className: '',
+  html: `<div style="width:24px;height:24px;border-radius:50% 50% 50% 4px;transform:rotate(-45deg);background:${active ? '#0F766E' : '#2563EB'};border:2.5px solid #fff;box-shadow:0 2px 8px rgba(15,23,42,.45)"></div>`,
+  iconSize: [24, 24],
+  iconAnchor: [12, 12],
+  popupAnchor: [0, -12],
+});
+
 export interface MilkRouteAdminProps {
   currentUser: any;
   allEmployees?: any[];
@@ -412,27 +425,26 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
       if (!id || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
       seen.add(id);
       const pos: [number, number] = [lat, lng];
+      const live = liveShifts.find((s: any) => String(s.shiftId) === String(v.shiftId));
+      const active = !!live || ['IN_PROGRESS', 'CHARGING', 'RETURNING'].includes(String(v.shiftStatus || ''));
       let marker = markersRef.current[id];
       if (!marker) {
-        marker = L.marker(pos, {
-          icon: L.divIcon({
-            className: '',
-            html: `<div style="width:24px;height:24px;border-radius:50% 50% 50% 4px;transform:rotate(-45deg);background:#0F766E;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(15,23,42,.45)"></div>`,
-            iconSize: [24, 24],
-            iconAnchor: [12, 12],
-            popupAnchor: [0, -12],
-          }),
-        }).addTo(map);
+        marker = L.marker(pos, { icon: vehicleDivIcon(active) }).addTo(map);
         marker.bindTooltip(String(v.licensePlate || 'Xe'), { direction: 'top', offset: [0, -14], permanent: false });
         marker.on('click', () => setSelectedId(id));
+        (marker as any).__active = active;
         markersRef.current[id] = marker;
       } else {
         marker.setLatLng(pos);
+        if ((marker as any).__active !== active) {
+          (marker as any).__active = active;
+          marker.setIcon(vehicleDivIcon(active));
+        }
       }
-      const live = liveShifts.find((s: any) => String(s.shiftId) === String(v.shiftId));
       marker.setPopupContent(`
         <div style="font:600 12px/1.55 system-ui,sans-serif;min-width:190px">
           <strong style="font-size:13px">${v.licensePlate || 'Xe'} — ${v.driverName || '—'}</strong><br/>
+          ${active ? '🟢 Đang chạy ca' : '🔵 Online • chưa vào ca'}<br/>
           🚀 Tốc độ: ${Math.round(Number(v.speed) || 0)} km/h<br/>
           🔋 Pin: ${Math.round(Number(v.battery) || 0)}%<br/>
           📍 GPS: ${agoLabel(v.lastUpdate)}<br/>
@@ -491,7 +503,7 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
           style={{ width: '100%', height: '480px', borderRadius: '8px', overflow: 'hidden', background: '#E2E8F0' }}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 4px 2px', fontSize: '11.5px', color: MUTED, fontWeight: 600, flexWrap: 'wrap' }}>
-          <span>🟢 Xe đang chạy • 🏢 chi nhánh (vòng bán kính theo cấu hình) • ⭕ geofence điểm giao</span>
+          <span>🟢 xe đang chạy ca • 🔵 xe online (chưa vào ca) • 🏢 chi nhánh • ⭕ geofence điểm giao</span>
           <button className="btn-secondary" style={{ marginLeft: 'auto', padding: '5px 11px', fontSize: '11.5px', fontWeight: 700 }} onClick={() => void loadLive()}>
             <RefreshCw size={13} /> Làm mới
           </button>
@@ -504,7 +516,7 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
       <Card style={{ flex: '0 1 360px', minWidth: '300px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Gauge size={17} color={BRAND} />
-          <span style={{ fontSize: '14px', fontWeight: 900, color: 'var(--text)' }}>Xe đang vận hành</span>
+          <span style={{ fontSize: '14px', fontWeight: 900, color: 'var(--text)' }}>Xe đang hoạt động</span>
           <span style={{ marginLeft: 'auto', fontSize: '11px', color: MUTED, fontWeight: 700 }}>
             {err ? '⚠️ lỗi kết nối' : loading ? 'đang tải…' : `cập nhật ${new Date().toLocaleTimeString('vi-VN')}`}
           </span>
@@ -518,13 +530,14 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
 
         {!err && vehicles.length === 0 && !loading && (
           <div style={{ fontSize: '12.5px', color: MUTED, fontWeight: 600, lineHeight: 1.7, padding: '10px 2px' }}>
-            Hiện không có xe nào đang chạy ca.<br />
-            Tài xế bấm <b>Bắt đầu ca</b> trong app là xe xuất hiện ở đây (GPS gửi mỗi 15 giây).
+            Chưa có xe nào gửi vị trí.<br />
+            Xe xuất hiện ngay khi tài xế mở app (GPS gửi mỗi 15 giây) — <b>không cần bắt đầu ca</b>.
           </div>
         )}
 
         {vehicles.map((v: any) => {
           const live = liveById[String(v.shiftId)];
+          const onShift = !!live || ['IN_PROGRESS', 'CHARGING', 'RETURNING'].includes(String(v.shiftStatus || ''));
           const isSel = selectedId === String(v.vehicleId);
           const stale = Date.now() - Date.parse(v.lastUpdate || '') > 90000;
           return (
@@ -538,11 +551,15 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Truck size={15} color="#0F766E" />
+                <Truck size={15} color={onShift ? '#0F766E' : '#2563EB'} />
                 <span style={{ fontSize: '13px', fontWeight: 900, color: 'var(--text)' }}>{v.licensePlate || 'Xe'}</span>
                 <span style={{ fontSize: '12px', color: MUTED, fontWeight: 700 }}>• {v.driverName || '—'}</span>
                 <span style={{ marginLeft: 'auto' }}>
-                  {stale ? pill('#B45309', '#FEF3C7', 'GPS cũ') : pill('#047857', '#ECFDF5', 'Live')}
+                  {stale
+                    ? pill('#B45309', '#FEF3C7', 'GPS cũ')
+                    : onShift
+                      ? pill('#047857', '#ECFDF5', 'Đang chạy ca')
+                      : pill('#1D4ED8', '#EFF6FF', 'Online')}
                 </span>
               </div>
               <div style={{ display: 'flex', gap: '12px', marginTop: '6px', fontSize: '11.5px', color: MUTED, fontWeight: 700, flexWrap: 'wrap' }}>

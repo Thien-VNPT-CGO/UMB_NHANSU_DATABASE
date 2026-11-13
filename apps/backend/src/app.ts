@@ -1203,18 +1203,29 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // ---------------------------------------------------------------
   // DRIVER — GPS (ghi theo lô, broadcast lên Live Map)
+  // Tài xế mở app là gửi GPS ngay (chưa cần bắt đầu ca) để Quản lý vận
+  // chuyển / HR / Kế toán / Giám đốc thấy xe trên bản đồ.
   // ---------------------------------------------------------------
   app.post('/ev/me/gps', authMiddleware, requireRole(evDriverRoles), validate({ body: evGpsBatchBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const driverId = evDriverId(req);
+      if (!driverId) return res.status(403).json({ error: 'DRIVER_NOT_FOUND: Tài khoản không gắn nhân viên' });
+      const assignedVehicle = await ev.vehicles.getVehicleByDriver(driverId).catch(() => null);
+      const assignedVehicleId = String(assignedVehicle?.vehicle_id || '');
       const points: any[] = [];
       for (const p of req.body.points) {
-        const shift = await ev.shifts.getShift(p.shift_id).catch(() => null);
-        if (!shift || shift.driver_id !== driverId) continue;
+        // Có shift_id → phải là ca của chính tài xế; không có → chỉ chia sẻ vị trí.
+        let shift: any = null;
+        if (p.shift_id) {
+          shift = await ev.shifts.getShift(p.shift_id).catch(() => null);
+          if (!shift || shift.driver_id !== driverId) continue;
+        }
+        const vehicleId = String(shift?.vehicle_id || assignedVehicleId || '');
+        if (!vehicleId) continue;
         points.push({
-          shiftId: shift.shift_id,
+          shiftId: shift?.shift_id || '',
           driverId,
-          vehicleId: shift.vehicle_id,
+          vehicleId,
           recordedAt: p.recorded_at,
           latitude: p.latitude,
           longitude: p.longitude,
@@ -1225,11 +1236,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           isMock: p.is_mock,
         });
       }
-      if (!points.length) return res.status(400).json({ error: 'NO_VALID_POINTS: Không có điểm GPS hợp lệ thuộc ca của bạn' });
+      if (!points.length) {
+        return res.status(400).json({
+          error: assignedVehicleId
+            ? 'NO_VALID_POINTS: Không có điểm GPS hợp lệ'
+            : 'NO_VEHICLE: Tài khoản chưa được gán xe điện — báo quản lý vận chuyển gán xe',
+        });
+      }
       const result = await ev.gps.ingestGPSPoints(points);
       // Broadcast điểm cuối (mới nhất) lên Live Map.
       const last = points[points.length - 1];
       ev.realtime.broadcastGPSUpdate(last.shiftId, driverId, {
+        vehicleId: last.vehicleId,
         latitude: last.latitude,
         longitude: last.longitude,
         accuracy: Number(last.accuracy || 0),

@@ -324,6 +324,7 @@ export function DriverToday({ d }: { d: DriverData }) {
         </div>
         <div style={{ fontSize: 11.5, color: '#92400E', lineHeight: 1.75, fontWeight: 600 }}>
           • Bấm điểm khi đứng <b>≤100m</b> so với điểm giao, sai số GPS ≤30m.<br />
+          • Mở app là chia sẻ vị trí xe với quản lý (kể cả trước khi bắt đầu ca).<br />
           • Mỗi chặng có SLA riêng — trễ bị trừ điểm phạt vào lương.<br />
           • Quên bấm điểm bắt buộc = điểm bỏ lọt, tính phạt khi kết thúc ca.<br />
           • Sạc xe: tạo phiếu → HR duyệt → Giám đốc duyệt → sạc đúng ngày đăng ký.

@@ -379,6 +379,8 @@ export interface EVGPSUpdatePayload {
   battery: number;
   recordedAt: string;
   isMock: boolean;
+  /** Xe nhận điểm GPS — có cả khi tài xế chưa vào ca (chỉ chia sẻ vị trí). */
+  vehicleId?: string;
 }
 
 export interface EVCheckinPayload {

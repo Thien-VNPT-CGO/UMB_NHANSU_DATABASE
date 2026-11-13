@@ -37,6 +37,9 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
 
   const status = String(current?.status || '');
   const isRunning = ['IN_PROGRESS', 'CHARGING', 'RETURNING', 'PAUSED'].includes(status);
+  // Xe đã gán cho tài xế → mở app là chia sẻ vị trí (không cần bắt đầu ca),
+  // để Quản lý vận chuyển / HR / Kế toán / Giám đốc thấy xe trên Live Map.
+  const canTrack = !!profile?.vehicle?.vehicle_id;
 
   // ------------------------------------------------------------------
   // Tải dữ liệu
@@ -136,10 +139,7 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   }, []);
 
   const flushGps = useCallback(async () => {
-    const shift = shiftRef.current;
-    if (!shift || sendingRef.current || !bufferRef.current.length) return;
-    const st = String(shift.status || '');
-    if (st !== 'IN_PROGRESS' && st !== 'CHARGING' && st !== 'RETURNING') return;
+    if (sendingRef.current || !bufferRef.current.length) return;
     const points = bufferRef.current.splice(0, bufferRef.current.length);
     sendingRef.current = true;
     try {
@@ -157,17 +157,21 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   }, []);
 
   useEffect(() => {
-    if (!isRunning) return;
+    if (!canTrack) return;
     const t = setInterval(() => { void flushGps(); }, 15000);
     return () => clearInterval(t);
-  }, [isRunning, flushGps]);
+  }, [canTrack, flushGps]);
 
   useEffect(() => {
-    if (!isRunning || !coords) return;
+    if (!canTrack || !coords) return;
     const last = bufferRef.current[bufferRef.current.length - 1];
     if (last && Date.now() - last._at < 5000) return;
+    const shift = shiftRef.current;
+    const running = !!shift && ['IN_PROGRESS', 'CHARGING', 'RETURNING'].includes(String(shift.status || ''));
     bufferRef.current.push({
-      shift_id: shiftRef.current?.shift_id,
+      // Chỉ gắn ca khi ca đang chạy — ngoài ca vẫn gửi vị trí nhưng không
+      // làm sai lịch sử/quãng đường của ca.
+      shift_id: running ? shift.shift_id : undefined,
       recorded_at: new Date().toISOString(),
       latitude: coords.lat,
       longitude: coords.lng,
@@ -177,7 +181,7 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
       is_mock: false,
       _at: Date.now(),
     });
-  }, [coords, isRunning]);
+  }, [coords, canTrack]);
 
   useEffect(() => () => { void flushGps(); }, [flushGps]);
 
@@ -331,7 +335,7 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   return {
     loading, err, profile, current, todayShifts, weekShifts, detail, tickets, payroll, history,
     busy, coords, gpsErr, gpsSent, nowMs,
-    status, isRunning, stops, nextStop, slaLeftSec, distToNext,
+    status, isRunning, canTrack, stops, nextStop, slaLeftSec, distToNext,
     checkedCount, mandatoryLeft, chargingTicket,
     reload: load, loadHistory,
     startShift, endShift, checkin, createTicket, chargingAction,

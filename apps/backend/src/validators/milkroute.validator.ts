@@ -237,7 +237,8 @@ export const evChargingTicketsQuery = z.object({
 // GPS Batch
 export const evGpsBatchBody = z.object({
   points: z.array(z.object({
-    shift_id: idSchema,
+    // Không bắt buộc: tài xế vừa đăng nhập app đã chia sẻ vị trí (chưa vào ca).
+    shift_id: idSchema.optional(),
     recorded_at: z.string().datetime(),
     latitude: z.number().min(-90).max(90),
     longitude: z.number().min(-180).max(180),

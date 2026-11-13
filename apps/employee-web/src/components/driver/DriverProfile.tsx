@@ -124,7 +124,19 @@ export function DriverProfile({ d, onLogout, showToast }: { d: DriverData; onLog
               </span>
             </div>
             <div style={{ fontSize: 10.5, color: DC.muted, fontWeight: 600, marginTop: 5 }}>
-              % pin cập nhật theo GPS tài xế gửi lên trong ca chạy.
+              % pin cập nhật theo GPS tài xế gửi lên khi app đang mở.
+            </div>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 7, marginTop: 9, padding: '8px 10px',
+              borderRadius: 10, backgroundColor: DC.brandSoft, border: `1px solid ${DC.brandLine}`,
+            }}>
+              <span style={{ width: 7, height: 7, borderRadius: 999, backgroundColor: DC.brand, boxShadow: `0 0 0 3px ${DC.brand}33` }} />
+              <span style={{ fontSize: 11.5, fontWeight: 800, color: DC.brandDark }}>
+                {d.canTrack ? 'Đang chia sẻ vị trí xe với quản lý' : 'Chưa gửi được vị trí — kiểm tra quyền GPS'}
+              </span>
+            </div>
+            <div style={{ fontSize: 10.5, color: DC.muted, fontWeight: 600, marginTop: 5, lineHeight: 1.6 }}>
+              Quản lý vận chuyển, HR, Kế toán và Giám đốc thấy xe của bạn trên bản đồ khi app đang mở — kể cả trước khi bắt đầu ca.
             </div>
           </>
         )}
