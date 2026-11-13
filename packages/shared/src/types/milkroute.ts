@@ -258,7 +258,13 @@ export interface EVDriverPayroll {
   driver_id: string;
   period: string;                  // YYYY-MM
   total_shifts: number;
+  /** Số ca tài xế thực sự hoạt động (bắt đầu ca hoặc có check-in). */
+  worked_shifts?: number;
   total_work_days: number;
+  /** Số ngày có xếp ca nhưng tài xế không hoạt động — không tính lương. */
+  absent_days?: number;
+  /** Danh sách ngày không hoạt động (YYYY-MM-DD). */
+  absent_dates?: string[];
   standard_days: number;           // Số ngày trong 28 ngày đầu
   extra_days: number;              // Số ngày trong 2 ngày cuối
   standard_pay: number;            // Lương 28 ngày chuẩn

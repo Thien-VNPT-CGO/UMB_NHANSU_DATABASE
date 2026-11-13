@@ -17,6 +17,7 @@ import { DEFAULT_EV_PAYROLL_CONFIG } from '@ubm/shared';
 import type { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
 import type { EVRouteService } from './ev-route.service.js';
 import type { EVPayrollService } from './ev-payroll.service.js';
+import { isShiftWorked } from './ev-shift-activity.js';
 
 const VN_OFFSET_MS = 7 * 3_600_000;
 
@@ -230,12 +231,24 @@ export class EVDriverProfileService {
     const penaltyAmount = monthShifts.reduce((n: number, s: any) => n + Number(s.penalty_amount || 0), 0);
     const penaltyPoints = monthShifts.reduce((n: number, s: any) => n + Number(s.penalty_points || 0), 0);
     const completed = monthShifts.filter((s: any) => s.status === 'COMPLETED').length;
+    const checkinCountByShift = new Map<string, number>();
+    for (const c of checkins) {
+      const id = String(c.shift_id);
+      checkinCountByShift.set(id, (checkinCountByShift.get(id) || 0) + 1);
+    }
+    // Ngày công = số ca tài xế thực sự hoạt động (bắt đầu ca hoặc có check-in).
+    const workedShifts = monthShifts.filter((s: any) =>
+      isShiftWorked(s, checkinCountByShift.get(String(s.shift_id)) || 0));
+    const absentShifts = monthShifts.filter((s: any) =>
+      !isShiftWorked(s, checkinCountByShift.get(String(s.shift_id)) || 0));
 
     return {
       period,
       shifts_total: monthShifts.length,
       shifts_completed: completed,
-      work_days: monthShifts.length,
+      work_days: workedShifts.length,
+      absent_days: absentShifts.length,
+      absent_dates: absentShifts.map((s: any) => String(s.shift_date)).sort(),
       stops_total: stopsTotal,
       stops_done: done,
       late_count: late,

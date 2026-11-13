@@ -1554,6 +1554,14 @@ const PayrollView: React.FC<{ allEmployees: any[]; showToast: (m: string) => voi
                   </td>
                   <td style={{ padding: '10px', color: 'var(--text)', fontWeight: 600 }}>
                     {p.total_shifts} ca • {p.total_work_days} ngày ({p.standard_days}× chuẩn + {p.extra_days}× cuối)
+                    {Number(p.absent_days || 0) > 0 && (
+                      <div style={{ fontSize: '10.5px', color: '#B45309', fontWeight: 700, marginTop: 2 }}>
+                        {p.absent_days} ngày không hoạt động — không tính lương
+                        {Array.isArray(p.absent_dates) && p.absent_dates.length > 0
+                          ? ` (${p.absent_dates.map((d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`).join(', ')})`
+                          : ''}
+                      </div>
+                    )}
                   </td>
                   <td style={{ padding: '10px' }}>
                     {Number(p.total_penalty_points) > 0 ? (

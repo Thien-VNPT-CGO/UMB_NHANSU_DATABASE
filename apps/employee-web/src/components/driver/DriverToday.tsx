@@ -378,6 +378,9 @@ export function DriverToday({ d }: { d: DriverData }) {
           <div style={{ fontSize: 10.5, color: DC.muted, fontWeight: 600, marginBottom: 9, lineHeight: 1.6 }}>
             Bấm vào một ngày để xem trước lộ trình di chuyển — kể cả khi HR vừa đổi lộ trình.
           </div>
+          <div style={{ fontSize: 10.5, color: '#B45309', fontWeight: 700, marginBottom: 9, lineHeight: 1.6 }}>
+            Chỉ ngày có hoạt động (bấm bắt đầu ca hoặc check-in điểm giao) mới được tính lương; ngày không hoạt động không tính công.
+          </div>
           {calendarDays.map((day) => {
             const dayShifts = weekShifts.filter((s: any) => String(s.shift_date).slice(0, 10) === day);
             const isToday = day === today;

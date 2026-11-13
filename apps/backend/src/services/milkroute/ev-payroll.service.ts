@@ -1,6 +1,7 @@
 import { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
 import { EVDriverPayroll, EVShift, EVShiftCheckin, EVPayrollConfig, DEFAULT_EV_PAYROLL_CONFIG, EVRouteStop } from '@ubm/shared';
 import { EVRouteService } from './ev-route.service.js';
+import { isShiftWorked } from './ev-shift-activity.js';
 
 export class EVPayrollService {
   constructor(
@@ -29,9 +30,18 @@ export class EVPayrollService {
     // Get checkins for these shifts
     const shiftIds = new Set(shifts.map(s => s.shift_id));
     const checkins = this.repo.evShiftCheckins.filter(c => shiftIds.has(c.shift_id));
+    const checkinCountByShift = new Map<string, number>();
+    for (const c of checkins) {
+      checkinCountByShift.set(c.shift_id, (checkinCountByShift.get(c.shift_id) || 0) + 1);
+    }
+
+    // Chỉ ngày tài xế THỰC SỰ HOẠT ĐỘNG mới được tính công.
+    // Ca đã xếp lịch nhưng không bắt đầu ca và không check-in → không tính lương.
+    const workedShifts = shifts.filter(s => isShiftWorked(s, checkinCountByShift.get(s.shift_id) || 0));
+    const absentShifts = shifts.filter(s => !isShiftWorked(s, checkinCountByShift.get(s.shift_id) || 0));
 
     // Calculate work days
-    const workDays = shifts.length;
+    const workDays = workedShifts.length;
     const standardDays = Math.min(workDays, this.config.standard_work_days);
     const extraDays = Math.max(0, workDays - this.config.standard_work_days);
 
@@ -55,7 +65,7 @@ export class EVPayrollService {
       }>,
     };
 
-    for (const shift of shifts) {
+    for (const shift of workedShifts) {
       const isExtraDay = (shift.work_day_index || 0) > this.config.standard_work_days;
       const dailyRate = isExtraDay ? this.config.extra_daily_rate : this.config.standard_daily_rate;
       const missedPenaltyRate = isExtraDay ? this.config.penalty_per_missed_checkin.extra : this.config.penalty_per_missed_checkin.standard;
@@ -108,9 +118,12 @@ export class EVPayrollService {
       driver_id: driverId,
       period,
       total_shifts: shifts.length,
+      worked_shifts: workDays,
       total_work_days: workDays,
       standard_days: standardDays,
       extra_days: extraDays,
+      absent_days: absentShifts.length,
+      absent_dates: absentShifts.map(s => s.shift_date).sort(),
       standard_pay: standardPay,
       extra_pay: extraPay,
       total_penalty_points: penaltyBreakdown.missed_checkins + penaltyBreakdown.late_sla,

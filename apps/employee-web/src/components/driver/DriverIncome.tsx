@@ -78,6 +78,14 @@ export function DriverIncome({ d }: { d: DriverData }) {
           {Number(currentPayroll?.total_work_days || stats.work_days || 0)} ngày công • {Number(currentPayroll?.total_shifts || stats.shifts_total || 0)} ca
           {penaltyAmount > 0 ? ` • trừ phạt ${fmtMoney(penaltyAmount)}` : ' • không phạt'}
         </div>
+        {Number(currentPayroll?.absent_days || 0) > 0 && (
+          <div style={{ marginTop: 9, backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: 9, padding: '7px 10px', fontSize: 10.5, fontWeight: 700, lineHeight: 1.5 }}>
+            {currentPayroll.absent_days} ngày có lịch nhưng không hoạt động — không tính lương
+            {Array.isArray(currentPayroll.absent_dates) && currentPayroll.absent_dates.length > 0
+              ? ` (${currentPayroll.absent_dates.map((d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`).join(', ')})`
+              : ''}
+          </div>
+        )}
         {currentPayroll?.status === 'ESTIMATED' && (
           <div style={{ marginTop: 10, backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: 9, padding: '7px 10px', fontSize: 10.5, fontWeight: 700, lineHeight: 1.5 }}>
             Số tạm tính theo công thức lương tài xế. Kế toán chốt bảng lương sẽ cập nhật chính thức.
