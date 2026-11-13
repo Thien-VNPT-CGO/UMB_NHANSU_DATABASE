@@ -1,27 +1,28 @@
 /**
  * Thành phần & hằng số dùng chung cho APP TÀI XẾ (MilkRoute EV).
  *
- * Tài khoản tài xế có bộ màu + bố cục riêng (teal, thẻ lớn, nút to) để khác
- * hẳn cổng nhân viên văn phòng/cửa hàng (hồng thương hiệu, nhiều tab HR).
+ * App tài xế giữ bố cục riêng (thẻ lớn, nút to, 5 tab dưới đáy) nhưng DÙNG
+ * CHUNG bộ màu thương hiệu với cổng nhân viên (index.css: --brand #E85D92,
+ * --brand-soft #F8DDE7, --bg #FFF8F4, --border #F0E2DE...) để đồng nhất nhận diện.
  */
 import type { CSSProperties, ReactNode } from 'react';
 
 export const DC = {
-  brand: '#0F766E',
-  brandDark: '#115E59',
-  brandSoft: '#F0FDFA',
-  brandLine: '#99F6E4',
-  ink: '#0F172A',
-  muted: '#64748B',
-  border: '#E2E8F0',
-  bg: '#F1F5F9',
+  brand: '#E85D92',
+  brandDark: '#BE185D',
+  brandSoft: '#F8DDE7',
+  brandLine: '#FBCFE8',
+  ink: '#273142',
+  muted: '#6B7280',
+  border: '#F0E2DE',
+  bg: '#FFF8F4',
   card: '#FFFFFF',
-  success: '#059669',
-  successSoft: '#ECFDF5',
+  success: '#10B981',
+  successSoft: '#DFF5E8',
   warn: '#B45309',
   warnSoft: '#FEF3C7',
-  danger: '#DC2626',
-  dangerSoft: '#FEF2F2',
+  danger: '#EF4444',
+  dangerSoft: '#FEE2E2',
   purple: '#7C3AED',
   purpleSoft: '#F5F3FF',
   blue: '#1D4ED8',

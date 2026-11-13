@@ -57,7 +57,7 @@ export function DriverMap({ d }: { d: DriverData }) {
     if (stops.length > 1) {
       L.polyline(
         stops.map((s: any) => [Number(s.latitude), Number(s.longitude)] as [number, number]),
-        { color: '#0F766E', weight: 4, opacity: 0.55, dashArray: '8 7' },
+        { color: DC.brand, weight: 4, opacity: 0.55, dashArray: '8 7' },
       ).addTo(layer);
     }
 
@@ -65,7 +65,7 @@ export function DriverMap({ d }: { d: DriverData }) {
       const done = !!s.isCompleted;
       const isNext = d.nextStop?.stop_id === s.stop_id;
       const bg = done ? DC.success : isNext ? DC.brand : '#64748B';
-      const ring = isNext ? '0 0 0 4px rgba(15,118,110,0.22)' : '0 1px 4px rgba(0,0,0,0.25)';
+      const ring = isNext ? '0 0 0 4px rgba(232,93,146,0.22)' : '0 1px 4px rgba(0,0,0,0.25)';
       const icon = L.divIcon({
         className: '',
         html: `<div style="width:26px;height:26px;border-radius:999px;background:${bg};color:#fff;display:flex;align-items:center;justify-content:center;font:800 11px system-ui;box-shadow:${ring};border:2px solid #fff">${done ? '✓' : s.stop_order}</div>`,

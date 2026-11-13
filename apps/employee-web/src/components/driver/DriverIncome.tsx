@@ -63,8 +63,8 @@ export function DriverIncome({ d }: { d: DriverData }) {
       {/* Thẻ thu nhập tháng */}
       <div style={{
         borderRadius: 18, padding: 16, color: '#FFF',
-        background: 'linear-gradient(135deg,#065F46 0%,#0F766E 55%,#0D9488 100%)',
-        boxShadow: '0 10px 24px rgba(5,150,105,0.22)',
+        background: 'linear-gradient(135deg,#BE185D 0%,#D6457E 55%,#E85D92 100%)',
+        boxShadow: '0 10px 24px rgba(232,93,146,0.22)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
           <Wallet size={16} />

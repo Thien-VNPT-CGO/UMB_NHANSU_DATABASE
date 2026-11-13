@@ -47,9 +47,9 @@ export function DriverToday({ d }: { d: DriverData }) {
       <div style={{
         borderRadius: 18, padding: 16, color: '#FFFFFF',
         background: current
-          ? 'linear-gradient(135deg, #0F766E 0%, #115E59 60%, #134E4A 100%)'
-          : 'linear-gradient(135deg, #475569 0%, #334155 100%)',
-        boxShadow: '0 10px 24px rgba(15,118,110,0.22)',
+          ? 'linear-gradient(135deg, #E85D92 0%, #D6457E 58%, #BE185D 100%)'
+          : 'linear-gradient(135deg, #9CA3AF 0%, #6B7280 100%)',
+        boxShadow: current ? '0 10px 24px rgba(232,93,146,0.22)' : '0 10px 24px rgba(107,114,128,0.18)',
       }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
           <div style={{ minWidth: 0 }}>
@@ -89,7 +89,7 @@ export function DriverToday({ d }: { d: DriverData }) {
               </div>
             </div>
             <div style={{ height: 7, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.22)', marginTop: 7, overflow: 'hidden' }}>
-              <div style={{ width: `${Math.max(pct, pct > 0 ? 6 : 0)}%`, height: '100%', borderRadius: 999, backgroundColor: '#5EEAD4', transition: 'width .3s' }} />
+              <div style={{ width: `${Math.max(pct, pct > 0 ? 6 : 0)}%`, height: '100%', borderRadius: 999, backgroundColor: '#FFD1E3', transition: 'width .3s' }} />
             </div>
 
             <div style={{ display: 'flex', gap: 7, marginTop: 12 }}>
@@ -143,7 +143,7 @@ export function DriverToday({ d }: { d: DriverData }) {
 
       {/* ---------------- Điểm kế tiếp ---------------- */}
       {current && isRunning && nextStop && (
-        <Card style={{ borderColor: within ? '#99F6E4' : DC.border, backgroundColor: within ? DC.brandSoft : DC.card }}>
+        <Card style={{ borderColor: within ? DC.brandLine : DC.border, backgroundColor: within ? DC.brandSoft : DC.card }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
             <Navigation size={14} color={DC.brand} />
             <div style={{ fontSize: 10.5, fontWeight: 800, color: DC.brand, letterSpacing: 0.4 }}>ĐIỂM KẾ TIẾP</div>
@@ -180,7 +180,7 @@ export function DriverToday({ d }: { d: DriverData }) {
             <MapPin size={16} color={DC.brand} />
             <div style={{ fontSize: 13.5, fontWeight: 900, color: DC.ink }}>Điểm giao trên lộ trình</div>
             {stops.some((s: any) => s.change_request_id) && (
-              <Pill text="ĐÃ ĐIỀU CHỈNH" fg={DC.purple} bg={DC.purpleSoft} style={{ marginLeft: 'auto' }} />
+              <Pill text="ĐÃ ĐIỀU CHỈNH" fg={DC.brandDark} bg={DC.brandSoft} style={{ marginLeft: 'auto' }} />
             )}
           </div>
 

@@ -55,28 +55,29 @@ export function DriverPortal({ employee, showToast, onLogout, refreshKey = 0, in
       {/* ------------------------- HEADER ------------------------- */}
       <header style={{
         position: 'sticky', top: 0, zIndex: 60,
-        background: 'linear-gradient(135deg, #0F766E 0%, #115E59 100%)',
-        color: '#FFFFFF',
-        boxShadow: '0 4px 14px rgba(15,118,110,0.25)',
+        background: '#FFFFFF',
+        color: DC.ink,
+        borderBottom: `1px solid ${DC.border}`,
+        boxShadow: '0 2px 8px rgba(39,49,66,0.04)',
       }}>
         <div style={{ maxWidth: 620, margin: '0 auto', padding: '12px 14px 10px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{
               width: 38, height: 38, borderRadius: 11, flexShrink: 0, overflow: 'hidden',
-              backgroundColor: '#FFFFFF', border: '1.5px solid rgba(255,255,255,0.55)',
+              backgroundColor: '#FFFFFF', border: `1.5px solid ${DC.border}`,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
               <img src="/logo.jpg" alt="Ụm Bò Milk" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             </div>
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 14.5, fontWeight: 900, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
+                <span style={{ fontSize: 14.5, fontWeight: 900, color: DC.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
                 <span style={{
                   fontSize: 8.5, fontWeight: 900, letterSpacing: 0.6, padding: '2px 6px', borderRadius: 999,
-                  backgroundColor: 'rgba(255,255,255,0.2)', border: '1px solid rgba(255,255,255,0.35)',
+                  backgroundColor: DC.brandSoft, color: DC.brandDark, border: `1px solid ${DC.brandLine}`,
                 }}>TÀI XẾ</span>
               </div>
-              <div style={{ fontSize: 10.5, fontWeight: 700, opacity: 0.9, marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: DC.muted, marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                   <Truck size={11} /> {vehicle?.license_plate || driver.employee_code || '—'}
                 </span>
@@ -92,23 +93,23 @@ export function DriverPortal({ employee, showToast, onLogout, refreshKey = 0, in
             <button
               onClick={() => void d.reload(true)}
               title="Tải lại"
-              style={{ background: 'rgba(255,255,255,0.16)', border: 'none', borderRadius: 10, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#FFF' }}
+              style={{ background: DC.brandSoft, border: `1px solid ${DC.brandLine}`, borderRadius: 10, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: DC.brandDark }}
             >
               <RefreshCw size={15} />
             </button>
             <button
               onClick={() => { if (window.confirm('Đăng xuất khỏi tài khoản tài xế?')) onLogout(); }}
               title="Đăng xuất"
-              style={{ background: 'rgba(255,255,255,0.16)', border: 'none', borderRadius: 10, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#FFF' }}
+              style={{ background: DC.brandSoft, border: `1px solid ${DC.brandLine}`, borderRadius: 10, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: DC.brandDark }}
             >
               <LogOut size={15} />
             </button>
           </div>
 
           {d.current && st && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 9, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.18)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 9, paddingTop: 8, borderTop: `1px solid ${DC.border}` }}>
               <Pill text={st.text} fg={st.fg} bg={st.bg} />
-              <span style={{ fontSize: 10.5, fontWeight: 700, opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: DC.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {d.detail?.routeName || 'Ca vận chuyển'}
                 {d.current.product_name ? ` • ${d.current.product_name}` : ''}
               </span>

@@ -30,7 +30,7 @@ export function DriverCharging({ d }: { d: DriverData }) {
 
       {/* Đang sạc */}
       {active && active.charging_start_at && (
-        <Card style={{ background: 'linear-gradient(135deg,#5B21B6,#7C3AED)', border: 'none', color: '#FFF' }}>
+        <Card style={{ background: 'linear-gradient(135deg,#BE185D,#E85D92)', border: 'none', color: '#FFF' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
             <Zap size={16} />
             <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.5 }}>ĐANG SẠC</span>
@@ -60,16 +60,15 @@ export function DriverCharging({ d }: { d: DriverData }) {
 
       {/* Phiếu đã duyệt chờ sạc */}
       {active && !active.charging_start_at && (
-        <Card style={{ borderColor: '#C4B5FD', backgroundColor: DC.purpleSoft }}>
+        <Card style={{ borderColor: DC.brandLine, backgroundColor: DC.brandSoft }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-            <BatteryCharging size={17} color={DC.purple} />
-            <span style={{ fontSize: 13, fontWeight: 900, color: '#5B21B6' }}>Phiếu đã duyệt — sạc được hôm nay</span>
+            <BatteryCharging size={17} color={DC.brand} />
+            <span style={{ fontSize: 13, fontWeight: 900, color: DC.brandDark }}>Phiếu đã duyệt — sạc được hôm nay</span>
           </div>
-          <div style={{ fontSize: 11.5, color: '#6D28D9', fontWeight: 600, marginTop: 4 }}>
+          <div style={{ fontSize: 11.5, color: '#9D174D', fontWeight: 600, marginTop: 4 }}>
             Ngày đăng ký {fmtDay(active.requested_date)}. Bấm bắt đầu khi đã cắm sạc — hệ thống ghim trạm theo GPS.
           </div>
           <BigButton
-            tone="purple"
             style={{ marginTop: 10 }}
             disabled={d.busy === 'cstart'}
             onClick={() => void d.chargingAction('start', active.ticket_id)}
@@ -156,7 +155,7 @@ export function DriverCharging({ d }: { d: DriverData }) {
       {/* Danh sách phiếu */}
       <Card>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
-          <BatteryCharging size={16} color={DC.purple} />
+          <BatteryCharging size={16} color={DC.brand} />
           <span style={{ fontSize: 13.5, fontWeight: 900, color: DC.ink }}>Phiếu của tôi</span>
           <span style={{ marginLeft: 'auto', fontSize: 11, color: DC.muted, fontWeight: 700 }}>{d.tickets.length} phiếu</span>
         </div>
@@ -184,7 +183,7 @@ export function DriverCharging({ d }: { d: DriverData }) {
                   </div>
                 )}
                 {t.charging_start_at && (
-                  <div style={{ fontSize: 10.5, color: DC.purple, fontWeight: 700, marginTop: 4 }}>
+                  <div style={{ fontSize: 10.5, color: DC.brandDark, fontWeight: 700, marginTop: 4 }}>
                     ⚡ Sạc {fmtTime(t.charging_start_at)}{t.charging_end_at ? ` – ${fmtTime(t.charging_end_at)}` : '...'}
                     {t.charging_station_name ? ` • ${t.charging_station_name}` : ''}
                   </div>
@@ -200,9 +199,9 @@ export function DriverCharging({ d }: { d: DriverData }) {
         </div>
       </Card>
 
-      <Card style={{ backgroundColor: DC.purpleSoft, borderColor: '#DDD6FE' }}>
-        <div style={{ fontSize: 12, fontWeight: 900, color: '#5B21B6', marginBottom: 4 }}>Quy trình duyệt phiếu sạc</div>
-        <div style={{ fontSize: 11.5, color: '#6D28D9', lineHeight: 1.7, fontWeight: 600 }}>
+      <Card style={{ backgroundColor: DC.brandSoft, borderColor: DC.brandLine }}>
+        <div style={{ fontSize: 12, fontWeight: 900, color: DC.brandDark, marginBottom: 4 }}>Quy trình duyệt phiếu sạc</div>
+        <div style={{ fontSize: 11.5, color: '#9D174D', lineHeight: 1.7, fontWeight: 600 }}>
           1. Tài xế tạo phiếu sau khi giao xong điểm Văn phòng.<br />
           2. HR kiểm tra & duyệt cấp 1.<br />
           3. Giám đốc duyệt cấp 2.<br />

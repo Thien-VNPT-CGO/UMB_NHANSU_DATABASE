@@ -55,9 +55,9 @@ export function DriverProfile({ d, onLogout, showToast }: { d: DriverData; onLog
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{
             width: 54, height: 54, borderRadius: 16, flexShrink: 0,
-            background: 'linear-gradient(135deg,#0F766E,#0D9488)', color: '#FFF',
+            background: 'linear-gradient(135deg,#E85D92,#D6457E)', color: '#FFF',
             display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 900,
-            boxShadow: '0 4px 12px rgba(15,118,110,0.28)',
+            boxShadow: '0 4px 12px rgba(232,93,146,0.28)',
           }}>{initials || <User size={22} />}</div>
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>

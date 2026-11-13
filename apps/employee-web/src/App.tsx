@@ -4301,7 +4301,7 @@ export function App() {
       <div style={{
         minHeight: '100vh', display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center', gap: 12,
-        background: 'linear-gradient(160deg,#0F766E 0%,#115E59 100%)', color: '#FFF', padding: 24,
+        background: 'linear-gradient(160deg,#E85D92 0%,#D6457E 100%)', color: '#FFF', padding: 24,
       }}>
         <div style={{
           width: 56, height: 56, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.16)',
