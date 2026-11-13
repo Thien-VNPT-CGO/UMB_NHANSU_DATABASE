@@ -354,8 +354,8 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
   setInterval(weeklyOffTick, 60_000);
 
   // MilkRoute EV: tự tạo ca vận chuyển cho tuần hiện tại + tuần sau
-  // (mặc định 08:00–14:00, T2→T7). Idempotent: ngày đã có ca (kể cả ca admin
-  // đã sửa) được giữ nguyên, chỉ bổ sung ngày còn thiếu.
+  // (mặc định 08:00–14:00, T2→CN, gồm cả Thứ 7 & Chủ nhật). Idempotent: ngày đã
+  // có ca (kể cả ca admin đã sửa) được giữ nguyên, chỉ bổ sung ngày còn thiếu.
   const evWeeklyShiftTick = () => {
     services.milkRoute?.shifts.ensureUpcomingWeeks({ createdBy: 'SYSTEM_AUTO' })
       .then((res) => {

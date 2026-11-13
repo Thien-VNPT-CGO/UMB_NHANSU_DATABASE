@@ -8,7 +8,7 @@ import { EVShiftService } from '../src/services/milkroute/ev-shift.service.js';
  * Ca vận chuyển tự động theo tuần + ẩn/hiện trạm sạc theo phiếu sạc.
  *
  *  - Trạm sạc chỉ nằm trên lộ trình của ca khi tài xế đã tạo phiếu sạc.
- *  - Hệ thống tạo sẵn ca 1 tuần (T2→T7, 08:00–14:00); ngày đã có ca (kể cả ca
+ *  - Hệ thống tạo sẵn ca 1 tuần (T2→CN, 08:00–14:00); ngày đã có ca (kể cả ca
  *    admin đã sửa) được giữ nguyên.
  *  - Sửa ca sang ngày trùng lịch của tài xế/xe bị chặn.
  */
@@ -106,18 +106,18 @@ test('Trạm sạc chỉ hiện trên lộ trình khi ca có phiếu sạc', asy
   assert.equal(stops.some(s => s.stop_type === 'CHARGING'), false, 'phiếu bị từ chối thì ẩn trạm sạc');
 });
 
-test('Tạo ca tuần: T2→T7, 08:00–14:00, bỏ qua tài xế chưa gán xe', async () => {
+test('Tạo ca tuần: T2→CN, 08:00–14:00, bỏ qua tài xế chưa gán xe', async () => {
   const { shifts } = await setup();
   const result = await shifts.generateWeek({ weekStart: '2030-06-05', includePast: true, createdBy: 'TEST' });
 
   // 05/06/2030 là Thứ Tư → tuần bắt đầu 03/06/2030 (Thứ Hai).
   assert.equal(result.week_start, '2030-06-03');
   assert.equal(result.week_end, '2030-06-09');
-  assert.equal(result.created.length, 6, 'tạo 6 ca T2→T7 cho tài xế có xe');
+  assert.equal(result.created.length, 7, 'tạo 7 ca T2→CN cho tài xế có xe');
 
   const dates = result.created.map(s => s.shift_date);
-  assert.deepEqual(dates, ['2030-06-03', '2030-06-04', '2030-06-05', '2030-06-06', '2030-06-07', '2030-06-08']);
-  assert.equal(dates.includes('2030-06-09'), false, 'không tạo Chủ nhật');
+  assert.deepEqual(dates, ['2030-06-03', '2030-06-04', '2030-06-05', '2030-06-06', '2030-06-07', '2030-06-08', '2030-06-09']);
+  assert.equal(dates.includes('2030-06-09'), true, 'có tạo Chủ nhật');
 
   for (const s of result.created) {
     assert.equal(new Date(s.planned_start_at).toISOString(), new Date(`${s.shift_date}T08:00:00+07:00`).toISOString());
@@ -134,7 +134,7 @@ test('Tạo ca tuần: T2→T7, 08:00–14:00, bỏ qua tài xế chưa gán xe'
 test('Tạo ca tuần idempotent: không nhân đôi ca, giữ nguyên ca đã sửa', async () => {
   const { repo, shifts } = await setup();
   const first = await shifts.generateWeek({ weekStart: '2030-06-03', includePast: true });
-  assert.equal(first.created.length, 6);
+  assert.equal(first.created.length, 7);
 
   // Admin sửa 1 ngày sang 09:00–15:00.
   const edited = first.created[2];
@@ -147,7 +147,7 @@ test('Tạo ca tuần idempotent: không nhân đôi ca, giữ nguyên ca đã s
   assert.equal(second.created.length, 0, 'lần 2 không tạo thêm ca');
   assert.equal(
     second.skipped.filter(x => x.reason.startsWith('SHIFT_EXISTS')).length,
-    6,
+    7,
     'mọi ngày đã có ca đều được bỏ qua',
   );
 

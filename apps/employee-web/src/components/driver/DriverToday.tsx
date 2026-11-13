@@ -21,6 +21,10 @@ const STOP_TYPE_LABEL: Record<string, string> = {
   END: 'Kết thúc',
 };
 
+/** Cộng/trừ ngày theo chuỗi YYYY-MM-DD (không lệch timezone). */
+const addDaysIso = (day: string, n: number) =>
+  new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+
 
 function HeroStat({ label, value, alert }: { label: string; value: string; alert?: boolean }) {
   return (
@@ -49,7 +53,9 @@ export function DriverToday({ d }: { d: DriverData }) {
   const within = nextStop && distToNext != null && distToNext <= Number(nextStop.geofence_radius_m || 100);
   const gpsReady = !!coords && coords.accuracy <= 30;
   const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
-  const tomorrow = new Date(Date.parse(`${today}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+  const tomorrow = addDaysIso(today, 1);
+  // Luôn hiển thị đủ 7 ngày (kể cả Thứ 7 & Chủ nhật) dù ngày đó chưa có ca.
+  const calendarDays = Array.from({ length: 7 }, (_, i) => addDaysIso(today, i));
   const shiftIsToday = String(current?.shift_date || '').slice(0, 10) === today;
   // Bắt đầu ca: đủ điều kiện khi GPS đã có, sai số ≤120m và trong bán kính Xưởng.
   const startReady = !!coords && coords.accuracy <= 120
@@ -363,8 +369,7 @@ export function DriverToday({ d }: { d: DriverData }) {
       )}
 
       {/* ---------------- Lịch ca tuần + xem trước lộ trình ---------------- */}
-      {weekShifts.length > 0 && (
-        <Card>
+      <Card>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 5 }}>
             <CalendarDays size={16} color={DC.brand} />
             <div style={{ fontSize: 13.5, fontWeight: 900, color: DC.ink }}>Lịch ca & lộ trình 7 ngày tới</div>
@@ -373,10 +378,27 @@ export function DriverToday({ d }: { d: DriverData }) {
           <div style={{ fontSize: 10.5, color: DC.muted, fontWeight: 600, marginBottom: 9, lineHeight: 1.6 }}>
             Bấm vào một ngày để xem trước lộ trình di chuyển — kể cả khi HR vừa đổi lộ trình.
           </div>
-          {weekShifts.map((s: any) => {
+          {calendarDays.map((day) => {
+            const dayShifts = weekShifts.filter((s: any) => String(s.shift_date).slice(0, 10) === day);
+            const isToday = day === today;
+            const isTomorrow = day === tomorrow;
+            const dayLabel = isToday ? 'Hôm nay • ' : isTomorrow ? 'Ngày mai • ' : '';
+            if (!dayShifts.length) {
+              return (
+                <div key={day} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px',
+                  borderRadius: 10, marginBottom: 6,
+                  border: `1px dashed ${DC.border}`, backgroundColor: '#FAFAFB',
+                }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 800, color: DC.muted, minWidth: 0, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {dayLabel}{fmtDay(day)}
+                  </span>
+                  <span style={{ fontSize: 10.5, fontWeight: 700, color: DC.muted }}>Chưa có ca</span>
+                </div>
+              );
+            }
+            return dayShifts.map((s: any) => {
             const sl = STATUS_LABEL[s.status] || STATUS_LABEL.SCHEDULED;
-            const isToday = String(s.shift_date).slice(0, 10) === today;
-            const isTomorrow = String(s.shift_date).slice(0, 10) === tomorrow;
             const isOpen = previewId === s.shift_id;
             return (
               <div key={s.shift_id} style={{ marginBottom: 6 }}>
@@ -504,12 +526,12 @@ export function DriverToday({ d }: { d: DriverData }) {
                 )}
               </div>
             );
+            });
           })}
           <div style={{ fontSize: 10.5, color: DC.muted, fontWeight: 600, marginTop: 5, lineHeight: 1.6 }}>
-            Hệ thống tự tạo ca 08:00–14:00 cho cả tuần. Quản lý vận chuyển có thể sửa giờ từng ngày.
+            Hệ thống tự tạo ca 08:00–14:00 cho cả tuần (Thứ 2 → Chủ nhật). Quản lý vận chuyển có thể sửa giờ từng ngày.
           </div>
         </Card>
-      )}
 
       {/* ---------------- Quy tắc ---------------- */}
       <Card style={{ backgroundColor: '#FFFBEB', borderColor: '#FDE68A' }}>

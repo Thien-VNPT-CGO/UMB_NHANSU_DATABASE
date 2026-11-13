@@ -925,7 +925,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     } catch (err: any) { evErr(res, err); }
   });
 
-  // Tạo ca tự động cho cả tuần (mặc định 08:00–14:00, T2→T7).
+  // Tạo ca tự động cho cả tuần (mặc định 08:00–14:00, T2→CN).
   // Bỏ qua ngày đã có ca nên mọi chỉnh sửa trước đó của admin được giữ nguyên.
   app.post('/ev/admin/shifts/generate-week', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ body: evShiftGenerateWeekBody }), async (req: AuthenticatedRequest, res) => {
     try {

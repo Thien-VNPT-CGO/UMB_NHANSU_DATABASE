@@ -993,7 +993,7 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
     } finally { setBusy(''); }
   };
 
-  /** Tạo ca cho cả tuần: 08:00–14:00, T2→T7, bỏ qua ngày đã có ca. */
+  /** Tạo ca cho cả tuần: 08:00–14:00, T2→CN, bỏ qua ngày đã có ca. */
   const generateWeek = async () => {
     if (!weekForm.route_id) return showToast('⚠️ Chọn lộ trình trước khi tạo ca tuần!');
     setBusy('week');
@@ -1157,7 +1157,7 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
         {showWeek && canManage && (
           <div style={{ padding: '12px', backgroundColor: BG, border: `1px solid ${BORDER}`, borderRadius: '10px', marginBottom: '12px' }}>
             <div style={{ fontSize: '12.5px', fontWeight: 900, color: 'var(--text)', marginBottom: '8px' }}>
-              Tạo ca tự động cả tuần — mặc định 08:00 → 14:00, Thứ 2 → Thứ 7
+              Tạo ca tự động cả tuần — mặc định 08:00 → 14:00, Thứ 2 → Chủ nhật
             </div>
             <div style={{ fontSize: '11.5px', color: MUTED, fontWeight: 600, marginBottom: '10px', lineHeight: 1.6 }}>
               Ngày đã có ca sẽ được giữ nguyên (kể cả ca đã sửa tay), hệ thống chỉ bổ sung ngày còn thiếu.

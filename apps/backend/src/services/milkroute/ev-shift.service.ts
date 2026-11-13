@@ -46,7 +46,7 @@ export interface GenerateWeekInput {
    *         vậy ca admin đã xóa/chỉnh không bị tạo lại ngoài ý muốn.
    */
   fillMissing?: boolean;
-  /** Các thứ cần tạo: 1=T2 … 6=T7, 0=CN. Mặc định T2 → T7. */
+  /** Các thứ cần tạo: 1=T2 … 6=T7, 0=CN. Mặc định cả tuần T2 → CN. */
   days?: number[];
 }
 
@@ -155,7 +155,7 @@ export class EVShiftService {
   }
 
   // ============================================================
-  // TẠO CA TỰ ĐỘNG THEO TUẦN (mặc định 08:00 – 14:00, T2 → T7)
+  // TẠO CA TỰ ĐỘNG THEO TUẦN (mặc định 08:00 – 14:00, T2 → CN)
   // ============================================================
 
   /**
@@ -197,10 +197,11 @@ export class EVShiftService {
         .map(e => String(e.employee_id));
     }
 
-    // Mặc định Thứ 2 → Thứ 7. Chủ nhật để trống, admin có thể tạo tay nếu chạy.
+    // Mặc định cả tuần Thứ 2 → Chủ nhật (giao sữa chạy cả cuối tuần) để lịch
+    // ca & lộ trình trên app tài xế luôn đủ 7 ngày.
     const wantedDays = Array.isArray(input.days) && input.days.length
       ? input.days.map(Number).filter(n => n >= 0 && n <= 6)
-      : [1, 2, 3, 4, 5, 6];
+      : [1, 2, 3, 4, 5, 6, 0];
     const today = vnToday();
     const dates: string[] = [];
     for (let i = 0; i < 7; i++) {
@@ -274,6 +275,10 @@ export class EVShiftService {
   /**
    * Bảo đảm tuần hiện tại + tuần sau luôn có ca cho mọi tài xế.
    * Chạy lúc khởi động và định kỳ; idempotent nên không nhân đôi ca.
+   *
+   * - Lần 1: nếu tuần chưa có ca nào thì tạo đủ 7 ngày (T2 → CN).
+   * - Lần 2: chỉ bổ sung Thứ 7 / Chủ nhật còn thiếu — không đụng các ca ngày
+   *   thường mà admin đã xóa/chỉnh.
    */
   async ensureUpcomingWeeks(input: { createdBy?: string } = {}): Promise<GenerateWeekResult[]> {
     const weekStart = mondayOf(vnToday());
@@ -283,6 +288,12 @@ export class EVShiftService {
         weekStart: week,
         createdBy: input.createdBy || 'SYSTEM_AUTO',
         fillMissing: false,
+      }));
+      out.push(await this.generateWeek({
+        weekStart: week,
+        createdBy: input.createdBy || 'SYSTEM_AUTO',
+        fillMissing: true,
+        days: [6, 0],
       }));
     }
     return out;

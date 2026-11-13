@@ -160,7 +160,7 @@ export const evShiftsQuery = z.object({
   offset: z.coerce.number().int().nonnegative().default(0),
 });
 
-/** Tạo ca tự động cho cả tuần (mặc định 08:00–14:00, T2→T7). */
+/** Tạo ca tự động cho cả tuần (mặc định 08:00–14:00, T2→CN). */
 export const evShiftGenerateWeekBody = z.object({
   week_start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   driver_ids: z.array(idSchema).max(200).optional(),
