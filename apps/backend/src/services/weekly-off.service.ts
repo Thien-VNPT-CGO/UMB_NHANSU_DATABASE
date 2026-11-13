@@ -346,8 +346,13 @@ export async function getWeeklyOffCompletion(
   return { required: 2, registered: unique, completed: unique.length >= 2 };
 }
 
-/** Prefix path luôn được phép khi cổng đang mở (xem hồ sơ, thông báo, đăng ký OFF). */
-const GATE_ALLOW = ['/me', '/leave-requests', '/leaves', '/auth/'];
+/**
+ * Prefix path luôn được phép khi cổng đang mở (xem hồ sơ, thông báo, đăng ký OFF).
+ * `/ev/me/` = app TÀI XẾ giao sữa: tài khoản tài xế không có tab đăng ký OFF
+ * tuần, công việc tính theo ca vận chuyển do Quản lý vận chuyển phân công —
+ * nếu chặn sẽ khóa cứng tài xế ngoài đường, không có cách tự mở khóa.
+ */
+const GATE_ALLOW = ['/me', '/leave-requests', '/leaves', '/auth/', '/ev/me/'];
 
 function isAllowedPath(path: string): boolean {
   if (!path) return false;
