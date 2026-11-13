@@ -473,9 +473,12 @@ export function TicketsView({ status, refreshKey }: Props) {
                     <span className="item-index">{String(index + 1).padStart(2, '0')}</span>
                     <div>
                       <strong>{item.name}</strong>
-                      <span>{item.category}</span>
+                      <span>
+                        {item.category}
+                        {item.fine_note ? ` · ${item.fine_note}` : ''}
+                      </span>
                     </div>
-                    <strong>{money(item.fine_amount)}</strong>
+                    <strong>{item.fine_amount > 0 ? money(item.fine_amount) : (item.fine_note || money(0))}</strong>
                   </div>
                 ))}
               </div>

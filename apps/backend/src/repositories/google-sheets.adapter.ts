@@ -2165,4 +2165,16 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     }
     return updated;
   }
+
+  /**
+   * Đẩy CAU_HINH_HE_THONG lên Google Sheets NGAY (await) — dùng sau các thao tác
+   * quan trọng (đổi PIN, tạo/duyệt phiếu vi phạm, sửa quy chế) để dữ liệu không
+   * bị mất nếu ngay sau đó có một lượt pull hoặc container restart.
+   */
+  public async pushSystemSettingsNow(): Promise<{ ok: boolean; error?: string }> {
+    if (!this.isConfigured) return { ok: true };
+    const settings = await this.fallbackAdapter.getSystemSettings().catch(() => ({}));
+    const ok = await this.syncService.syncSystemSettingsToSheet(settings, { attempts: 2 });
+    return { ok, error: ok ? undefined : 'SHEET_WRITE_FAILED' };
+  }
 }

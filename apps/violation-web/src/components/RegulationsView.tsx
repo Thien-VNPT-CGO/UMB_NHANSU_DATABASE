@@ -153,7 +153,8 @@ export function RegulationsView({ refreshKey, onAdjust }: Props) {
             <span className="category-chip">{item.category}</span>
             <div className="regulation-fine">
               <span>Mức phạt</span>
-              <strong>{money(item.fine_amount)}</strong>
+              <strong>{item.fine_note && !(item.fine_amount > 0) ? item.fine_note : money(item.fine_amount)}</strong>
+              {item.fine_note && item.fine_amount > 0 ? <small>{item.fine_note}</small> : null}
             </div>
           </article>
         ))}

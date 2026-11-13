@@ -27,6 +27,11 @@ import { getDriveStorage } from './drive-storage.service.js';
 export const VIOLATION_REGULATIONS_KEY = 'violationRegulations';
 export const VIOLATION_TICKETS_KEY = 'violationTickets';
 export const VIOLATION_ACCOUNT_KEY = 'violationPortalAccount';
+/** Mốc cập nhật dữ liệu cổng vi phạm — chống pull Sheets cũ ghi đè dữ liệu vừa lưu. */
+export const VIOLATION_SETTINGS_STAMP_KEY = 'violationSettingsUpdatedAt';
+/** Phiên bản bộ quy chế mặc định (đổi khi cập nhật bảng lỗi công ty). */
+export const VIOLATION_CATALOG_KEY = 'violationCatalogVersion';
+export const VIOLATION_CATALOG_VERSION = '2026-11-13';
 
 export const VIOLATION_PORTAL_DISPLAY_NAME = 'Tòa Án Tối Cao Ụm Bò Milk';
 export const VIOLATION_PORTAL_SYSTEM_NAME = 'HỆ THỐNG KIỂM SOÁT & XỬ LÝ VI PHẠM';
@@ -46,6 +51,8 @@ export interface ViolationRegulation {
   description: string;
   category: string;
   fine_amount: number;
+  /** Mức phạt không quy đổi được ra số tiền (VD: 10% lương, Công ty quyết định). */
+  fine_note?: string;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -57,6 +64,7 @@ export interface ViolationTicketItem {
   name: string;
   category: string;
   fine_amount: number;
+  fine_note?: string;
 }
 
 export interface ViolationTicket {
@@ -131,33 +139,76 @@ export const VIOLATION_CAPABILITIES = [
 ];
 
 // ---------------------------------------------------------------- defaults
-const DEFAULT_REGULATIONS: ViolationRegulation[] = [
-  ['VIO_001', 'QC-001', 'Đi trễ / về sớm không phép', 'CHẤM CÔNG', 100000, 'Mỗi lần đi trễ hoặc về sớm không có lý do chính đáng.'],
-  ['VIO_002', 'QC-002', 'Nghỉ không phép', 'CHẤM CÔNG', 300000, 'Vắng mặt không đăng ký nghỉ, không báo trước.'],
-  ['VIO_003', 'QC-003', 'Không mặc đồng phục đúng quy định', 'TÁC PHONG', 50000, 'Thiếu áo đồng phục, tạp dề hoặc trang phục bảo hộ theo ca.'],
-  ['VIO_004', 'QC-004', 'Không đeo bảng tên', 'TÁC PHONG', 30000, 'Không đeo bảng tên trong suốt thời gian làm việc.'],
-  ['VIO_005', 'QC-005', 'Sử dụng điện thoại trong giờ làm', 'TÁC PHONG', 50000, 'Dùng điện thoại cá nhân ngoài giờ nghỉ hoặc không phục vụ công việc.'],
-  ['VIO_006', 'QC-006', 'Ngủ trong giờ làm', 'TÁC PHONG', 100000, 'Ngủ gật hoặc rời vị trí để nghỉ trong giờ làm.'],
-  ['VIO_007', 'QC-007', 'Không vệ sinh khu vực làm việc', 'VỆ SINH', 100000, 'Khu vực quầy, bếp, kho không đạt chuẩn vệ sinh theo ca.'],
-  ['VIO_008', 'QC-008', 'Thái độ không chuẩn mực với khách hàng', 'DỊCH VỤ', 200000, 'Cáu gắt, thiếu lễ phép hoặc tranh cãi với khách hàng.'],
-  ['VIO_009', 'QC-009', 'Không chấp hành chỉ đạo cấp trên', 'KỶ LUẬT', 200000, 'Không thực hiện hoặc cố ý làm sai chỉ đạo hợp lệ.'],
-  ['VIO_010', 'QC-010', 'Làm hỏng tài sản / thiết bị', 'TÀI SẢN', 300000, 'Làm hỏng dụng cụ, máy móc, tài sản của công ty.'],
-  ['VIO_011', 'QC-011', 'Vi phạm an toàn thực phẩm', 'AN TOÀN', 500000, 'Sai quy trình bảo quản, chế biến hoặc vệ sinh an toàn thực phẩm.'],
-  ['VIO_012', 'QC-012', 'Gian lận giờ công / dữ liệu', 'NGHIÊM TRỌNG', 1000000, 'Sửa giờ công, nhờ người chấm công hộ hoặc làm sai lệch dữ liệu.'],
-  ['VIO_013', 'QC-013', 'Uống rượu bia trong giờ làm', 'KỶ LUẬT', 500000, 'Sử dụng rượu bia hoặc chất kích thích trong giờ làm việc.'],
-  ['VIO_014', 'QC-014', 'Hút thuốc sai nơi quy định', 'KỶ LUẬT', 100000, 'Hút thuốc ngoài khu vực được phép.'],
-].map(([regulation_id, code, name, category, fine_amount, description]) => ({
-  regulation_id: String(regulation_id),
-  code: String(code),
-  name: String(name),
-  description: String(description),
-  category: String(category),
-  fine_amount: Number(fine_amount),
+/**
+ * Bộ quy chế gốc theo bảng "QUY CHẾ LÀM VIỆC DÀNH CHO NHÂN VIÊN TẠI CỬA HÀNG".
+ * `fine_note` dùng cho các mức phạt không quy ra số tiền cố định (% lương,
+ * công ty quyết định, tự chịu trách nhiệm, buộc thôi việc...).
+ */
+type RegulationSeed = {
+  code: string;
+  name: string;
+  category: string;
+  fine_amount: number;
+  fine_note?: string;
+  description: string;
+};
+
+const DEFAULT_REGULATION_SEEDS: RegulationSeed[] = [
+  // 1. Tác phong
+  { code: 'VAO TRE 5P', name: 'Vào trễ 5 phút', category: 'TÁC PHONG', fine_amount: 30_000, description: 'Vào trễ ca làm việc: 30k (5 phút).' },
+  { code: 'VAO TRE 30P', name: 'Vào trễ 30 phút', category: 'TÁC PHONG', fine_amount: 0, fine_note: '50% lương/ ca', description: 'Vào trễ ca làm việc: 50% ngày lương (30 phút).' },
+  { code: 'VAO TRE >= 60P', name: 'Vào trễ từ 60 phút', category: 'TÁC PHONG', fine_amount: 0, fine_note: '100% lương/ ca', description: 'Vào trễ ca làm việc: 100% ngày lương (60 phút) nếu không có lý do chính.' },
+  { code: 'RA SOM', name: 'Ra sớm', category: 'TÁC PHONG', fine_amount: 50_000, description: 'Ra ca sớm trước quy định: 50k/ lần.' },
+  { code: 'SAI DP', name: 'Sai đồng phục', category: 'TÁC PHONG', fine_amount: 50_000, description: 'Đồng phục sai quy định: 50k/ lần.' },
+  { code: 'KH COMPLAIN', name: 'Khách complain', category: 'TÁC PHONG', fine_amount: 100_000, description: 'Khách complain (sẽ check lại lý do): 100k/ lần.' },
+  { code: 'SD DT', name: 'Sử dụng điện thoại làm việc riêng', category: 'TÁC PHONG', fine_amount: 50_000, description: 'Sử dụng điện thoại làm việc riêng: 50k/ lần.' },
+  { code: 'KO DON DEP CH', name: 'Không dọn dẹp cửa hàng', category: 'TÁC PHONG', fine_amount: 50_000, description: 'Không dọn dẹp, sắp xếp gọn gàng, sạch sẽ khu vực làm việc: 50k/ lần.' },
+  { code: 'KO TAT MO', name: 'Không mở/tắt thiết bị điện', category: 'TÁC PHONG', fine_amount: 30_000, description: 'Không mở/tắt các thiết bị điện theo đúng quy định: 30k/ lần.' },
+
+  // 2. Vận hành
+  { code: 'BO CA LAM 1', name: 'Bỏ ca làm lần 1', category: 'VẬN HÀNH', fine_amount: 0, fine_note: '10% lương/ tháng', description: 'Tự ý bỏ ca trực, báo sai giờ, không tìm được bạn thay thế: lần đầu tiên phạt 10% lương.' },
+  { code: 'BO CA LAM 2', name: 'Bỏ ca làm lần 2', category: 'VẬN HÀNH', fine_amount: 0, fine_note: '20% lương/ tháng', description: 'Tự ý bỏ ca trực, báo sai giờ, không tìm được bạn thay thế: lần 2 phạt 20% lương.' },
+  { code: 'BO CA LAM 3', name: 'Bỏ ca làm lần 3', category: 'VẬN HÀNH', fine_amount: 0, fine_note: 'Sa thải', description: 'Tự ý bỏ ca trực, báo sai giờ, không tìm được bạn thay thế: lần 3 sẽ chính thức sa thải.' },
+  { code: 'TU Y GUI CAC VAT PHAM KHAC SANG CHI NHANH KHAC', name: 'Tự ý gửi vật phẩm sang chi nhánh khác', category: 'VẬN HÀNH', fine_amount: 100_000, description: 'Không gửi các vật phẩm khác ngoài phạm vi của doanh nghiệp từ xưởng đến cửa hàng, hoặc từ cửa hàng này sang cửa hàng khác: 100k/ lần.' },
+  { code: 'KHONG XUAT BILL TU Y DUA/BAN', name: 'Không xuất bill, tự ý đưa/bán', category: 'VẬN HÀNH', fine_amount: 50_000, fine_note: '+ bồi hoàn full giá trị đơn hàng', description: 'Không xuất bill mà tự ý đưa sản phẩm cho khách hoặc nhân viên khác không có nhiệm vụ trong ca trực: phạt 50k/ lần + bồi hoàn full giá trị của đơn hàng.' },
+  { code: 'BO TRONG / DIEN SAI KHONG KIEM DEN LAI / BBKK', name: 'Bỏ trống / điền sai không kiểm đến lại / BBKK', category: 'VẬN HÀNH', fine_amount: 20_000, description: 'Bỏ trống, điền sai bên kiểm bàn giao hóa, biên bản bàn giao công cụ dụng cụ, phiếu hủy hàng, biên bản bàn giao tiền mặt: phạt 20k/ lần cho 1 biên bản.' },
+  { code: 'LON TIEN/CAI NHAU VOI KH', name: 'Lộn tiền / cãi nhau với khách', category: 'VẬN HÀNH', fine_amount: 0, fine_note: 'Công ty quyết định', description: 'Lộn tiền hoặc cãi nhau với khách trong cửa hàng: sa thải và đền bù theo quy chế của Công ty.' },
+  { code: 'DUA GION CHUI THE', name: 'Đùa giỡn, chửi thề', category: 'VẬN HÀNH', fine_amount: 100_000, description: 'Đùa giỡn, chửi thề trong lúc làm việc: 100k/ lần.' },
+  { code: 'GIU THEU/SAI SP', name: 'Giữ đơn sai sản phẩm', category: 'VẬN HÀNH', fine_amount: 0, fine_note: 'Tự chịu trách nhiệm', description: 'Giữ đơn sai (số lượng, loại sản phẩm): chịu phần tiền sản phẩm đúng mà khách đã order, chịu luôn phí ship gửi hàng lại cho khách.' },
+  { code: 'QUEN GUI DON CHO KH', name: 'Quên gửi đơn cho khách', category: 'VẬN HÀNH', fine_amount: 20_000, description: 'Quên gửi đơn cho khách: liên hệ khách để ship lại, phạt 20k/ lần.' },
+  { code: 'QUEN GUI DON CHO KH. KH HUY', name: 'Quên gửi đơn - khách hủy', category: 'VẬN HÀNH', fine_amount: 50_000, description: 'Khách hủy không nhận đơn nữa: phạt 50k/ lần.' },
+  { code: 'KHONG CHUP DON APP/SALE + HOA DON', name: 'Không chụp đơn app/sale + hóa đơn', category: 'VẬN HÀNH', fine_amount: 30_000, description: 'Gửi đơn ship app, bill ngoài không chụp số lượng, hóa đơn đi kèm gửi group zalo nội bộ: 30k/ lần.' },
+  { code: 'CAC LOI VI PHAM LIEN QUAN DEN DATE', name: 'Các lỗi vi phạm liên quan đến date', category: 'VẬN HÀNH', fine_amount: 30_000, description: 'Tất cả các lỗi vi phạm liên quan đến date (bán sản phẩm đã cận date, quá hạn sử dụng, không kiểm tra lỗi date khi nhập hàng, khi bán hàng,...): phạt 30k/ chai tùy theo số lượng.' },
+  { code: 'SAP XEP SUA KHONG NGAN NGAN', name: 'Sắp xếp không ngăn nắp', category: 'VẬN HÀNH', fine_amount: 30_000, description: 'Sắp xếp không ngăn nắp, phân loại không đúng theo từng loại sản phẩm: phạt 30k/ lần.' },
+  { code: 'KHONG KTR KHI SUA CO DUE HIEU KHAC THUONG', name: 'Không kiểm tra sản phẩm có dấu hiệu khác thường', category: 'VẬN HÀNH', fine_amount: 50_000, description: 'Không kiểm tra, quan sát bằng mắt sản phẩm có dấu hiệu khác thường mà giao cho khách; nếu khách complain phạt 50k/ lần.' },
+  { code: 'LAM HU TS CONG TY', name: 'Làm hư tài sản công ty', category: 'VẬN HÀNH', fine_amount: 0, fine_note: 'Tự chịu trách nhiệm', description: 'Không bảo quản làm hư hao, mất tài sản của công ty: phải tự mua lại đền.' },
+  { code: 'KO TAT/BAT MON', name: 'Không tắt/bật món', category: 'VẬN HÀNH', fine_amount: 30_000, fine_note: '30k/ loại sản phẩm', description: 'Không nhập hàng không báo tắt món (đối với cửa hàng không có App) hoặc không tự động bật/tắt món (đối với cửa hàng đã được cài đặt App) quá 15 phút: phạt 30k/ loại sản phẩm không bật/tắt.' },
+  { code: 'TU Y BAM CHI', name: 'Tự ý bấm chiết khấu', category: 'VẬN HÀNH', fine_amount: 50_000, description: 'Tự bấm chiết khấu theo quản lý: tự bỏ tiền vào két cho đủ, phạt 50k/ lần vi phạm.' },
+  { code: 'TU Y BO CAC HOA DON', name: 'Tự ý bỏ các hóa đơn', category: 'VẬN HÀNH', fine_amount: 100_000, description: 'Tự bỏ, không lưu trữ hóa đơn - chứng từ liên quan đến cửa hàng: 100k/ lần.' },
+  { code: 'GIAN LAN, KHONG TRUNG THUC', name: 'Gian lận, không trung thực', category: 'VẬN HÀNH', fine_amount: 0, fine_note: 'Công ty quyết định', description: 'Phát hiện gian lận, không trung thực trong quá trình làm việc: lập biên bản cảnh cáo lần 1 + đền bù theo mức độ tổn thất của công ty; lần 2 sẽ bị sa thải + đền bù theo mức độ tổn thất của công ty.' },
+  { code: 'KHONG KTR BAO TON DE HET', name: 'Không kiểm tra bảo tồn để hết', category: 'VẬN HÀNH', fine_amount: 50_000, description: 'Không kiểm tra bảo tồn nguyên vật liệu (bao nilon, tủ giữ nhiệt, ly, ống hút, giấy in bill,...) để hết hàng: phạt 50k/ lần vi phạm.' },
+  { code: 'LAP 3 BIEN BAN', name: 'Lập 3 biên bản', category: 'VẬN HÀNH', fine_amount: 0, fine_note: 'Buộc thôi việc', description: 'Nhân viên bị lập từ 3 biên bản/ tháng bắt buộc bị thôi việc.' },
+  { code: 'KHONG LUU THONG TIN KHACH', name: 'Không lưu thông tin khách', category: 'VẬN HÀNH', fine_amount: 10_000, description: 'Không lưu thông tin khách.' },
+];
+
+const DEFAULT_REGULATIONS: ViolationRegulation[] = DEFAULT_REGULATION_SEEDS.map((seed, index) => ({
+  regulation_id: `VIO_${String(index + 1).padStart(3, '0')}`,
+  code: seed.code,
+  name: seed.name,
+  description: seed.description,
+  category: seed.category,
+  fine_amount: seed.fine_amount,
+  fine_note: seed.fine_note,
   active: true,
-  created_at: '2026-01-01T00:00:00.000Z',
-  updated_at: '2026-01-01T00:00:00.000Z',
+  created_at: '2026-11-13T00:00:00.000Z',
+  updated_at: '2026-11-13T00:00:00.000Z',
   created_by: 'SYSTEM',
 }));
+
+/** Mã bộ quy chế cũ (trước 2026-11-13) — thay thế khi nâng phiên bản bộ luật. */
+const LEGACY_REGULATION_CODES = new Set(
+  Array.from({ length: 14 }, (_, i) => `QC-${String(i + 1).padStart(3, '0')}`),
+);
 
 // ---------------------------------------------------------------- helpers
 let settingsLock: Promise<unknown> = Promise.resolve();
@@ -203,13 +254,15 @@ function normalizeRegulation(raw: any): ViolationRegulation | null {
   const now = new Date().toISOString();
   const name = String(raw.name || '').trim().slice(0, 200);
   if (!name) return null;
+  const fineNote = String(raw.fine_note || '').trim().slice(0, 120);
   return {
     regulation_id: String(raw.regulation_id || `REG_${randomUUID()}`),
-    code: String(raw.code || '').trim().slice(0, 40) || `QC-${String(raw.regulation_id || '').replace(/\D/g, '').slice(-3).padStart(3, '0')}`,
+    code: String(raw.code || '').trim().slice(0, 80) || `QC-${String(raw.regulation_id || '').replace(/\D/g, '').slice(-3).padStart(3, '0')}`,
     name,
     description: String(raw.description || '').slice(0, 2000),
     category: String(raw.category || 'CHUNG').trim().slice(0, 60) || 'CHUNG',
     fine_amount: safeMoney(raw.fine_amount),
+    fine_note: fineNote || undefined,
     active: raw.active !== false,
     created_at: String(raw.created_at || now),
     updated_at: String(raw.updated_at || now),
@@ -224,6 +277,7 @@ function normalizeTicket(raw: any): ViolationTicket | null {
     name: String(it?.name || 'Lỗi vi phạm').slice(0, 200),
     category: String(it?.category || 'CHUNG').slice(0, 60),
     fine_amount: safeMoney(it?.fine_amount),
+    fine_note: it?.fine_note ? String(it.fine_note).slice(0, 120) : undefined,
   })) : [];
   const date = normalizeDate(raw.violation_date || raw.created_at);
   return {
@@ -281,7 +335,13 @@ async function getSettings(repo: ISheetsRepository): Promise<any> {
 async function persistSettings(repo: ISheetsRepository, patch: Record<string, any>): Promise<void> {
   await withViolationLock(async () => {
     const settings = await getSettings(repo);
-    await repo.updateSystemSettings({ ...(settings as any), ...patch });
+    await repo.updateSystemSettings({
+      ...(settings as any),
+      ...patch,
+      // Mốc này giúp pull Sheets không ghi đè dữ liệu vừa lưu khi lượt ghi Sheet
+      // chưa kịp hoàn tất (xem mergeSystemSettingsFromSheet).
+      [VIOLATION_SETTINGS_STAMP_KEY]: new Date().toISOString(),
+    });
   });
 }
 
@@ -447,15 +507,45 @@ export function createViolationAuthMiddleware(repo: ISheetsRepository) {
 export async function listViolationRegulations(repo: ISheetsRepository): Promise<ViolationRegulation[]> {
   const settings = await getSettings(repo);
   const raw = settings?.[VIOLATION_REGULATIONS_KEY];
+  const catalogVersion = String(settings?.[VIOLATION_CATALOG_KEY] || '');
+
   if (!Array.isArray(raw)) {
     // Seed lần đầu, giữ nguyên nếu người dùng đã xóa hết (mảng rỗng hợp lệ).
-    await persistSettings(repo, { [VIOLATION_REGULATIONS_KEY]: DEFAULT_REGULATIONS });
+    await persistSettings(repo, {
+      [VIOLATION_REGULATIONS_KEY]: DEFAULT_REGULATIONS,
+      [VIOLATION_CATALOG_KEY]: VIOLATION_CATALOG_VERSION,
+    });
     return DEFAULT_REGULATIONS.map(r => ({ ...r }));
   }
-  return raw
+
+  const stored = raw
     .map(normalizeRegulation)
-    .filter((r): r is ViolationRegulation => !!r)
-    .sort((a, b) => a.code.localeCompare(b.code, 'vi'));
+    .filter((r): r is ViolationRegulation => !!r);
+
+  // Nâng phiên bản bộ luật: thay các dòng mặc định cũ bằng bảng quy chế mới
+  // (giữ nguyên các quy chế do người dùng tự thêm).
+  if (catalogVersion !== VIOLATION_CATALOG_VERSION) {
+    const custom = stored.filter(r => r.created_by !== 'SYSTEM' && !LEGACY_REGULATION_CODES.has(r.code));
+    const next = [...DEFAULT_REGULATIONS.map(r => ({ ...r })), ...custom];
+    await persistSettings(repo, {
+      [VIOLATION_REGULATIONS_KEY]: next,
+      [VIOLATION_CATALOG_KEY]: VIOLATION_CATALOG_VERSION,
+    });
+    return sortRegulations(next);
+  }
+
+  return sortRegulations(stored);
+}
+
+/** Giữ thứ tự bảng quy chế: Tác phong trước, Vận hành sau, nhóm khác cuối. */
+function sortRegulations(list: ViolationRegulation[]): ViolationRegulation[] {
+  const rank = (category: string) => {
+    const c = String(category || '').toUpperCase();
+    if (c === 'TÁC PHONG') return 0;
+    if (c === 'VẬN HÀNH') return 1;
+    return 2;
+  };
+  return [...list].sort((a, b) => rank(a.category) - rank(b.category));
 }
 
 export async function upsertViolationRegulation(
@@ -472,11 +562,12 @@ export async function upsertViolationRegulation(
 
   const regulation: ViolationRegulation = {
     regulation_id: id,
-    code: String(input?.code ?? existing?.code ?? `QC-${String(list.length + 1).padStart(3, '0')}`).trim().slice(0, 40),
+    code: String(input?.code ?? existing?.code ?? `QC-${String(list.length + 1).padStart(3, '0')}`).trim().slice(0, 80),
     name: name.slice(0, 200),
     description: String(input?.description ?? existing?.description ?? '').slice(0, 2000),
     category: String(input?.category ?? existing?.category ?? 'CHUNG').trim().slice(0, 60) || 'CHUNG',
     fine_amount: input?.fine_amount !== undefined ? safeMoney(input.fine_amount) : (existing?.fine_amount ?? 0),
+    fine_note: String(input?.fine_note ?? existing?.fine_note ?? '').trim().slice(0, 120) || undefined,
     active: input?.active !== undefined ? input.active !== false : (existing?.active !== false),
     created_at: existing?.created_at || now,
     updated_at: now,
@@ -585,6 +676,7 @@ export async function createViolationTicket(
         name: name.slice(0, 200),
         category: String(it?.category || reg?.category || 'CHUNG').slice(0, 60),
         fine_amount: safeMoney(it?.fine_amount !== undefined ? it.fine_amount : reg?.fine_amount),
+        fine_note: it?.fine_note ? String(it.fine_note).slice(0, 120) : reg?.fine_note,
       } as ViolationTicketItem;
     })
     .filter((it: ViolationTicketItem | null): it is ViolationTicketItem => !!it);
@@ -809,7 +901,10 @@ function buildViolationPdf(ticket: ViolationTicket): Promise<Buffer> {
         doc.text(String(idx + 1), 50, y + 8);
         doc.text(it.name, 82, y + 8, { width: 265 });
         doc.text(it.category || 'CHUNG', 360, y + 8, { width: 100 });
-        doc.font('bold').text(vnd(it.fine_amount), 470, y + 8, { width: 76, align: 'right' });
+        doc.font('bold').text(
+          it.fine_amount > 0 ? vnd(it.fine_amount) : (it.fine_note || '0đ'),
+          470, y + 8, { width: 76, align: 'right' },
+        );
         y += rowH;
       });
 

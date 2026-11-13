@@ -598,7 +598,31 @@ export function mergeSystemSettingsFromSheet(curSettings: any, settingsObj: any)
   const sheet: any = settingsObj && typeof settingsObj === 'object' ? settingsObj : {};
   const merged: any = { ...cur, ...sheet };
 
-  const memoTime = (v: any) => Date.parse(String(v?.updatedAt || '')) || 0;
+  // So sánh "độ mới" của cấu hình: hỗ trợ cả camelCase (`updatedAt`) và
+  // snake_case (`updated_at`) — nhiều khối cấu hình chỉ có một trong hai.
+  const memoTime = (v: any) => Math.max(
+    Date.parse(String(v?.updatedAt || '')) || 0,
+    Date.parse(String(v?.updated_at || '')) || 0,
+  );
+
+  // Cổng vi phạm ghi qua updateSystemSettings rồi đẩy Sheet ở nền. Nếu một lượt
+  // pull chạy xen giữa, bản Sheet CŨ có thể đè mất PIN/quy chế/phiếu vừa lưu
+  // (đổi PIN xong bị thu hồi token, phiếu vừa tạo biến mất). Mốc
+  // `violationSettingsUpdatedAt` quyết định bản nào mới hơn.
+  const VIOLATION_SETTING_KEYS = [
+    'violationPortalAccount',
+    'violationRegulations',
+    'violationTickets',
+    'violationCatalogVersion',
+    'violationSettingsUpdatedAt',
+  ];
+  const memViolationStamp = Date.parse(String(cur['violationSettingsUpdatedAt'] || '')) || 0;
+  const sheetViolationStamp = Date.parse(String(sheet['violationSettingsUpdatedAt'] || '')) || 0;
+  if (memViolationStamp > sheetViolationStamp) {
+    for (const key of VIOLATION_SETTING_KEYS) {
+      if (cur[key] !== undefined) merged[key] = cur[key];
+    }
+  }
 
   const sheetSalary = sheet['employee_salary_config'];
   const memSalary = cur['employee_salary_config'];

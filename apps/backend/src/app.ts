@@ -8219,6 +8219,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     name: String(req?.violation?.account?.display_name || VIOLATION_PORTAL_DISPLAY_NAME),
   });
 
+  /**
+   * Đẩy ngay cấu hình cổng vi phạm (PIN, quy chế, phiếu) lên Sheet sau thao tác
+   * quan trọng. Tránh trường hợp vừa lưu xong đã bị lượt pull cũ ghi đè.
+   */
+  const flushViolationSettings = async () => {
+    try {
+      await (adapter as any).pushSystemSettingsNow?.();
+    } catch {
+      /* lỗi mạng/quota: cờ dirty + retry nền sẽ đẩy lại */
+    }
+  };
+
   app.post('/violations/auth/login', async (req, res) => {
     try {
       const pin = String(req.body?.pin || '').trim();
@@ -8255,6 +8267,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/violations/auth/change-pin', violationAuth, async (req: any, res) => {
     try {
       const result = await changeViolationPin(adapter, req.body?.old_pin, req.body?.new_pin);
+      await flushViolationSettings();
       res.json(result);
     } catch (err: any) {
       const code = String(err?.message || 'CHANGE_PIN_FAILED');
@@ -8270,6 +8283,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/violations/auth/reset-pin', violationAuth, async (_req, res) => {
     try {
       const result = await resetViolationPin(adapter);
+      await flushViolationSettings();
       res.json({ ok: true, ...result });
     } catch (err: any) {
       res.status(500).json({ error: 'RESET_PIN_FAILED', message: err?.message || 'FAILED' });
@@ -8287,6 +8301,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/violations/regulations', violationAuth, async (req: any, res) => {
     try {
       const saved = await upsertViolationRegulation(adapter, req.body || {}, violationActor(req));
+      await flushViolationSettings();
       broadcastUpdate('violations', { action: 'regulation-upsert', id: saved.regulation_id });
       res.json(saved);
     } catch (err: any) {
@@ -8301,6 +8316,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.delete('/violations/regulations/:id', violationAuth, async (req: any, res) => {
     try {
       const ok = await deleteViolationRegulation(adapter, req.params.id);
+      await flushViolationSettings();
       broadcastUpdate('violations', { action: 'regulation-delete', id: req.params.id });
       res.json({ ok });
     } catch (err: any) {
@@ -8337,6 +8353,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/violations/tickets', violationAuth, async (req: any, res) => {
     try {
       const ticket = await createViolationTicket(adapter, req.body || {}, violationActor(req));
+      await flushViolationSettings();
       broadcastUpdate('violations', {
         action: ticket.status === 'APPROVED' ? 'ticket-approved' : 'ticket-draft',
         id: ticket.ticket_id,
@@ -8361,6 +8378,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const ticket = await approveViolationTicket(adapter, req.params.id, violationActor(req));
       if (!ticket) return res.status(404).json({ error: 'TICKET_NOT_FOUND', message: 'Không tìm thấy phiếu vi phạm.' });
+      await flushViolationSettings();
       broadcastUpdate('violations', { action: 'ticket-approved', id: ticket.ticket_id });
       broadcastUpdate('payroll', { action: 'violation-approve', id: ticket.ticket_id, period: ticket.period });
       res.json(ticket);
@@ -8373,6 +8391,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const ok = await deleteViolationTicket(adapter, req.params.id);
       if (!ok) return res.status(400).json({ error: 'TICKET_NOT_DELETABLE', message: 'Chỉ có thể xóa phiếu đang chờ duyệt.' });
+      await flushViolationSettings();
       broadcastUpdate('violations', { action: 'ticket-delete', id: req.params.id });
       res.json({ ok });
     } catch (err: any) {
@@ -8384,6 +8403,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const ticket = await retryViolationDriveSync(adapter, req.params.id);
       if (!ticket) return res.status(404).json({ error: 'TICKET_NOT_FOUND', message: 'Không tìm thấy phiếu vi phạm.' });
+      await flushViolationSettings();
       broadcastUpdate('violations', { action: 'ticket-drive-sync', id: ticket.ticket_id });
       res.json(ticket);
     } catch (err: any) {

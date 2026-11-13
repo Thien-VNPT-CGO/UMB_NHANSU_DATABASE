@@ -113,6 +113,7 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
           name: regulation.name,
           category: regulation.category,
           fine_amount: regulation.fine_amount,
+          fine_note: regulation.fine_note,
         },
       ];
     });
@@ -327,14 +328,17 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
                         <span className="item-index">{String(index + 1).padStart(2, '0')}</span>
                         <div className="item-copy">
                           <strong>{item.name}</strong>
-                          <span>{item.category}</span>
+                          <span>
+                            {item.category}
+                            {item.fine_note ? ` · ${item.fine_note}` : ''}
+                          </span>
                         </div>
                         <label className="money-input">
                           <input
                             type="text"
                             inputMode="numeric"
                             value={item.fine_amount ? item.fine_amount.toLocaleString('vi-VN') : ''}
-                            placeholder="0"
+                            placeholder={item.fine_note ? 'Nhập số tiền' : '0'}
                             onChange={event => updateFine(item.regulation_id, event.target.value)}
                           />
                           <span>đ</span>
@@ -451,7 +455,7 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
                 <span className="picker-copy">
                   <strong>{regulation.name}</strong>
                   <span>
-                    {regulation.category} · {money(regulation.fine_amount)}
+                    {regulation.category} · {regulation.fine_note || money(regulation.fine_amount)}
                   </span>
                 </span>
                 <span className={`picker-add ${added ? 'is-added' : ''}`}>

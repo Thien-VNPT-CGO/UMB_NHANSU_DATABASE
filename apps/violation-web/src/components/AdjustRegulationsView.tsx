@@ -23,6 +23,7 @@ interface Draft {
   name: string;
   category: string;
   fine: string;
+  fineNote: string;
   description: string;
   active: boolean;
 }
@@ -32,6 +33,7 @@ const EMPTY_DRAFT: Draft = {
   name: '',
   category: 'CHUNG',
   fine: '',
+  fineNote: '',
   description: '',
   active: true,
 };
@@ -94,6 +96,7 @@ export function AdjustRegulationsView({ refreshKey }: Props) {
       name: regulation.name,
       category: regulation.category,
       fine: String(regulation.fine_amount ?? ''),
+      fineNote: regulation.fine_note || '',
       description: regulation.description || '',
       active: regulation.active !== false,
     });
@@ -119,6 +122,7 @@ export function AdjustRegulationsView({ refreshKey }: Props) {
         name: draft.name.trim(),
         category: draft.category.trim(),
         fine_amount: Number(draft.fine.replace(/[^\d]/g, '') || 0),
+        fine_note: draft.fineNote.trim() || undefined,
         description: draft.description.trim(),
         active: draft.active,
       });
@@ -247,7 +251,8 @@ export function AdjustRegulationsView({ refreshKey }: Props) {
             </div>
             <div className="regulation-fine">
               <span>Mức phạt</span>
-              <strong>{money(item.fine_amount)}</strong>
+              <strong>{item.fine_note && !(item.fine_amount > 0) ? item.fine_note : money(item.fine_amount)}</strong>
+              {item.fine_note && item.fine_amount > 0 ? <small>{item.fine_note}</small> : null}
             </div>
             <div className="row-actions">
               <button type="button" className="icon-button" onClick={() => openEdit(item)} aria-label={`Sửa ${item.name}`}>
@@ -343,6 +348,19 @@ export function AdjustRegulationsView({ refreshKey }: Props) {
                 />
                 <span>đ</span>
               </div>
+            </label>
+
+            <label className="field">
+              <span className="field-label">
+                Mức phạt khác <small>không bắt buộc — VD: 10% lương/ tháng</small>
+              </span>
+              <input
+                className="input"
+                value={draft.fineNote}
+                onChange={event => setDraft({ ...draft, fineNote: event.target.value })}
+                placeholder="VD: Công ty quyết định, Sa thải, 20% lương/ tháng..."
+                maxLength={120}
+              />
             </label>
 
             <label className="field">

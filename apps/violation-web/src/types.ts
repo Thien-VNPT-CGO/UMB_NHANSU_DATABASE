@@ -32,6 +32,7 @@ export interface Regulation {
   description: string;
   category: string;
   fine_amount: number;
+  fine_note?: string;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -43,6 +44,7 @@ export interface TicketItem {
   name: string;
   category: string;
   fine_amount: number;
+  fine_note?: string;
 }
 
 export interface ViolationTicket {
@@ -104,7 +106,7 @@ export interface CreateTicketInput {
   violation_date: string;
   note?: string;
   status: TicketStatus;
-  items: Array<{ regulation_id: string; name: string; category: string; fine_amount: number }>;
+  items: Array<{ regulation_id: string; name: string; category: string; fine_amount: number; fine_note?: string }>;
 }
 
 export type ViewKey =

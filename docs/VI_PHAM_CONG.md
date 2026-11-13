@@ -24,16 +24,36 @@ Web app riêng, phục vụ tại `https://<domain>/violations/`, dùng chung ba
 | Đổi Mật Khẩu | Đổi PIN 8 số và cấp lại mật khẩu khẩn cấp. |
 | Thông Tin Cá Nhân | Hiển thị đầy đủ 10 thẩm quyền tối cao và dấu ấn phiên. |
 
+### 2.1. Bộ mã lỗi mặc định
+
+Bộ quy chế gốc bám theo bảng **“QUY CHẾ LÀM VIỆC DÀNH CHO NHÂN VIÊN TẠI CỬA HÀNG”**
+(32 mã lỗi, 2 nhóm `TÁC PHONG` và `VẬN HÀNH`). Mỗi mã có nội dung và mức phạt riêng; khi chọn mã
+ở màn hình **Bắt Lỗi Vi Phạm**, mức phạt được điền tự động và vẫn cho phép điều chỉnh trước khi lưu.
+
+- Mức phạt cố định (VD `VAO TRE 5P` → 30.000đ) điền thẳng vào ô tiền.
+- Mức phạt không quy ra số tiền cố định (VD `10% lương/ tháng`, `Công ty quyết định`,
+  `Tự chịu trách nhiệm`, `Buộc thôi việc`) lưu ở trường `fine_note`; ô tiền để trống cho người
+  lập phiếu nhập số cụ thể.
+- Phiên bản bộ luật lưu ở `violationCatalogVersion`; khi nâng phiên bản, hệ thống tự thay các mã
+  mặc định cũ nhưng giữ nguyên quy chế do người dùng tự thêm.
+
 ## 3. Lưu trữ dữ liệu
 
 Các khóa trong system settings (tab `CAU_HINH_HE_THONG` của kho dữ liệu):
 
-- `violationRegulations` — danh sách quy chế + mức phạt.
+- `violationRegulations` — danh sách quy chế + mức phạt (kèm `fine_note` nếu có).
 - `violationTickets` — toàn bộ phiếu vi phạm (chưa duyệt + đã duyệt).
 - `violationPortalAccount` — tài khoản cổng, hash PIN, `pin_version`, `must_change_pin`.
+- `violationCatalogVersion` — phiên bản bộ quy chế mặc định đang áp dụng.
+- `violationSettingsUpdatedAt` — mốc cập nhật gần nhất của cổng vi phạm.
 
 Dữ liệu đi theo luồng `updateSystemSettings` sẵn có nên tự đồng bộ Google Sheets (hoặc PostgreSQL
 khi `DATA_STORE=postgres`). Không cần thêm bảng riêng.
+
+> **Chống mất dữ liệu:** mỗi thao tác quan trọng (đổi PIN, lưu/duyệt/xóa phiếu, sửa quy chế) đẩy
+> ngay `CAU_HINH_HE_THONG` lên Sheet và ghi mốc `violationSettingsUpdatedAt`. Khi một lượt pull
+> Sheet chạy xen giữa, bản ghi trong bộ nhớ có mốc mới hơn sẽ **không** bị bản Sheet cũ ghi đè —
+> tránh lỗi “đổi PIN xong bị đăng xuất / phiếu vừa tạo biến mất”.
 
 ## 4. Chỉ phiếu ĐÃ DUYỆT mới đồng bộ
 
