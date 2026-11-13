@@ -140,6 +140,17 @@ const BRANCH_STOP_KEYWORDS: Record<string, string[]> = {
   VAN_PHONG: ['tru so', 'van phong', 'dang thai mai'],
 };
 
+/**
+ * Tài xế MilkRoute chỉ lấy nhân sự khối Xưởng (group XUONG hoặc chi nhánh
+ * XUONG_SX). Nhân sự đã nghỉ việc (TERMINATED) không hiện trong danh sách.
+ */
+const isWorkshopEmployee = (e: any): boolean => {
+  if (!e || e.employment_status === 'TERMINATED') return false;
+  const group = String(e.group || '').trim().toUpperCase();
+  const branch = String(e.default_branch_id || e.branch_id || '').trim().toUpperCase();
+  return group === 'XUONG' || branch === 'XUONG_SX';
+};
+
 /** Tìm chi nhánh tương ứng với một điểm dừng lộ trình (null nếu không có). */
 const findBranchForStop = (stop: any, branches: any[]): any | null => {
   if (!stop || stop.stop_type === 'CHARGING') return null;
@@ -543,6 +554,18 @@ const FleetView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void;
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ license_plate: '', current_battery_pct: '100', status: 'ACTIVE', assigned_driver_id: '', notes: '' });
 
+  // Chỉ nhân sự khối Xưởng được chọn làm tài xế phụ trách xe.
+  const workshopDrivers = useMemo(() => {
+    const list = allEmployees.filter(isWorkshopEmployee);
+    // Giữ tài xế đang gán (dữ liệu cũ ngoài Xưởng) để ô chọn không bị trống.
+    const currentId = String(form.assigned_driver_id || '');
+    if (currentId && !list.some((e: any) => String(e.employee_id) === currentId)) {
+      const current = allEmployees.find((e: any) => String(e.employee_id) === currentId);
+      if (current) return [...list, current];
+    }
+    return list;
+  }, [allEmployees, form.assigned_driver_id]);
+
   const load = useCallback(async () => {
     try {
       const [vRes, rRes] = await Promise.allSettled([
@@ -655,14 +678,19 @@ const FleetView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void;
               </select>
             </label>
             <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)' }}>
-              Tài xế phụ trách
+              Tài xế phụ trách (khối Xưởng)
               <select value={form.assigned_driver_id} onChange={(e) => setForm((f) => ({ ...f, assigned_driver_id: e.target.value }))}
                 style={{ display: 'block', marginTop: '3px', padding: '7px 9px', fontSize: '13px', borderRadius: '8px', border: `1px solid ${BORDER}`, maxWidth: '210px' }}>
                 <option value="">— Chưa gán —</option>
-                {allEmployees.map((e: any) => (
+                {workshopDrivers.map((e: any) => (
                   <option key={e.employee_id} value={e.employee_id}>{e.full_name} ({e.employee_code || e.employee_id})</option>
                 ))}
               </select>
+              {workshopDrivers.length === 0 && (
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#B45309', marginTop: '4px', maxWidth: '210px' }}>
+                  Chưa có nhân sự khối Xưởng. Thêm nhân sự với Khối = Xưởng ở tab Nhân sự trước.
+                </div>
+              )}
             </label>
             <button className="btn-primary" disabled={busy === 'create'} onClick={createVehicle}
               style={{ padding: '8px 16px', fontSize: '13px', fontWeight: 800 }}>
@@ -805,6 +833,9 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
     route_id: '', driver_id: '', vehicle_id: '', shift_date: '',
     planned_start_at: '', planned_end_at: '', notes: '',
   });
+
+  // Ca vận chuyển chỉ chọn tài xế thuộc khối Xưởng.
+  const workshopDrivers = useMemo(() => allEmployees.filter(isWorkshopEmployee), [allEmployees]);
 
   const load = useCallback(async () => {
     setBusy('load');
@@ -950,14 +981,19 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
               </select>
             </label>
             <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)' }}>
-              Tài xế *
+              Tài xế (khối Xưởng) *
               <select value={form.driver_id} onChange={(e) => setForm((f) => ({ ...f, driver_id: e.target.value }))}
                 style={{ display: 'block', marginTop: '3px', padding: '7px 9px', fontSize: '13px', borderRadius: '8px', border: `1px solid ${BORDER}`, maxWidth: '210px' }}>
                 <option value="">— Chọn tài xế —</option>
-                {allEmployees.map((e: any) => (
+                {workshopDrivers.map((e: any) => (
                   <option key={e.employee_id} value={e.employee_id}>{e.full_name} ({e.employee_code || e.employee_id})</option>
                 ))}
               </select>
+              {workshopDrivers.length === 0 && (
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#B45309', marginTop: '4px', maxWidth: '210px' }}>
+                  Chưa có nhân sự khối Xưởng. Thêm nhân sự với Khối = Xưởng ở tab Nhân sự trước.
+                </div>
+              )}
             </label>
             <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)' }}>
               Xe *
