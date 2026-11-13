@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, tryRefreshSession } from './services/api';
 import { connectRealtime } from './services/realtime';
@@ -883,6 +883,15 @@ export function App() {
       duration: 5000,
     });
   };
+
+  // showToast ở trên được tạo mới mỗi lần App render (App tick 1 giây khi bật
+  // lịch giao diện sự kiện). Truyền thẳng xuống view con sẽ làm các `useCallback`
+  // phụ thuộc showToast bị tạo lại mỗi giây → `useEffect` refetch liên tục
+  // (đã thấy ~3 request/giây cho tab Vận chuyển). Dùng 1 identity ổn định,
+  // luôn trỏ tới phiên bản mới nhất qua ref.
+  const showToastRef = useRef(showToast);
+  showToastRef.current = showToast;
+  const stableShowToast = useCallback((m: string) => showToastRef.current(m), []);
 
   const setErrorMsg = (msg: string | null) => {
     setErrorMsgState(msg);
@@ -6066,7 +6075,7 @@ export function App() {
             <MilkRouteAdminView
               currentUser={currentUser}
               allEmployees={allEmployees}
-              showToast={(m: string) => showToast(m)}
+              showToast={stableShowToast}
             />
           )}
 

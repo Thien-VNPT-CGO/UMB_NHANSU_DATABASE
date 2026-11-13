@@ -845,11 +845,15 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
     route_id: '', driver_id: '', vehicle_id: '', shift_date: '',
     planned_start_at: '', planned_end_at: '', product_name: '', notes: '',
   });
+  // Chặn gọi chồng khi filter đổi nhanh / realtime dội nhiều sự kiện.
+  const inflightRef = useRef(false);
 
   // Ca vận chuyển chỉ chọn tài xế thuộc khối Xưởng.
   const workshopDrivers = useMemo(() => allEmployees.filter(isWorkshopEmployee), [allEmployees]);
 
   const load = useCallback(async () => {
+    if (inflightRef.current) return;
+    inflightRef.current = true;
     setBusy('load');
     try {
       const qs = new URLSearchParams({ limit: '100' });
@@ -865,11 +869,13 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
       if (vRes.status === 'fulfilled' && Array.isArray(vRes.value)) setVehicles(vRes.value);
       if (rRes.status === 'fulfilled' && Array.isArray(rRes.value)) {
         setRoutes(rRes.value);
-        setForm((f) => ({ ...f, route_id: f.route_id || rRes.value[0]?.route_id || '' }));
+        const firstRouteId = rRes.value[0]?.route_id || '';
+        // Không tạo object form mới nếu route_id không đổi (tránh re-render thừa).
+        setForm((f) => (f.route_id || !firstRouteId ? f : { ...f, route_id: firstRouteId }));
       }
     } catch (e: any) {
       showToast(`⚠️ ${e?.message || 'Không tải được danh sách ca.'}`);
-    } finally { setBusy(''); }
+    } finally { inflightRef.current = false; setBusy(''); }
   }, [statusF, dateFrom, dateTo, showToast]);
 
   useEffect(() => { void load(); }, [load]);
@@ -1451,7 +1457,12 @@ const RouteChangesView: React.FC<{
 
   const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
 
+  // Chặn gọi chồng khi filter đổi nhanh / realtime dội nhiều sự kiện.
+  const inflightRef = useRef(false);
+
   const load = useCallback(async () => {
+    if (inflightRef.current) return;
+    inflightRef.current = true;
     setBusy('load');
     try {
       const qs = new URLSearchParams({ limit: '100' });
@@ -1463,7 +1474,9 @@ const RouteChangesView: React.FC<{
       ]);
       if (rRes.status === 'fulfilled' && Array.isArray(rRes.value)) {
         setRoutes(rRes.value);
-        setForm((f) => ({ ...f, route_id: f.route_id || rRes.value[0]?.route_id || '' }));
+        const firstRouteId = rRes.value[0]?.route_id || '';
+        // Không tạo object form mới nếu route_id không đổi (tránh re-render thừa).
+        setForm((f) => (f.route_id || !firstRouteId ? f : { ...f, route_id: firstRouteId }));
       }
       if (bRes.status === 'fulfilled' && Array.isArray(bRes.value)) setBranches(bRes.value);
       if (qRes.status === 'fulfilled') {
@@ -1472,7 +1485,7 @@ const RouteChangesView: React.FC<{
       }
     } catch (e: any) {
       showToast(`⚠️ ${e?.message || 'Không tải được phiếu đổi lộ trình.'}`);
-    } finally { setBusy(''); }
+    } finally { inflightRef.current = false; setBusy(''); }
   }, [statusF, showToast]);
 
   useEffect(() => { void load(); }, [load]);
@@ -1917,7 +1930,7 @@ const RouteChangesView: React.FC<{
 // ============================================================
 // SHELL
 // ============================================================
-export const MilkRouteAdminView: React.FC<MilkRouteAdminProps> = ({ currentUser, allEmployees = [], showToast = () => {} }) => {
+const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, allEmployees = [], showToast = () => {} }) => {
   const role = String(currentUser?.role || '').toUpperCase();
   const isEvAdmin = ['ADMIN', 'HR', 'DIRECTOR', 'FLEET_MANAGER', 'FINANCE'].includes(role);
   const canHr = ['ADMIN', 'HR'].includes(role);
@@ -1927,6 +1940,14 @@ export const MilkRouteAdminView: React.FC<MilkRouteAdminProps> = ({ currentUser,
   const canPayroll = role === 'FINANCE';
 
   const [tab, setTab] = useState<SubTab>('map');
+
+  // App.tsx tick 1 giây (đồng hồ lịch giao diện sự kiện) làm prop showToast đổi
+  // identity. Nếu đưa thẳng xuống view con, `load` (useCallback phụ thuộc
+  // showToast) bị tạo lại mỗi giây → `useEffect` gọi lại 3 API/giây khiến tab
+  // "Ca vận chuyển"/"Phiếu đổi lộ trình" giật, lag. Giữ identity ổn định.
+  const toastRef = useRef(showToast);
+  toastRef.current = showToast;
+  const toast = useCallback((m: string) => toastRef.current(m), []);
 
   // Đổi vai trò giữa chừng đang ở màn Lương -> đá về Live Map (tránh render màn bị ẩn).
   useEffect(() => {
@@ -1985,14 +2006,21 @@ export const MilkRouteAdminView: React.FC<MilkRouteAdminProps> = ({ currentUser,
         })}
       </div>
 
-      {tab === 'map' && <LiveMapView showToast={showToast} />}
-      {tab === 'fleet' && <FleetView allEmployees={allEmployees} showToast={showToast} canManage={canManage} />}
+      {tab === 'map' && <LiveMapView showToast={toast} />}
+      {tab === 'fleet' && <FleetView allEmployees={allEmployees} showToast={toast} canManage={canManage} />}
       {tab === 'route-changes' && (
-        <RouteChangesView showToast={showToast} canCreate={canHr} canApprove={canDirector} currentUser={currentUser} />
+        <RouteChangesView showToast={toast} canCreate={canHr} canApprove={canDirector} currentUser={currentUser} />
       )}
-      {tab === 'shifts' && <ShiftsView allEmployees={allEmployees} showToast={showToast} canManage={canManage} />}
-      {tab === 'charging' && <ChargingView showToast={showToast} canHr={canHr} canDirector={canDirector} allEmployees={allEmployees} />}
-      {tab === 'payroll' && canPayroll && <PayrollView allEmployees={allEmployees} showToast={showToast} canManage={canPayroll} />}
+      {tab === 'shifts' && <ShiftsView allEmployees={allEmployees} showToast={toast} canManage={canManage} />}
+      {tab === 'charging' && <ChargingView showToast={toast} canHr={canHr} canDirector={canDirector} allEmployees={allEmployees} />}
+      {tab === 'payroll' && canPayroll && <PayrollView allEmployees={allEmployees} showToast={toast} canManage={canPayroll} />}
     </div>
   );
 };
+
+/**
+ * memo: App tick 1 giây (đồng hồ sự kiện giao diện) không làm cả phân hệ vận
+ * chuyển re-render. Chỉ render lại khi currentUser / danh sách nhân sự / toast
+ * thực sự đổi.
+ */
+export const MilkRouteAdminView = React.memo(MilkRouteAdminViewBase);
