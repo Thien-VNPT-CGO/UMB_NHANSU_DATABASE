@@ -2,8 +2,8 @@
  * Phiếu đổi lộ trình giao sữa (MilkRoute EV).
  *
  * Luồng nghiệp vụ:
- *   1. Nhân sự (HR/ADMIN) tạo phiếu: chọn lộ trình + sản phẩm + khoảng ngày
- *      hiệu lực + danh sách điểm dừng mới.
+ *   1. Nhân sự (HR/ADMIN) hoặc Kế toán (FINANCE) tạo phiếu: chọn lộ trình + sản phẩm
+ *      + khoảng ngày hiệu lực + danh sách điểm dừng mới.
  *   2. Phiếu ở trạng thái PENDING và chờ Giám đốc (DIRECTOR/ADMIN) ký duyệt.
  *   3. Khi APPROVED, mọi ca có `shift_date` trong [effective_from, effective_to]
  *      sẽ dùng danh sách điểm dừng của phiếu (xem EVRouteService.getEffectiveStops).

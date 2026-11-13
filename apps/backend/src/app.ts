@@ -751,8 +751,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // ---------------------------------------------------------------
-  // ADMIN — Phiếu đổi lộ trình (Nhân sự tạo — Giám đốc duyệt)
+  // ADMIN — Phiếu đổi lộ trình (Nhân sự/Kế toán tạo — Giám đốc duyệt)
   // ---------------------------------------------------------------
+  // Nhân sự (ADMIN/HR) hoặc Kế toán (FINANCE) lập phiếu đổi lộ trình.
+  // Giám đốc (ADMIN/DIRECTOR) luôn là cấp ký duyệt cuối cùng.
+  const EV_ROUTE_CHANGE_CREATE_ROLES: Array<'ADMIN' | 'HR' | 'FINANCE'> =
+    ['ADMIN', 'HR', 'FINANCE'];
+
   const evActor = (req: AuthenticatedRequest) => ({
     employeeId: req.user?.employeeId,
     username: req.user?.phone || req.user?.id,
@@ -786,7 +791,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     } catch (err: any) { evErr(res, err); }
   });
 
-  app.post('/ev/admin/route-changes', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: evRouteChangeCreateBody }), async (req: AuthenticatedRequest, res) => {
+  app.post('/ev/admin/route-changes', authMiddleware, requireRole(EV_ROUTE_CHANGE_CREATE_ROLES), validate({ body: evRouteChangeCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const r = await ev.routeChanges.createRequest(req.body, evActor(req));
       broadcastUpdate('evRouteChange', { action: 'create', id: r.request_id, routeId: r.route_id });
@@ -794,7 +799,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     } catch (err: any) { evErr(res, err); }
   });
 
-  app.put('/ev/admin/route-changes/:id', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: evRouteChangeIdParams, body: evRouteChangeUpdateBody }), async (req: AuthenticatedRequest, res) => {
+  app.put('/ev/admin/route-changes/:id', authMiddleware, requireRole(EV_ROUTE_CHANGE_CREATE_ROLES), validate({ params: evRouteChangeIdParams, body: evRouteChangeUpdateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const r = await ev.routeChanges.updateRequest(req.params.id, req.body, evActor(req));
       broadcastUpdate('evRouteChange', { action: 'update', id: r.request_id, routeId: r.route_id });
@@ -828,7 +833,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     } catch (err: any) { evErr(res, err); }
   });
 
-  app.post('/ev/admin/route-changes/:id/cancel', authMiddleware, requireRole(['ADMIN', 'HR', 'DIRECTOR']), validate({ params: evRouteChangeIdParams, body: evRouteChangeCancelBody }), async (req: AuthenticatedRequest, res) => {
+  app.post('/ev/admin/route-changes/:id/cancel', authMiddleware, requireRole(['ADMIN', 'HR', 'DIRECTOR', 'FINANCE']), validate({ params: evRouteChangeIdParams, body: evRouteChangeCancelBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const r = await ev.routeChanges.cancelRequest(req.params.id, evActor(req), req.body?.reason);
       broadcastUpdate('evRouteChange', { action: 'cancel', id: r.request_id, routeId: r.route_id });

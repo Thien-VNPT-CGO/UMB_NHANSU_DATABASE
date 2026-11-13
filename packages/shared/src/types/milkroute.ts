@@ -117,7 +117,7 @@ export interface EVRouteChangeStop {
 export type EVRouteChangeStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
 
 /**
- * Phiếu đổi lộ trình giao sữa (Nhân sự tạo — Giám đốc ký duyệt).
+ * Phiếu đổi lộ trình giao sữa (Nhân sự/Kế toán tạo — Giám đốc ký duyệt).
  * Khi APPROVED, các ca có `shift_date` nằm trong [effective_from, effective_to]
  * sẽ dùng danh sách điểm dừng trong phiếu thay cho lộ trình gốc.
  */
@@ -133,7 +133,7 @@ export interface EVRouteChangeRequest {
   reason?: string;
   status: EVRouteChangeStatus;
   stops: EVRouteChangeStop[];
-  created_by: string;               // employee_id / username người tạo (Nhân sự)
+  created_by: string;               // employee_id / username người tạo (Nhân sự / Kế toán)
   created_by_name?: string;
   submitted_at: string;
   approved_by?: string;             // Giám đốc

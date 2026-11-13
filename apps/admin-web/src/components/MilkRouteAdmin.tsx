@@ -1851,7 +1851,7 @@ const RouteChangesView: React.FC<{
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
         <RouteIcon size={17} color="#7C3AED" />
         <span style={{ fontSize: '14px', fontWeight: 900, color: 'var(--text)' }}>Phiếu đổi lộ trình theo sản phẩm</span>
-        <span style={{ fontSize: '11px', fontWeight: 700, color: MUTED }}>Nhân sự tạo → Giám đốc duyệt → có hiệu lực theo khoảng ngày</span>
+        <span style={{ fontSize: '11px', fontWeight: 700, color: MUTED }}>Nhân sự / Kế toán tạo → Giám đốc duyệt → có hiệu lực theo khoảng ngày</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '7px', flexWrap: 'wrap', alignItems: 'center' }}>
           <select value={statusF} onChange={(e) => setStatusF(e.target.value)}
             style={{ padding: '6px 8px', fontSize: '12px', fontWeight: 700, borderRadius: '8px', border: `1px solid ${BORDER}` }}>
@@ -1870,6 +1870,12 @@ const RouteChangesView: React.FC<{
           )}
         </div>
       </div>
+
+      {String(currentUser?.role || '').toUpperCase() === 'FINANCE' && (
+        <div style={{ marginBottom: '10px', padding: '8px 11px', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '9px', fontSize: '11.5px', fontWeight: 700, color: '#1D4ED8', lineHeight: 1.7 }}>
+          Tài khoản Kế toán: được tạo / sửa / hủy phiếu đổi lộ trình. Phiếu chỉ có hiệu lực sau khi <b>Giám đốc ký duyệt</b>.
+        </div>
+      )}
 
       {showForm && canCreate && (
         <div style={{ padding: '12px', backgroundColor: BG, border: `1px solid ${BORDER}`, borderRadius: '10px', marginBottom: '14px' }}>
@@ -2073,7 +2079,7 @@ const RouteChangesView: React.FC<{
                         Sửa phiếu
                       </button>
                     )}
-                    {(isPending || r.status === 'APPROVED') && (
+                    {(canCreate || canApprove) && (isPending || r.status === 'APPROVED') && (
                       <button className="btn-secondary" disabled={busy === `${r.request_id}:cancel`} onClick={() => cancel(r)}
                         style={{ padding: '7px 14px', fontSize: '12px', fontWeight: 800, color: '#B91C1C' }}>
                         Hủy phiếu
@@ -2087,14 +2093,14 @@ const RouteChangesView: React.FC<{
         })}
         {!items.length && busy !== 'load' && (
           <div style={{ fontSize: '12.5px', color: MUTED, fontWeight: 600, padding: '14px 4px', lineHeight: 1.7 }}>
-            Chưa có phiếu đổi lộ trình nào. Nhân sự bấm <b>“Tạo phiếu”</b> để đề xuất lộ trình mới theo sản phẩm;
+            Chưa có phiếu đổi lộ trình nào. Nhân sự / Kế toán bấm <b>“Tạo phiếu”</b> để đề xuất lộ trình mới theo sản phẩm;
             sau khi Giám đốc duyệt, bản đồ và app tài xế tự cập nhật trong khoảng ngày hiệu lực.
           </div>
         )}
       </div>
 
       <div style={{ marginTop: '14px', padding: '10px 12px', backgroundColor: '#F5F3FF', border: '1px solid #DDD6FE', borderRadius: '9px', fontSize: '11.5px', fontWeight: 600, color: '#5B21B6', lineHeight: 1.7 }}>
-        <b>Quy trình:</b> Nhân sự tạo phiếu (chọn lộ trình + sản phẩm + khoảng ngày + điểm dừng) →
+        <b>Quy trình:</b> Nhân sự / Kế toán tạo phiếu (chọn lộ trình + sản phẩm + khoảng ngày + điểm dừng) →
         <b> Giám đốc ký duyệt</b> → mọi ca có ngày nằm trong khoảng hiệu lực và đúng sản phẩm sẽ dùng lộ trình mới;
         ca ngoài khoảng ngày hoặc khác sản phẩm vẫn chạy lộ trình gốc.
       </div>
@@ -2111,6 +2117,9 @@ const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, al
   const canHr = ['ADMIN', 'HR'].includes(role);
   const canDirector = ['ADMIN', 'DIRECTOR'].includes(role);
   const canManage = ['ADMIN', 'FLEET_MANAGER'].includes(role);
+  // Phiếu đổi lộ trình: Nhân sự (HR) và Kế toán (FINANCE) được tạo/sửa/hủy phiếu;
+  // riêng bước ký duyệt vẫn chỉ Giám đốc (DIRECTOR) — xem canDirector.
+  const canCreateRouteChange = ['ADMIN', 'HR', 'FINANCE'].includes(role);
   // Bảng lương tài xế: CHỈ tài khoản Kế toán (FINANCE) thấy tab con này.
   const canPayroll = role === 'FINANCE';
 
@@ -2184,7 +2193,7 @@ const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, al
       {tab === 'map' && <LiveMapView showToast={toast} />}
       {tab === 'fleet' && <FleetView allEmployees={allEmployees} showToast={toast} canManage={canManage} />}
       {tab === 'route-changes' && (
-        <RouteChangesView showToast={toast} canCreate={canHr} canApprove={canDirector} currentUser={currentUser} />
+        <RouteChangesView showToast={toast} canCreate={canCreateRouteChange} canApprove={canDirector} currentUser={currentUser} />
       )}
       {tab === 'shifts' && <ShiftsView allEmployees={allEmployees} showToast={toast} canManage={canManage} />}
       {tab === 'charging' && <ChargingView showToast={toast} canHr={canHr} canDirector={canDirector} allEmployees={allEmployees} />}
