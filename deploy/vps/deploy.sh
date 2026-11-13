@@ -95,6 +95,11 @@ if [ -f "deploy/vps/fix-rsvp-nginx.sh" ]; then
   sudo bash deploy/vps/fix-rsvp-nginx.sh || true
 fi
 
+echo "==> 5e. Dam bao Nginx phuc vu cong xu ly vi pham tai /violations/"
+if [ -f "deploy/vps/fix-violations-nginx.sh" ]; then
+  sudo bash deploy/vps/fix-violations-nginx.sh || true
+fi
+
 echo "==> 6. Kiem tra suc khoe (cho backend san sang)..."
 READY=0
 for i in $(seq 1 15); do
