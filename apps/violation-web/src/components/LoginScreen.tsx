@@ -232,11 +232,6 @@ export function LoginScreen({ onSuccess, notice }: Props) {
             {!busy ? <ArrowRight size={17} /> : null}
           </button>
 
-          <div className="login-hint">
-            <span className="login-hint-dot" />
-            PIN mặc định lần đầu: <strong>12345678</strong> — hệ thống sẽ buộc đổi ngay sau khi vào.
-          </div>
-
           <p className="login-legal">
             Việc đăng nhập đồng nghĩa bạn đồng ý tuân thủ quy chế nội bộ và chịu trách nhiệm về mọi
             thao tác được ghi nhận trong phiên.

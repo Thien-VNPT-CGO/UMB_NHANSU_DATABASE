@@ -1474,33 +1474,6 @@ select.input,
   font-size: 0.9rem;
 }
 
-.login-hint {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 13px;
-  padding: 8px 10px;
-  border: 1px dashed rgba(255, 255, 255, 0.11);
-  border-radius: 10px;
-  color: var(--muted);
-  font-size: 0.7rem;
-  line-height: 1.5;
-}
-
-.login-hint strong {
-  color: var(--gold-2);
-  letter-spacing: 0.08em;
-}
-
-.login-hint-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--gold);
-  box-shadow: 0 0 7px rgba(227, 184, 102, 0.7);
-  flex: 0 0 auto;
-}
-
 .login-legal {
   margin-top: 13px;
   color: var(--muted-2);
