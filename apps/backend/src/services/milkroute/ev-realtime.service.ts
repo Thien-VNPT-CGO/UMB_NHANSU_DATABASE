@@ -278,6 +278,28 @@ export class EVRealtimeService {
     this.io.to(`shift:${data.shiftId}`).emit('ev:live:charging-station', payload);
   }
 
+  /**
+   * Broadcast lộ trình của một ngày vừa được duyệt thay đổi.
+   * Admin Live Map + app tài xế nhận ngay danh sách điểm dừng mới.
+   */
+  broadcastRouteChanged(data: {
+    requestId: string;
+    routeId: string;
+    effectiveFrom: string;
+    effectiveTo: string;
+    productName?: string;
+    approvedBy?: string;
+  }) {
+    if (!this.io) return;
+    const payload: EVWSPayload<any> = {
+      event: 'ev:live:route-changed',
+      timestamp: new Date().toISOString(),
+      data,
+    };
+    this.io.to('admin:live').emit('ev:live:route-changed', payload);
+    this.io.emit('ev:live:route-changed', payload);
+  }
+
   /** Broadcast payroll updated */
   broadcastPayrollUpdated(driverId: string, payrollData: any) {
     if (!this.io) return;

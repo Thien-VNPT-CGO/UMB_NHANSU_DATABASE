@@ -1,8 +1,20 @@
 import { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
-import { EVChargingTicket, EVShift } from '@ubm/shared';
+import { EVChargingTicket, EVShift, EVRouteStop } from '@ubm/shared';
+import { EVRouteService } from './ev-route.service.js';
 
 export class EVChargingService {
-  constructor(private readonly repo: MockSheetsAdapter) {}
+  constructor(
+    private readonly repo: MockSheetsAdapter,
+    private readonly routes?: EVRouteService,
+  ) {}
+
+  /** Điểm dừng hiệu lực của ca (áp phiếu đổi lộ trình nếu có). */
+  private async stopsForShift(shift: EVShift): Promise<EVRouteStop[]> {
+    if (this.routes) return this.routes.getEffectiveStopsForShift(shift);
+    return this.repo.evRouteStops
+      .filter(s => s.route_id === shift.route_id)
+      .sort((a, b) => a.stop_order - b.stop_order);
+  }
 
   /** Tạo phiếu sạc xe điện */
   async createChargingTicket(input: {
@@ -18,7 +30,7 @@ export class EVChargingService {
     if (!driver) throw new Error('DRIVER_NOT_FOUND');
 
     // Check if shift is completed delivery at office (stop 4)
-    const stops = this.repo.evRouteStops.filter(s => s.route_id === shift.route_id).sort((a, b) => a.stop_order - b.stop_order);
+    const stops = await this.stopsForShift(shift);
     const officeStop = stops.find(s => s.stop_type === 'OFFICE');
     const officeCheckin = this.repo.evShiftCheckins.find(c => c.shift_id === input.shiftId && c.stop_id === officeStop?.stop_id);
     if (!officeCheckin) {

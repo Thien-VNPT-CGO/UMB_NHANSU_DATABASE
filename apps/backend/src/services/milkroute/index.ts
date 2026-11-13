@@ -11,11 +11,13 @@ import { EVCheckinService } from './ev-checkin.service.js';
 import { EVChargingService } from './ev-charging.service.js';
 import { EVGPSService } from './ev-gps.service.js';
 import { EVPayrollService } from './ev-payroll.service.js';
+import { EVRouteChangeService } from './ev-route-change.service.js';
 import { EVRealtimeService, evRealtimeService } from './ev-realtime.service.js';
 
 export class MilkRouteModule {
   public readonly vehicles: EVVehicleService;
   public readonly routes: EVRouteService;
+  public readonly routeChanges: EVRouteChangeService;
   public readonly shifts: EVShiftService;
   public readonly checkins: EVCheckinService;
   public readonly charging: EVChargingService;
@@ -26,11 +28,12 @@ export class MilkRouteModule {
   constructor(private readonly repo: MockSheetsAdapter) {
     this.vehicles = new EVVehicleService(repo);
     this.routes = new EVRouteService(repo);
-    this.shifts = new EVShiftService(repo);
-    this.checkins = new EVCheckinService(repo);
-    this.charging = new EVChargingService(repo);
+    this.routeChanges = new EVRouteChangeService(repo);
+    this.shifts = new EVShiftService(repo, this.routes);
+    this.checkins = new EVCheckinService(repo, this.routes);
+    this.charging = new EVChargingService(repo, this.routes);
     this.gps = new EVGPSService(repo);
-    this.payroll = new EVPayrollService(repo);
+    this.payroll = new EVPayrollService(repo, undefined, this.routes);
     this.realtime = evRealtimeService;
   }
 

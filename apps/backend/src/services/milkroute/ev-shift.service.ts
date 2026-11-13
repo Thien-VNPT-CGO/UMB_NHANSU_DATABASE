@@ -1,8 +1,20 @@
 import { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
 import { EVShift, EVRouteStop, EVRoute, EVVehicle } from '@ubm/shared';
+import { EVRouteService } from './ev-route.service.js';
 
 export class EVShiftService {
-  constructor(private readonly repo: MockSheetsAdapter) {}
+  constructor(
+    private readonly repo: MockSheetsAdapter,
+    private readonly routes?: EVRouteService,
+  ) {}
+
+  /** Điểm dừng hiệu lực của ca (áp phiếu đổi lộ trình nếu có). */
+  private async stopsForShift(shift: EVShift): Promise<EVRouteStop[]> {
+    if (this.routes) return this.routes.getEffectiveStopsForShift(shift);
+    return this.repo.evRouteStops
+      .filter(s => s.route_id === shift.route_id)
+      .sort((a, b) => a.stop_order - b.stop_order);
+  }
 
   /** Tạo ca vận chuyển mới */
   async createShift(input: {
@@ -12,6 +24,7 @@ export class EVShiftService {
     shiftDate: string;           // YYYY-MM-DD
     plannedStartAt: string;      // ISO timestamp
     plannedEndAt?: string;
+    productName?: string;        // Sản phẩm của ca (chọn phiếu đổi lộ trình phù hợp)
     workDayIndex?: number;       // Ngày công thứ mấy trong tháng
     notes?: string;
     createdBy: string;
@@ -36,6 +49,7 @@ export class EVShiftService {
       shift_date: input.shiftDate,
       planned_start_at: input.plannedStartAt,
       planned_end_at: input.plannedEndAt,
+      product_name: String(input.productName || '').trim() || undefined,
       work_day_index: input.workDayIndex,
       notes: input.notes,
       created_by: input.createdBy,
@@ -106,8 +120,8 @@ export class EVShiftService {
     if (!shift) throw new Error('SHIFT_NOT_FOUND');
     if (shift.status !== 'SCHEDULED') throw new Error('SHIFT_NOT_SCHEDULED: Ca không ở trạng thái chờ bắt đầu');
 
-    // Get route stops
-    const stops = this.repo.evRouteStops.filter(s => s.route_id === shift.route_id).sort((a, b) => a.stop_order - b.stop_order);
+    // Get route stops (áp phiếu đổi lộ trình nếu ca nằm trong khoảng hiệu lực)
+    const stops = await this.stopsForShift(shift);
     const startStop = stops[0];
     if (!startStop) throw new Error('NO_START_STOP: Lộ trình không có điểm xuất phát');
 
@@ -143,8 +157,8 @@ export class EVShiftService {
       throw new Error('SHIFT_NOT_IN_PROGRESS: Ca không ở trạng thái đang chạy');
     }
 
-    // Get route stops
-    const stops = this.repo.evRouteStops.filter(s => s.route_id === shift.route_id).sort((a, b) => a.stop_order - b.stop_order);
+    // Get route stops (áp phiếu đổi lộ trình nếu có)
+    const stops = await this.stopsForShift(shift);
     const endStop = stops[stops.length - 1];
     if (!endStop) throw new Error('NO_END_STOP: Lộ trình không có điểm kết thúc');
 
@@ -189,9 +203,7 @@ export class EVShiftService {
     const vehicle = this.repo.evVehicles.find(v => v.vehicle_id === shift.vehicle_id);
     const route = this.repo.evRoutes.find(r => r.route_id === shift.route_id);
 
-    const stops = await this.repo.evRouteStops
-      .filter(s => s.route_id === shift.route_id)
-      .sort((a, b) => a.stop_order - b.stop_order);
+    const stops = await this.stopsForShift(shift);
 
     const checkins = this.repo.evShiftCheckins.filter(c => c.shift_id === shiftId);
 

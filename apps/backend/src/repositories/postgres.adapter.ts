@@ -104,6 +104,9 @@ const WRITE_METHODS = new Set<string>([
   'createEVDriverPayroll',
   'updateEVDriverPayroll',
   'deleteEVDriverPayroll',
+  'createEVRouteChangeRequest',
+  'updateEVRouteChangeRequest',
+  'deleteEVRouteChangeRequest',
 ]);
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

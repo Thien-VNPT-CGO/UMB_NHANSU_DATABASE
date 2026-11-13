@@ -1813,14 +1813,18 @@ export function App() {
         const branchConfigChanged =
           (payload?.entity === 'config' && payload?.data?.area === 'branches') ||
           payload?.entity === 'branches';
-        // EV: toạ độ chi nhánh hoặc trạm sạc (GPS tài xế gửi khi bắt đầu sạc)
-        // vừa đổi → Live Map tải lại ngay, không chờ vòng poll 10s.
-        const evConfigChanged = payload?.entity === 'ev';
+        // EV: toạ độ chi nhánh/trạm sạc hoặc lộ trình (phiếu đổi lộ trình được
+        // duyệt) vừa đổi → Live Map + phiếu đổi lộ trình tải lại ngay.
+        const evConfigChanged = payload?.entity === 'ev'
+          || payload?.entity === 'evRouteChange'
+          || payload?.entity === 'evRoute'
+          || payload?.entity === 'evRouteStop';
         if (branchConfigChanged || evConfigChanged) {
           // 1 event dùng chung: tab Chi nhánh tự tải lại — không full-reload.
           try {
             window.dispatchEvent(new CustomEvent('ubm:branches-reload', { detail: payload?.data }));
             window.dispatchEvent(new CustomEvent('ubm:ev-station-reload', { detail: payload?.data }));
+            window.dispatchEvent(new CustomEvent('ubm:route-change-reload', { detail: payload?.data }));
           } catch { /* non-fatal */ }
         } else if (payload?.entity === 'config' || configChangedOnSheet) {
           loadAllData(currentUser, true);

@@ -1,5 +1,5 @@
 import { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
-import { EVRoute, EVRouteStop } from '@ubm/shared';
+import { EVRoute, EVRouteChangeRequest, EVRouteStop, EVShift } from '@ubm/shared';
 
 /**
  * Từ khoá nhận diện điểm dừng của từng chi nhánh (dữ liệu seed cũ chưa có
@@ -114,6 +114,135 @@ export class EVRouteService {
 
   async getMandatoryStops(routeId: string): Promise<EVRouteStop[]> {
     return (await this.listRouteStops(routeId)).filter(s => s.is_mandatory);
+  }
+
+  // ============================================================
+  // LỘ TRÌNH HIỆU LỰC THEO NGÀY (phiếu đổi lộ trình đã duyệt)
+  // ============================================================
+
+  /** Ngày hôm nay theo giờ Việt Nam (YYYY-MM-DD). */
+  private today(): string {
+    return new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+  }
+
+  /**
+   * Phiếu đổi lộ trình đã duyệt và đang có hiệu lực trong ngày `date`.
+   * - Ưu tiên phiếu khớp đúng sản phẩm của ca.
+   * - Ca không gắn sản phẩm: dùng phiếu áp dụng chung, nếu không có thì phiếu
+   *   mới duyệt nhất.
+   * - Ca gắn sản phẩm nhưng chỉ có phiếu của sản phẩm khác: KHÔNG áp dụng.
+   */
+  async findEffectiveChangeRequest(
+    routeId: string,
+    date: string,
+    productName?: string,
+  ): Promise<EVRouteChangeRequest | null> {
+    const day = String(date || '').slice(0, 10);
+    if (!routeId || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+
+    const candidates = this.repo.evRouteChangeRequests
+      .filter(r => r.route_id === routeId
+        && r.status === 'APPROVED'
+        && String(r.effective_from).slice(0, 10) <= day
+        && String(r.effective_to).slice(0, 10) >= day)
+      .sort((a, b) => String(b.approved_at || b.updated_at || b.created_at)
+        .localeCompare(String(a.approved_at || a.updated_at || a.created_at)));
+    if (!candidates.length) return null;
+
+    const wanted = normalizeText(productName);
+    if (wanted) {
+      const exact = candidates.find(r => normalizeText(r.product_name) === wanted);
+      if (exact) return exact;
+      return candidates.find(r => !normalizeText(r.product_name)) || null;
+    }
+    return candidates.find(r => !normalizeText(r.product_name)) || candidates[0];
+  }
+
+  /** Tìm chi nhánh ứng với điểm dừng để lấy toạ độ mới nhất. */
+  private findBranchForStop(stop: any, branches: any[]): any | null {
+    if (!stop || stop.stop_type === 'CHARGING') return null;
+    const bid = String(stop.branch_id || '').trim();
+    if (bid) {
+      const byId = branches.find(b => String(b?.id ?? b?.branch_id) === bid);
+      if (byId) return byId;
+    }
+    const hay = `${normalizeText(stop.name)} | ${normalizeText(stop.address)}`;
+    return branches.find((b) => {
+      const id = normalizeText(b?.id ?? b?.branch_id);
+      if (id && hay.includes(id)) return true;
+      const kws = BRANCH_STOP_KEYWORDS[String(b?.id ?? b?.branch_id)] || [];
+      return kws.some((k) => hay.includes(normalizeText(k)));
+    }) || null;
+  }
+
+  /** Ghi đè toạ độ điểm dừng bằng cấu hình chi nhánh hiện tại (bỏ trạm sạc). */
+  private applyBranchCoords(stops: EVRouteStop[]): EVRouteStop[] {
+    const branches: any[] = Array.isArray((this.repo as any).branches) ? (this.repo as any).branches : [];
+    if (!branches.length) return stops;
+    return stops.map((stop) => {
+      if (stop.stop_type === 'CHARGING') return stop;
+      const branch = this.findBranchForStop(stop, branches);
+      if (!branch) return stop;
+      const latitude = Number(branch.latitude);
+      const longitude = Number(branch.longitude);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return stop;
+      if (latitude === 0 && longitude === 0) return stop;
+      return { ...stop, latitude, longitude };
+    });
+  }
+
+  /**
+   * Điểm dừng HIỆU LỰC của lộ trình trong ngày `date`:
+   * - Có phiếu đổi lộ trình đã duyệt → dùng danh sách điểm dừng trong phiếu.
+   * - Không có → lộ trình gốc.
+   * Toạ độ luôn lấy theo chi nhánh hiện tại; trạm sạc giữ toạ độ GPS gần nhất.
+   */
+  async getEffectiveStops(routeId: string, date?: string, productName?: string): Promise<EVRouteStop[]> {
+    const base = await this.listRouteStops(routeId);
+    const change = await this.findEffectiveChangeRequest(routeId, date || this.today(), productName);
+    if (!change) return this.applyBranchCoords(base);
+
+    const baseCharging = base.find(s => s.stop_type === 'CHARGING');
+    const mapped: EVRouteStop[] = change.stops
+      .slice()
+      .sort((a, b) => Number(a.stop_order) - Number(b.stop_order))
+      .map((s, i) => {
+        const isCharging = s.stop_type === 'CHARGING';
+        const useBaseCharging = isCharging && baseCharging
+          && (Number(baseCharging.latitude) !== 0 || Number(baseCharging.longitude) !== 0);
+        return {
+          stop_id: String(s.stop_id || `RCS_${change.request_id}_${s.stop_order}`),
+          route_id: routeId,
+          stop_order: Number(s.stop_order) || i + 1,
+          name: String(s.name || '').trim(),
+          branch_id: s.branch_id ? String(s.branch_id) : undefined,
+          address: useBaseCharging ? (baseCharging?.address || s.address) : s.address,
+          latitude: useBaseCharging ? Number(baseCharging!.latitude) : Number(s.latitude) || 0,
+          longitude: useBaseCharging ? Number(baseCharging!.longitude) : Number(s.longitude) || 0,
+          geofence_radius_m: Number(s.geofence_radius_m) > 0 ? Number(s.geofence_radius_m) : 100,
+          sla_minutes: Number(s.sla_minutes) >= 0 ? Number(s.sla_minutes) : 0,
+          stop_type: s.stop_type,
+          is_mandatory: s.is_mandatory !== false,
+          notes: s.notes,
+          change_request_id: change.request_id,
+          product_name: change.product_name,
+          created_at: change.created_at,
+          updated_at: change.updated_at,
+          version: 1,
+        } as EVRouteStop;
+      });
+    return this.applyBranchCoords(mapped);
+  }
+
+  /** Điểm dừng hiệu lực của một ca (theo ngày ca + sản phẩm của ca). */
+  async getEffectiveStopsForShift(shift: EVShift): Promise<EVRouteStop[]> {
+    return this.getEffectiveStops(shift.route_id, shift.shift_date, shift.product_name);
+  }
+
+  /** Tìm điểm dừng hiệu lực của ca (dùng cho check-in). */
+  async getShiftStop(shift: EVShift, stopId: string): Promise<EVRouteStop | null> {
+    const stops = await this.getEffectiveStopsForShift(shift);
+    return stops.find(s => s.stop_id === stopId) || null;
   }
 
   // ============================================================

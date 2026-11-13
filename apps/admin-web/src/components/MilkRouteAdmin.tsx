@@ -42,7 +42,7 @@ export interface MilkRouteAdminProps {
   showToast?: (msg: string) => void;
 }
 
-type SubTab = 'map' | 'fleet' | 'shifts' | 'charging' | 'payroll';
+type SubTab = 'map' | 'fleet' | 'route-changes' | 'shifts' | 'charging' | 'payroll';
 
 const MUTED = '#64748B';
 const BORDER = '#E2E8F0';
@@ -67,6 +67,13 @@ const TICKET_STATUS: Record<string, { text: string; fg: string; bg: string }> = 
   REJECTED: { text: 'Từ chối', fg: '#B91C1C', bg: '#FEF2F2' },
   USED: { text: 'Đã dùng sạc', fg: '#6D28D9', bg: '#F5F3FF' },
   EXPIRED: { text: 'Hết hạn', fg: '#64748B', bg: '#F1F5F9' },
+};
+
+const ROUTE_CHANGE_STATUS: Record<string, { text: string; fg: string; bg: string }> = {
+  PENDING: { text: 'Chờ Giám đốc duyệt', fg: '#B45309', bg: '#FEF3C7' },
+  APPROVED: { text: 'Đã duyệt — có hiệu lực', fg: '#047857', bg: '#ECFDF5' },
+  REJECTED: { text: 'Từ chối', fg: '#B91C1C', bg: '#FEF2F2' },
+  CANCELLED: { text: 'Đã hủy', fg: '#64748B', bg: '#F1F5F9' },
 };
 
 const VEHICLE_STATUS: Record<string, { text: string; fg: string; bg: string }> = {
@@ -247,9 +254,12 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
     };
     window.addEventListener('ubm:ev-station-reload', onStationOrBranchChanged);
     window.addEventListener('ubm:branches-reload', onStationOrBranchChanged);
+    // Phiếu đổi lộ trình vừa được duyệt/hủy → vẽ lại tuyến theo điểm dừng mới.
+    window.addEventListener('ubm:route-change-reload', onStationOrBranchChanged);
     return () => {
       window.removeEventListener('ubm:ev-station-reload', onStationOrBranchChanged);
       window.removeEventListener('ubm:branches-reload', onStationOrBranchChanged);
+      window.removeEventListener('ubm:route-change-reload', onStationOrBranchChanged);
     };
   }, [loadRouteData, loadLive]);
 
@@ -586,7 +596,9 @@ const FleetView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void;
 
   useEffect(() => {
     if (!routeId) { setStops([]); return; }
-    apiRequest(`/ev/admin/stops?routeId=${encodeURIComponent(routeId)}`)
+    // Màn cấu hình lộ trình: luôn xem điểm dừng GỐC (phiếu đổi lộ trình
+    // chỉ áp dụng theo ngày/sản phẩm ở Live Map + app tài xế).
+    apiRequest(`/ev/admin/stops?routeId=${encodeURIComponent(routeId)}&base=true`)
       .then((d: any) => setStops(Array.isArray(d) ? d : []))
       .catch(() => setStops([]));
   }, [routeId]);
@@ -831,7 +843,7 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
     route_id: '', driver_id: '', vehicle_id: '', shift_date: '',
-    planned_start_at: '', planned_end_at: '', notes: '',
+    planned_start_at: '', planned_end_at: '', product_name: '', notes: '',
   });
 
   // Ca vận chuyển chỉ chọn tài xế thuộc khối Xưởng.
@@ -890,12 +902,13 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
           shift_date: form.shift_date,
           planned_start_at: new Date(form.planned_start_at).toISOString(),
           planned_end_at: form.planned_end_at ? new Date(form.planned_end_at).toISOString() : undefined,
+          product_name: form.product_name.trim() || undefined,
           notes: form.notes || undefined,
         }),
       });
       showToast('✅ Đã tạo ca vận chuyển — tài xế thấy ca trong app ngay.');
       setShowForm(false);
-      setForm((f) => ({ ...f, driver_id: '', vehicle_id: '', shift_date: '', planned_start_at: '', planned_end_at: '', notes: '' }));
+      setForm((f) => ({ ...f, driver_id: '', vehicle_id: '', shift_date: '', planned_start_at: '', planned_end_at: '', product_name: '', notes: '' }));
       await load();
     } catch (e: any) {
       showToast(`⚠️ ${e?.message || 'Tạo ca thất bại.'}`);
@@ -981,6 +994,12 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
               </select>
             </label>
             <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)' }}>
+              Sản phẩm
+              <input value={form.product_name} onChange={(e) => setForm((f) => ({ ...f, product_name: e.target.value }))}
+                placeholder="VD: Sữa tươi 100%"
+                style={{ display: 'block', marginTop: '3px', padding: '7px 9px', fontSize: '13px', borderRadius: '8px', border: `1px solid ${BORDER}`, width: '170px' }} />
+            </label>
+            <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)' }}>
               Tài xế (khối Xưởng) *
               <select value={form.driver_id} onChange={(e) => setForm((f) => ({ ...f, driver_id: e.target.value }))}
                 style={{ display: 'block', marginTop: '3px', padding: '7px 9px', fontSize: '13px', borderRadius: '8px', border: `1px solid ${BORDER}`, maxWidth: '210px' }}>
@@ -1024,6 +1043,7 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
                     {fmtDay(s.shift_date)} • {fmtTime(s.planned_start_at)}
                   </span>
                   {pill(st.fg, st.bg, st.text)}
+                  {s.product_name && pill('#7C2D12', '#FFF7ED', `🧃 ${s.product_name}`)}
                   <span style={{ fontSize: '12px', color: MUTED, fontWeight: 700 }}>
                     Tài xế {drv?.full_name || s.driver_id} • Xe {veh?.license_plate || s.vehicle_id}
                   </span>
@@ -1407,6 +1427,494 @@ const PayrollView: React.FC<{ allEmployees: any[]; showToast: (m: string) => voi
 };
 
 // ============================================================
+// 6. PHIẾU ĐỔI LỘ TRÌNH (Nhân sự tạo — Giám đốc duyệt)
+// ============================================================
+const RouteChangesView: React.FC<{
+  showToast: (m: string) => void;
+  canCreate: boolean;
+  canApprove: boolean;
+  currentUser: any;
+}> = ({ showToast, canCreate, canApprove, currentUser }) => {
+  const [routes, setRoutes] = useState<any[]>([]);
+  const [branches, setBranches] = useState<any[]>([]);
+  const [items, setItems] = useState<any[]>([]);
+  const [statusF, setStatusF] = useState('');
+  const [busy, setBusy] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState('');
+  const [openId, setOpenId] = useState('');
+  const [baseLoading, setBaseLoading] = useState(false);
+  const [form, setForm] = useState({
+    route_id: '', product_name: '', effective_from: '', effective_to: '', reason: '',
+  });
+  const [stops, setStops] = useState<any[]>([]);
+
+  const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+
+  const load = useCallback(async () => {
+    setBusy('load');
+    try {
+      const qs = new URLSearchParams({ limit: '100' });
+      if (statusF) qs.set('status', statusF);
+      const [rRes, bRes, qRes] = await Promise.allSettled([
+        apiRequest('/ev/admin/routes'),
+        apiRequest('/admin/branches'),
+        apiRequest(`/ev/admin/route-changes?${qs.toString()}`),
+      ]);
+      if (rRes.status === 'fulfilled' && Array.isArray(rRes.value)) {
+        setRoutes(rRes.value);
+        setForm((f) => ({ ...f, route_id: f.route_id || rRes.value[0]?.route_id || '' }));
+      }
+      if (bRes.status === 'fulfilled' && Array.isArray(bRes.value)) setBranches(bRes.value);
+      if (qRes.status === 'fulfilled') {
+        const d: any = qRes.value;
+        setItems(Array.isArray(d) ? d : (Array.isArray(d?.items) ? d.items : []));
+      }
+    } catch (e: any) {
+      showToast(`⚠️ ${e?.message || 'Không tải được phiếu đổi lộ trình.'}`);
+    } finally { setBusy(''); }
+  }, [statusF, showToast]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  // Realtime: phiếu được duyệt/hủy ở máy khác → tải lại ngay.
+  useEffect(() => {
+    const onReload = () => { void load(); };
+    window.addEventListener('ubm:route-change-reload', onReload);
+    return () => window.removeEventListener('ubm:route-change-reload', onReload);
+  }, [load]);
+
+  const toEditorStop = (s: any, index: number) => ({
+    stop_id: s.stop_id || '',
+    stop_order: Number(s.stop_order) || index + 1,
+    name: String(s.name || ''),
+    branch_id: String(s.branch_id || ''),
+    address: String(s.address || ''),
+    latitude: Number(s.latitude) || 0,
+    longitude: Number(s.longitude) || 0,
+    geofence_radius_m: Number(s.geofence_radius_m) || 100,
+    sla_minutes: Number(s.sla_minutes) || 0,
+    stop_type: s.stop_type || 'DELIVERY',
+    is_mandatory: s.is_mandatory !== false,
+    notes: String(s.notes || ''),
+  });
+
+  /** Nạp danh sách điểm dừng gốc của lộ trình vào trình soạn phiếu. */
+  const loadBaseStops = async (routeId: string) => {
+    if (!routeId) { setStops([]); return; }
+    setBaseLoading(true);
+    try {
+      const d: any = await apiRequest(`/ev/admin/stops?routeId=${encodeURIComponent(routeId)}&base=true`);
+      const list = Array.isArray(d) ? d : [];
+      setStops(list.map(toEditorStop));
+    } catch (e: any) {
+      showToast(`⚠️ ${e?.message || 'Không tải được điểm dừng gốc.'}`);
+      setStops([]);
+    } finally { setBaseLoading(false); }
+  };
+
+  const openCreate = () => {
+    setEditingId('');
+    setShowForm(true);
+    const routeId = form.route_id || routes[0]?.route_id || '';
+    setForm({ route_id: routeId, product_name: '', effective_from: today, effective_to: today, reason: '' });
+    void loadBaseStops(routeId);
+  };
+
+  const openEdit = (r: any) => {
+    setEditingId(r.request_id);
+    setShowForm(true);
+    setForm({
+      route_id: r.route_id,
+      product_name: r.product_name || '',
+      effective_from: String(r.effective_from).slice(0, 10),
+      effective_to: String(r.effective_to).slice(0, 10),
+      reason: r.reason || '',
+    });
+    setStops((r.stops || []).map(toEditorStop));
+  };
+
+  const closeForm = () => {
+    setShowForm(false);
+    setEditingId('');
+    setStops([]);
+  };
+
+  const patchStop = (idx: number, patch: Record<string, any>) => {
+    setStops((list) => list.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  };
+
+  const addStop = () => {
+    setStops((list) => [
+      ...list,
+      {
+        stop_id: '', stop_order: list.length + 1, name: '', branch_id: '', address: '',
+        latitude: 0, longitude: 0, geofence_radius_m: 100, sla_minutes: 15,
+        stop_type: 'DELIVERY', is_mandatory: true, notes: '',
+      },
+    ]);
+  };
+
+  const removeStop = (idx: number) => {
+    setStops((list) => list.filter((_, i) => i !== idx).map((s, i) => ({ ...s, stop_order: i + 1 })));
+  };
+
+  const save = async () => {
+    if (!form.route_id) return showToast('⚠️ Chọn lộ trình cần đổi!');
+    if (!form.effective_from || !form.effective_to) return showToast('⚠️ Chọn khoảng ngày hiệu lực!');
+    if (stops.length < 2) return showToast('⚠️ Lộ trình phải có ít nhất 2 điểm dừng!');
+    const payloadStops = stops.map((s, i) => ({
+      ...(s.stop_id ? { stop_id: s.stop_id } : {}),
+      stop_order: i + 1,
+      name: String(s.name || '').trim(),
+      branch_id: s.branch_id ? String(s.branch_id) : undefined,
+      address: String(s.address || '').trim() || undefined,
+      latitude: Number(s.latitude) || 0,
+      longitude: Number(s.longitude) || 0,
+      geofence_radius_m: Number(s.geofence_radius_m) || 100,
+      sla_minutes: Number(s.sla_minutes) || 0,
+      stop_type: s.stop_type,
+      is_mandatory: s.is_mandatory !== false,
+      notes: String(s.notes || '').trim() || undefined,
+    }));
+    setBusy('save');
+    try {
+      if (editingId) {
+        await apiRequest(`/ev/admin/route-changes/${encodeURIComponent(editingId)}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            product_name: form.product_name.trim(),
+            effective_from: form.effective_from,
+            effective_to: form.effective_to,
+            reason: form.reason.trim(),
+            stops: payloadStops,
+          }),
+        });
+        showToast('✅ Đã cập nhật phiếu đổi lộ trình.');
+      } else {
+        await apiRequest('/ev/admin/route-changes', {
+          method: 'POST',
+          body: JSON.stringify({
+            route_id: form.route_id,
+            product_name: form.product_name.trim(),
+            effective_from: form.effective_from,
+            effective_to: form.effective_to,
+            reason: form.reason.trim(),
+            stops: payloadStops,
+          }),
+        });
+        showToast('✅ Đã gửi phiếu — chờ Giám đốc ký duyệt.');
+      }
+      closeForm();
+      await load();
+    } catch (e: any) {
+      showToast(`⚠️ ${e?.message || 'Lưu phiếu thất bại.'}`);
+    } finally { setBusy(''); }
+  };
+
+  const approve = async (r: any) => {
+    const notes = window.prompt('Ghi chú duyệt (không bắt buộc):') ?? '';
+    setBusy(`${r.request_id}:approve`);
+    try {
+      await apiRequest(`/ev/admin/route-changes/${encodeURIComponent(r.request_id)}/approve`, {
+        method: 'POST', body: JSON.stringify({ notes: notes.trim() || undefined }),
+      });
+      showToast('✅ Giám đốc đã duyệt — bản đồ và app tài xế cập nhật lộ trình ngay.');
+      await load();
+    } catch (e: any) {
+      showToast(`⚠️ ${e?.message || 'Duyệt phiếu thất bại.'}`);
+    } finally { setBusy(''); }
+  };
+
+  const reject = async (r: any) => {
+    const reason = window.prompt('Lý do từ chối phiếu đổi lộ trình?');
+    if (!reason || !reason.trim()) return;
+    setBusy(`${r.request_id}:reject`);
+    try {
+      await apiRequest(`/ev/admin/route-changes/${encodeURIComponent(r.request_id)}/reject`, {
+        method: 'POST', body: JSON.stringify({ reason: reason.trim() }),
+      });
+      showToast('❌ Đã từ chối phiếu đổi lộ trình.');
+      await load();
+    } catch (e: any) {
+      showToast(`⚠️ ${e?.message || 'Từ chối thất bại.'}`);
+    } finally { setBusy(''); }
+  };
+
+  const cancel = async (r: any) => {
+    if (!window.confirm(`Hủy phiếu ${r.request_code || r.request_id}?`)) return;
+    setBusy(`${r.request_id}:cancel`);
+    try {
+      await apiRequest(`/ev/admin/route-changes/${encodeURIComponent(r.request_id)}/cancel`, {
+        method: 'POST', body: JSON.stringify({}),
+      });
+      showToast('🗑️ Đã hủy phiếu đổi lộ trình.');
+      await load();
+    } catch (e: any) {
+      showToast(`⚠️ ${e?.message || 'Hủy phiếu thất bại.'}`);
+    } finally { setBusy(''); }
+  };
+
+  const routeName = (id: string) => routes.find((r) => r.route_id === id)?.name || id;
+  const personName = (id?: string, name?: string) => name || id || '—';
+
+  return (
+    <Card>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+        <RouteIcon size={17} color="#7C3AED" />
+        <span style={{ fontSize: '14px', fontWeight: 900, color: 'var(--text)' }}>Phiếu đổi lộ trình theo sản phẩm</span>
+        <span style={{ fontSize: '11px', fontWeight: 700, color: MUTED }}>Nhân sự tạo → Giám đốc duyệt → có hiệu lực theo khoảng ngày</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '7px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <select value={statusF} onChange={(e) => setStatusF(e.target.value)}
+            style={{ padding: '6px 8px', fontSize: '12px', fontWeight: 700, borderRadius: '8px', border: `1px solid ${BORDER}` }}>
+            <option value="">Mọi trạng thái</option>
+            {Object.keys(ROUTE_CHANGE_STATUS).map((k) => <option key={k} value={k}>{ROUTE_CHANGE_STATUS[k].text}</option>)}
+          </select>
+          <button className="btn-secondary" onClick={() => void load()} disabled={busy === 'load'}
+            style={{ padding: '6px 11px', fontSize: '12px', fontWeight: 700 }}>
+            <RefreshCw size={13} /> Tải lại
+          </button>
+          {canCreate && (
+            <button className="btn-primary" onClick={() => (showForm ? closeForm() : openCreate())}
+              style={{ padding: '6px 13px', fontSize: '12px', fontWeight: 800 }}>
+              {showForm ? <><ChevronUp size={14} /> Đóng</> : <><Plus size={14} /> Tạo phiếu</>}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {showForm && canCreate && (
+        <div style={{ padding: '12px', backgroundColor: BG, border: `1px solid ${BORDER}`, borderRadius: '10px', marginBottom: '14px' }}>
+          <div style={{ display: 'flex', gap: '9px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '12px' }}>
+            <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)' }}>
+              Lộ trình *
+              <select value={form.route_id} disabled={!!editingId}
+                onChange={(e) => { setForm((f) => ({ ...f, route_id: e.target.value })); void loadBaseStops(e.target.value); }}
+                style={{ display: 'block', marginTop: '3px', padding: '7px 9px', fontSize: '13px', borderRadius: '8px', border: `1px solid ${BORDER}` }}>
+                {routes.map((r: any) => <option key={r.route_id} value={r.route_id}>{r.name}</option>)}
+              </select>
+            </label>
+            <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)' }}>
+              Sản phẩm áp dụng
+              <input value={form.product_name} onChange={(e) => setForm((f) => ({ ...f, product_name: e.target.value }))}
+                placeholder="Để trống = áp dụng chung"
+                style={{ display: 'block', marginTop: '3px', padding: '7px 9px', fontSize: '13px', borderRadius: '8px', border: `1px solid ${BORDER}`, width: '190px' }} />
+            </label>
+            <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)' }}>
+              Hiệu lực từ *
+              <input type="date" value={form.effective_from} onChange={(e) => setForm((f) => ({ ...f, effective_from: e.target.value }))}
+                style={{ display: 'block', marginTop: '3px', padding: '7px 9px', fontSize: '13px', borderRadius: '8px', border: `1px solid ${BORDER}` }} />
+            </label>
+            <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)' }}>
+              Đến ngày *
+              <input type="date" value={form.effective_to} onChange={(e) => setForm((f) => ({ ...f, effective_to: e.target.value }))}
+                style={{ display: 'block', marginTop: '3px', padding: '7px 9px', fontSize: '13px', borderRadius: '8px', border: `1px solid ${BORDER}` }} />
+            </label>
+            <label style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text)', flex: 1, minWidth: '200px' }}>
+              Lý do / ghi chú
+              <input value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))}
+                placeholder="VD: giao thêm 2 điểm tuyến mới"
+                style={{ display: 'block', marginTop: '3px', padding: '7px 9px', fontSize: '13px', borderRadius: '8px', border: `1px solid ${BORDER}`, width: '100%' }} />
+            </label>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '12px', fontWeight: 900, color: 'var(--text)' }}>Điểm dừng ({stops.length})</span>
+            {baseLoading && <span style={{ fontSize: '11px', color: MUTED, fontWeight: 700 }}>⏳ Đang nạp điểm dừng gốc…</span>}
+            <button className="btn-secondary" onClick={addStop} disabled={baseLoading}
+              style={{ marginLeft: 'auto', padding: '5px 11px', fontSize: '11.5px', fontWeight: 800 }}>
+              <Plus size={13} /> Thêm điểm
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {stops.map((s, idx) => (
+              <div key={idx} style={{ border: `1px solid ${BORDER}`, borderRadius: '9px', padding: '9px', backgroundColor: 'var(--surface)' }}>
+                <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <span style={{ width: '22px', height: '22px', borderRadius: '999px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 900, backgroundColor: '#7C3AED', color: '#fff', marginBottom: '6px' }}>{idx + 1}</span>
+                  <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, flex: 1, minWidth: '150px' }}>
+                    Tên điểm
+                    <input value={s.name} onChange={(e) => patchStop(idx, { name: e.target.value })}
+                      style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12.5px', borderRadius: '7px', border: `1px solid ${BORDER}`, width: '100%' }} />
+                  </label>
+                  <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, minWidth: '110px' }}>
+                    Loại
+                    <select value={s.stop_type} onChange={(e) => patchStop(idx, { stop_type: e.target.value })}
+                      style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12px', borderRadius: '7px', border: `1px solid ${BORDER}` }}>
+                      <option value="START">Xuất phát</option>
+                      <option value="DELIVERY">Giao hàng</option>
+                      <option value="OFFICE">Văn phòng</option>
+                      <option value="CHARGING">Trạm sạc</option>
+                      <option value="END">Kết thúc</option>
+                    </select>
+                  </label>
+                  <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, minWidth: '150px' }}>
+                    Chi nhánh (tự lấy toạ độ)
+                    <select value={s.branch_id} onChange={(e) => {
+                      const bid = e.target.value;
+                      const b = branches.find((x: any) => String(x.id) === bid);
+                      patchStop(idx, {
+                        branch_id: bid,
+                        ...(b ? { latitude: Number(b.latitude) || 0, longitude: Number(b.longitude) || 0, address: s.address || b.address || '' } : {}),
+                      });
+                    }}
+                      style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12px', borderRadius: '7px', border: `1px solid ${BORDER}` }}>
+                      <option value="">— Không gắn —</option>
+                      {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name || b.id}</option>)}
+                    </select>
+                  </label>
+                  <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, width: '96px' }}>
+                    Vĩ độ
+                    <input type="number" step="0.000001" value={s.latitude} onChange={(e) => patchStop(idx, { latitude: Number(e.target.value) })}
+                      style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12px', borderRadius: '7px', border: `1px solid ${BORDER}`, width: '100%' }} />
+                  </label>
+                  <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, width: '96px' }}>
+                    Kinh độ
+                    <input type="number" step="0.000001" value={s.longitude} onChange={(e) => patchStop(idx, { longitude: Number(e.target.value) })}
+                      style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12px', borderRadius: '7px', border: `1px solid ${BORDER}`, width: '100%' }} />
+                  </label>
+                  <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, width: '74px' }}>
+                    SLA (phút)
+                    <input type="number" min={0} value={s.sla_minutes} onChange={(e) => patchStop(idx, { sla_minutes: Number(e.target.value) })}
+                      style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12px', borderRadius: '7px', border: `1px solid ${BORDER}`, width: '100%' }} />
+                  </label>
+                  <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, width: '86px' }}>
+                    Geofence (m)
+                    <input type="number" min={1} value={s.geofence_radius_m} onChange={(e) => patchStop(idx, { geofence_radius_m: Number(e.target.value) })}
+                      style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12px', borderRadius: '7px', border: `1px solid ${BORDER}`, width: '100%' }} />
+                  </label>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11px', fontWeight: 700, color: MUTED, marginBottom: '6px' }}>
+                    <input type="checkbox" checked={s.is_mandatory !== false} onChange={(e) => patchStop(idx, { is_mandatory: e.target.checked })} />
+                    Bắt buộc
+                  </label>
+                  <button className="btn-secondary" onClick={() => removeStop(idx)}
+                    style={{ padding: '5px 9px', fontSize: '11px', fontWeight: 700, color: '#B91C1C', marginBottom: '4px' }}>
+                    <XCircle size={12} />
+                  </button>
+                </div>
+                <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, display: 'block', marginTop: '4px' }}>
+                  Địa chỉ
+                  <input value={s.address} onChange={(e) => patchStop(idx, { address: e.target.value })}
+                    style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12px', borderRadius: '7px', border: `1px solid ${BORDER}`, width: '100%' }} />
+                </label>
+              </div>
+            ))}
+            {!stops.length && !baseLoading && (
+              <div style={{ fontSize: '12px', color: MUTED, fontWeight: 600, padding: '8px 2px' }}>
+                Chọn lộ trình để nạp điểm dừng gốc, hoặc bấm “Thêm điểm”.
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
+            <button className="btn-primary" disabled={busy === 'save'} onClick={save}
+              style={{ padding: '8px 16px', fontSize: '13px', fontWeight: 800 }}>
+              {busy === 'save' ? 'Đang lưu…' : editingId ? 'Lưu thay đổi' : 'Gửi Giám đốc duyệt'}
+            </button>
+            <button className="btn-secondary" onClick={closeForm} disabled={busy === 'save'}
+              style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 700 }}>
+              Hủy bỏ
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {items.map((r: any) => {
+          const st = ROUTE_CHANGE_STATUS[r.status] || ROUTE_CHANGE_STATUS.PENDING;
+          const isOpen = openId === r.request_id;
+          const isPending = r.status === 'PENDING';
+          return (
+            <div key={r.request_id} style={{ border: `1.5px solid ${isPending ? '#FDE68A' : BORDER}`, borderRadius: '10px', backgroundColor: isPending ? '#FFFBEB' : 'var(--bg)', overflow: 'hidden' }}>
+              <button onClick={() => setOpenId(isOpen ? '' : r.request_id)}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '9px', padding: '11px 13px', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '13px', fontWeight: 900, color: 'var(--text)' }}>
+                  {r.request_code || r.request_id.slice(0, 8)}
+                </span>
+                {pill(st.fg, st.bg, st.text)}
+                <span style={{ fontSize: '12px', color: MUTED, fontWeight: 700 }}>
+                  🛣️ {r.route_name || routeName(r.route_id)}
+                  {r.product_name ? ` • 🧃 ${r.product_name}` : ' • áp dụng chung'}
+                </span>
+                <span style={{ fontSize: '12px', fontWeight: 800, color: '#7C3AED' }}>
+                  {fmtDay(r.effective_from)} → {fmtDay(r.effective_to)}
+                </span>
+                <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11.5px', fontWeight: 800, color: BRAND }}>
+                  {r.stops?.length || 0} điểm {isOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                </span>
+              </button>
+
+              {isOpen && (
+                <div style={{ padding: '4px 13px 12px', borderTop: `1px solid ${BORDER}` }}>
+                  <div style={{ fontSize: '11.5px', color: MUTED, fontWeight: 600, lineHeight: 1.8, marginBottom: '8px' }}>
+                    <div>👤 Tạo bởi {personName(r.created_by_name, r.created_by)} • {fmtTime(r.submitted_at)}</div>
+                    {r.reason && <div>📝 {r.reason}</div>}
+                    {r.approved_at && <div style={{ color: '#047857', fontWeight: 700 }}>✅ Giám đốc {personName(r.approved_by_name, r.approved_by)} duyệt {fmtTime(r.approved_at)}{r.approval_notes ? ` — ${r.approval_notes}` : ''}</div>}
+                    {r.rejected_at && <div style={{ color: '#B91C1C', fontWeight: 700 }}>❌ Từ chối bởi {personName(r.rejected_by_name, r.rejected_by)}: {r.rejected_reason || '—'}</div>}
+                    {r.cancelled_at && <div>🗑️ Hủy {fmtTime(r.cancelled_at)}{r.cancel_reason ? ` — ${r.cancel_reason}` : ''}</div>}
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {(r.stops || []).map((s: any) => (
+                      <div key={`${r.request_id}-${s.stop_order}`} style={{ display: 'flex', alignItems: 'center', gap: '9px', fontSize: '12px', padding: '6px 9px', borderRadius: '8px', backgroundColor: 'var(--surface)', border: `1px solid ${BORDER}` }}>
+                        <span style={{ fontWeight: 900, color: '#7C3AED', width: '18px' }}>{s.stop_order}</span>
+                        <span style={{ fontWeight: 800, color: 'var(--text)', flex: 1 }}>{s.name}</span>
+                        <span style={{ fontSize: '10.5px', color: MUTED, fontWeight: 700 }}>
+                          {s.stop_type}{s.is_mandatory === false ? ' • tùy chọn' : ''} • SLA {s.sla_minutes}p
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
+                    {canApprove && isPending && (
+                      <>
+                        <button className="btn-primary" disabled={busy === `${r.request_id}:approve`} onClick={() => approve(r)}
+                          style={{ padding: '7px 14px', fontSize: '12px', fontWeight: 800, backgroundColor: '#047857' }}>
+                          <CheckCircle2 size={14} /> Giám đốc duyệt
+                        </button>
+                        <button className="btn-secondary" disabled={busy === `${r.request_id}:reject`} onClick={() => reject(r)}
+                          style={{ padding: '7px 14px', fontSize: '12px', fontWeight: 800, color: '#B91C1C' }}>
+                          <XCircle size={14} /> Từ chối
+                        </button>
+                      </>
+                    )}
+                    {canCreate && isPending && (
+                      <button className="btn-secondary" onClick={() => openEdit(r)}
+                        style={{ padding: '7px 14px', fontSize: '12px', fontWeight: 800 }}>
+                        Sửa phiếu
+                      </button>
+                    )}
+                    {(isPending || r.status === 'APPROVED') && (
+                      <button className="btn-secondary" disabled={busy === `${r.request_id}:cancel`} onClick={() => cancel(r)}
+                        style={{ padding: '7px 14px', fontSize: '12px', fontWeight: 800, color: '#B91C1C' }}>
+                        Hủy phiếu
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {!items.length && busy !== 'load' && (
+          <div style={{ fontSize: '12.5px', color: MUTED, fontWeight: 600, padding: '14px 4px', lineHeight: 1.7 }}>
+            Chưa có phiếu đổi lộ trình nào. Nhân sự bấm <b>“Tạo phiếu”</b> để đề xuất lộ trình mới theo sản phẩm;
+            sau khi Giám đốc duyệt, bản đồ và app tài xế tự cập nhật trong khoảng ngày hiệu lực.
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: '14px', padding: '10px 12px', backgroundColor: '#F5F3FF', border: '1px solid #DDD6FE', borderRadius: '9px', fontSize: '11.5px', fontWeight: 600, color: '#5B21B6', lineHeight: 1.7 }}>
+        <b>Quy trình:</b> Nhân sự tạo phiếu (chọn lộ trình + sản phẩm + khoảng ngày + điểm dừng) →
+        <b> Giám đốc ký duyệt</b> → mọi ca có ngày nằm trong khoảng hiệu lực và đúng sản phẩm sẽ dùng lộ trình mới;
+        ca ngoài khoảng ngày hoặc khác sản phẩm vẫn chạy lộ trình gốc.
+      </div>
+    </Card>
+  );
+};
+
+// ============================================================
 // SHELL
 // ============================================================
 export const MilkRouteAdminView: React.FC<MilkRouteAdminProps> = ({ currentUser, allEmployees = [], showToast = () => {} }) => {
@@ -1438,6 +1946,7 @@ export const MilkRouteAdminView: React.FC<MilkRouteAdminProps> = ({ currentUser,
   const TABS: Array<{ id: SubTab; label: string; icon: any }> = [
     { id: 'map', label: 'Live Map', icon: MapPin },
     { id: 'fleet', label: 'Xe & Lộ trình', icon: Truck },
+    { id: 'route-changes', label: 'Phiếu đổi lộ trình', icon: RouteIcon },
     { id: 'shifts', label: 'Ca vận chuyển', icon: CalendarClock },
     { id: 'charging', label: 'Phiếu sạc', icon: BatteryCharging },
     // Lương tài xế: chỉ FINANCE (Kế toán) — các vai trò khác không thấy tab này.
@@ -1478,6 +1987,9 @@ export const MilkRouteAdminView: React.FC<MilkRouteAdminProps> = ({ currentUser,
 
       {tab === 'map' && <LiveMapView showToast={showToast} />}
       {tab === 'fleet' && <FleetView allEmployees={allEmployees} showToast={showToast} canManage={canManage} />}
+      {tab === 'route-changes' && (
+        <RouteChangesView showToast={showToast} canCreate={canHr} canApprove={canDirector} currentUser={currentUser} />
+      )}
       {tab === 'shifts' && <ShiftsView allEmployees={allEmployees} showToast={showToast} canManage={canManage} />}
       {tab === 'charging' && <ChargingView showToast={showToast} canHr={canHr} canDirector={canDirector} allEmployees={allEmployees} />}
       {tab === 'payroll' && canPayroll && <PayrollView allEmployees={allEmployees} showToast={showToast} canManage={canPayroll} />}

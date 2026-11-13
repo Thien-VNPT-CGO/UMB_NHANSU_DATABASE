@@ -1,8 +1,20 @@
 import { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
 import { EVShift, EVRouteStop, EVShiftCheckin } from '@ubm/shared';
+import { EVRouteService } from './ev-route.service.js';
 
 export class EVCheckinService {
-  constructor(private readonly repo: MockSheetsAdapter) {}
+  constructor(
+    private readonly repo: MockSheetsAdapter,
+    private readonly routes?: EVRouteService,
+  ) {}
+
+  /** Điểm dừng hiệu lực của ca (áp phiếu đổi lộ trình nếu có). */
+  private async stopsForShift(shift: EVShift): Promise<EVRouteStop[]> {
+    if (this.routes) return this.routes.getEffectiveStopsForShift(shift);
+    return this.repo.evRouteStops
+      .filter(s => s.route_id === shift.route_id)
+      .sort((a, b) => a.stop_order - b.stop_order);
+  }
 
   /** Check-in tại điểm dừng */
   async checkinStop(input: {
@@ -17,7 +29,8 @@ export class EVCheckinService {
       throw new Error('SHIFT_NOT_IN_PROGRESS: Ca không ở trạng thái đang chạy');
     }
 
-    const stop = this.repo.evRouteStops.find(s => s.stop_id === input.stopId);
+    const stops = await this.stopsForShift(shift);
+    const stop = stops.find(s => s.stop_id === input.stopId);
     if (!stop) throw new Error('STOP_NOT_FOUND');
     if (stop.route_id !== shift.route_id) throw new Error('STOP_NOT_IN_ROUTE: Điểm dừng không thuộc lộ trình này');
 
@@ -26,7 +39,6 @@ export class EVCheckinService {
     if (existingCheckin) throw new Error('ALREADY_CHECKED_IN: Đã check-in tại điểm này');
 
     // Validate stop order (must check in sequentially)
-    const stops = this.repo.evRouteStops.filter(s => s.route_id === shift.route_id).sort((a, b) => a.stop_order - b.stop_order);
     const completedStops = this.repo.evShiftCheckins.filter(c => c.shift_id === input.shiftId).map(c => c.stop_order);
     const maxCompletedOrder = completedStops.length > 0 ? Math.max(...completedStops) : 0;
 
@@ -112,6 +124,7 @@ export class EVCheckinService {
       shift_id: input.shiftId,
       stop_id: stop.stop_id,
       stop_order: stop.stop_order,
+      stop_name: stop.name,
       checked_in_at: now,
       latitude: input.driverLocation.latitude,
       longitude: input.driverLocation.longitude,
@@ -142,7 +155,7 @@ export class EVCheckinService {
     const shift = this.repo.evShifts.find(s => s.shift_id === shiftId);
     if (!shift) return [];
 
-    const stops = this.repo.evRouteStops.filter(s => s.route_id === shift.route_id).sort((a, b) => a.stop_order - b.stop_order);
+    const stops = await this.stopsForShift(shift);
     const checkins = this.repo.evShiftCheckins.filter(c => c.shift_id === shiftId);
     const completedOrders = new Set(checkins.map(c => c.stop_order));
 
@@ -159,6 +172,7 @@ export class EVCheckinService {
             shift_id: shiftId,
             stop_id: stop.stop_id,
             stop_order: stop.stop_order,
+            stop_name: stop.name,
             checked_in_at: now,
             latitude: 0,
             longitude: 0,

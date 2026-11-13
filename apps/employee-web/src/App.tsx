@@ -2456,6 +2456,12 @@ export function App() {
           entity === 'payroll' ||
           entity === 'payslips' ||
           entity === 'employees' ||
+          // MilkRoute EV: ca/lộ trình đổi (phiếu đổi lộ trình được duyệt) →
+          // app tài xế tải lại ca + điểm dừng ngay.
+          entity === 'ev' ||
+          entity === 'evShift' ||
+          entity === 'evRouteChange' ||
+          entity === 'evRouteStop' ||
           entity === 'all'
         ) {
           setSchedRefresh((k) => k + 1);

@@ -1,10 +1,12 @@
 import { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
-import { EVDriverPayroll, EVShift, EVShiftCheckin, EVPayrollConfig, DEFAULT_EV_PAYROLL_CONFIG } from '@ubm/shared';
+import { EVDriverPayroll, EVShift, EVShiftCheckin, EVPayrollConfig, DEFAULT_EV_PAYROLL_CONFIG, EVRouteStop } from '@ubm/shared';
+import { EVRouteService } from './ev-route.service.js';
 
 export class EVPayrollService {
   constructor(
     private readonly repo: MockSheetsAdapter,
-    private readonly config: EVPayrollConfig = DEFAULT_EV_PAYROLL_CONFIG
+    private readonly config: EVPayrollConfig = DEFAULT_EV_PAYROLL_CONFIG,
+    private readonly routes?: EVRouteService,
   ) {}
 
   /** Tính bảng lương cho 1 tài xế trong 1 kỳ */
@@ -60,9 +62,16 @@ export class EVPayrollService {
       const latePenaltyRate = isExtraDay ? this.config.penalty_per_late_sla.extra : this.config.penalty_per_late_sla.standard;
 
       const shiftCheckins = checkins.filter(c => c.shift_id === shift.shift_id);
+      const effectiveStops = this.routes
+        ? await this.routes.getEffectiveStopsForShift(shift)
+        : this.repo.evRouteStops
+          .filter(s => s.route_id === shift.route_id)
+          .sort((a, b) => a.stop_order - b.stop_order);
 
       for (const checkin of shiftCheckins) {
-        const stop = this.repo.evRouteStops.find(s => s.stop_id === checkin.stop_id);
+        const stop = effectiveStops.find(s => s.stop_id === checkin.stop_id)
+          || this.repo.evRouteStops.find(s => s.stop_id === checkin.stop_id);
+        const stopName = checkin.stop_name || stop?.name;
 
         if (checkin.is_missed) {
           const penalty = Math.round(dailyRate * missedPenaltyRate);
@@ -70,7 +79,7 @@ export class EVPayrollService {
           penaltyBreakdown.missed_checkins++;
           penaltyBreakdown.details.push({
             date: shift.shift_date,
-            stop_name: stop?.name,
+            stop_name: stopName,
             type: 'MISSED_CHECKIN',
             amount: penalty,
           });
@@ -82,7 +91,7 @@ export class EVPayrollService {
           penaltyBreakdown.late_sla++;
           penaltyBreakdown.details.push({
             date: shift.shift_date,
-            leg: `${this.getPrevStopName(shift, checkin)} → ${stop?.name}`,
+            leg: `${this.getPrevStopName(shift, checkin, effectiveStops)} → ${stopName}`,
             type: 'LATE_SLA',
             amount: penalty,
             late_minutes: checkin.late_minutes,
@@ -198,10 +207,12 @@ export class EVPayrollService {
     };
   }
 
-  private getPrevStopName(shift: EVShift, checkin: EVShiftCheckin): string {
+  private getPrevStopName(shift: EVShift, checkin: EVShiftCheckin, stops?: EVRouteStop[]): string {
     if (checkin.stop_order <= 1) return 'Xuất phát';
-    const stops = this.repo.evRouteStops.filter(s => s.route_id === shift.route_id).sort((a, b) => a.stop_order - b.stop_order);
-    const prevStop = stops.find(s => s.stop_order === checkin.stop_order - 1);
+    const list = stops || this.repo.evRouteStops
+      .filter(s => s.route_id === shift.route_id)
+      .sort((a, b) => a.stop_order - b.stop_order);
+    const prevStop = list.find(s => s.stop_order === checkin.stop_order - 1);
     return prevStop?.name || 'Điểm trước';
   }
 }

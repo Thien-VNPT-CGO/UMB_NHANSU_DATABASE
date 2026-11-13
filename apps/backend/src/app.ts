@@ -226,6 +226,13 @@ import {
   evPayrollApproveBody,
   evPayrollQuery,
   evLiveShiftsQuery,
+  evRouteChangeCreateBody,
+  evRouteChangeUpdateBody,
+  evRouteChangeIdParams,
+  evRouteChangeApproveBody,
+  evRouteChangeRejectBody,
+  evRouteChangeCancelBody,
+  evRouteChangeQuery,
 } from './validators/milkroute.validator.js';
 import {
   requirePermission,
@@ -678,7 +685,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   app.get('/ev/admin/stops', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ query: evRouteStopsQuery }), async (req: AuthenticatedRequest, res) => {
-    try { res.json(await ev.routes.listRouteStops((req.query as any).routeId)); } catch (err: any) { evErr(res, err); }
+    try {
+      const q = req.query as any;
+      // base=true: điểm dừng gốc (màn hình cấu hình lộ trình).
+      // Mặc định: điểm dừng HIỆU LỰC theo ngày (áp phiếu đổi lộ trình đã duyệt).
+      if (q.base === 'true') return res.json(await ev.routes.listRouteStops(q.routeId));
+      const date = String(q.date || new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10));
+      res.json(await ev.routes.getEffectiveStops(q.routeId, date, q.product_name || undefined));
+    } catch (err: any) { evErr(res, err); }
   });
 
   app.post('/ev/admin/routes/:id/stops', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evRouteIdParams, body: evRouteStopCreateBody }), async (req: AuthenticatedRequest, res) => {
@@ -704,6 +718,93 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (!ok) return res.status(404).json({ error: 'STOP_NOT_FOUND' });
       broadcastUpdate('evRouteStop', { action: 'delete', id: req.params.id });
       res.json({ success: true });
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
+  // ADMIN — Phiếu đổi lộ trình (Nhân sự tạo — Giám đốc duyệt)
+  // ---------------------------------------------------------------
+  const evActor = (req: AuthenticatedRequest) => ({
+    employeeId: req.user?.employeeId,
+    username: req.user?.phone || req.user?.id,
+    fullName: req.user?.fullName,
+    role: req.user?.role,
+  });
+
+  app.get('/ev/admin/route-changes', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ query: evRouteChangeQuery }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const q = req.query as any;
+      const all = await ev.routeChanges.listRequests({
+        routeId: q.route_id || undefined,
+        status: q.status || undefined,
+        date: q.date || undefined,
+        dateFrom: q.date_from || undefined,
+        dateTo: q.date_to || undefined,
+        limit: 1000,
+        offset: 0,
+      });
+      const offset = Number(q.offset || 0);
+      const limit = Number(q.limit || 100);
+      res.json({ total: all.length, items: all.slice(offset, offset + limit) });
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.get('/ev/admin/route-changes/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evRouteChangeIdParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const r = await ev.routeChanges.getRequest(req.params.id);
+      if (!r) return res.status(404).json({ error: 'ROUTE_CHANGE_NOT_FOUND' });
+      res.json(r);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/route-changes', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: evRouteChangeCreateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const r = await ev.routeChanges.createRequest(req.body, evActor(req));
+      broadcastUpdate('evRouteChange', { action: 'create', id: r.request_id, routeId: r.route_id });
+      res.status(201).json(r);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.put('/ev/admin/route-changes/:id', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: evRouteChangeIdParams, body: evRouteChangeUpdateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const r = await ev.routeChanges.updateRequest(req.params.id, req.body, evActor(req));
+      broadcastUpdate('evRouteChange', { action: 'update', id: r.request_id, routeId: r.route_id });
+      res.json(r);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/route-changes/:id/approve', authMiddleware, requireRole(['ADMIN', 'DIRECTOR']), validate({ params: evRouteChangeIdParams, body: evRouteChangeApproveBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const r = await ev.routeChanges.approveRequest(req.params.id, evActor(req), req.body?.notes);
+      // Phiếu có hiệu lực: Live Map + app tài xế tải lại lộ trình ngay.
+      ev.realtime.broadcastRouteChanged({
+        requestId: r.request_id,
+        routeId: r.route_id,
+        effectiveFrom: r.effective_from,
+        effectiveTo: r.effective_to,
+        productName: r.product_name,
+        approvedBy: r.approved_by_name,
+      });
+      broadcastUpdate('evRouteChange', { action: 'approve', id: r.request_id, routeId: r.route_id });
+      broadcastUpdate('ev', { area: 'route-change', id: r.request_id, routeId: r.route_id });
+      res.json(r);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/route-changes/:id/reject', authMiddleware, requireRole(['ADMIN', 'DIRECTOR']), validate({ params: evRouteChangeIdParams, body: evRouteChangeRejectBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const r = await ev.routeChanges.rejectRequest(req.params.id, evActor(req), req.body.reason);
+      broadcastUpdate('evRouteChange', { action: 'reject', id: r.request_id, routeId: r.route_id });
+      res.json(r);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/route-changes/:id/cancel', authMiddleware, requireRole(['ADMIN', 'HR', 'DIRECTOR']), validate({ params: evRouteChangeIdParams, body: evRouteChangeCancelBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const r = await ev.routeChanges.cancelRequest(req.params.id, evActor(req), req.body?.reason);
+      broadcastUpdate('evRouteChange', { action: 'cancel', id: r.request_id, routeId: r.route_id });
+      broadcastUpdate('ev', { area: 'route-change', id: r.request_id, routeId: r.route_id });
+      res.json(r);
     } catch (err: any) { evErr(res, err); }
   });
 
@@ -737,6 +838,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         shiftDate: b.shift_date,
         plannedStartAt: b.planned_start_at,
         plannedEndAt: b.planned_end_at,
+        productName: b.product_name,
         workDayIndex: b.work_day_index,
         notes: b.notes,
         createdBy: req.user!.id,
@@ -974,7 +1076,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/ev/me/checkins', authMiddleware, requireRole(evDriverRoles), validate({ body: evCheckinBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const shift = await evOwnShift(req, req.body.shift_id);
-      const stop = await ev.routes.getRouteStop(String(req.body.stop_id || ''));
+      // Điểm dừng có thể đến từ phiếu đổi lộ trình đã duyệt (không nằm trong
+      // evRouteStops gốc) → resolve theo lộ trình hiệu lực của ca.
+      const stop = await ev.routes.getShiftStop(shift, String(req.body.stop_id || ''));
       if (!stop) return res.status(404).json({ error: 'STOP_NOT_FOUND' });
       const checkin = await ev.checkins.checkinStop({
         shiftId: shift.shift_id,

@@ -83,9 +83,73 @@ export interface EVRouteStop {
   stop_type: 'START' | 'DELIVERY' | 'OFFICE' | 'CHARGING' | 'END';
   is_mandatory: boolean;           // Bắt buộc check-in
   notes?: string;
+  /**
+   * Chỉ có trên điểm dừng HIỆU LỰC (lấy từ phiếu đổi lộ trình đã duyệt):
+   * id phiếu + sản phẩm áp dụng. Điểm dừng gốc không có 2 trường này.
+   */
+  change_request_id?: string;
+  product_name?: string;
   created_at: string;
   updated_at: string;
   version: number;
+}
+
+/**
+ * Điểm dừng trong phiếu đề xuất đổi lộ trình.
+ * - `stop_id` giữ id điểm dừng gốc khi chỉ sửa điểm cũ (để check-in cũ khớp).
+ * - Điểm mới thêm sẽ được cấp id dạng `RCS_<request_id>_<order>`.
+ */
+export interface EVRouteChangeStop {
+  stop_id?: string;
+  stop_order: number;
+  name: string;
+  branch_id?: string;
+  address?: string;
+  latitude: number;
+  longitude: number;
+  geofence_radius_m: number;
+  sla_minutes: number;
+  stop_type: EVRouteStop['stop_type'];
+  is_mandatory: boolean;
+  notes?: string;
+}
+
+export type EVRouteChangeStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
+
+/**
+ * Phiếu đổi lộ trình giao sữa (Nhân sự tạo — Giám đốc ký duyệt).
+ * Khi APPROVED, các ca có `shift_date` nằm trong [effective_from, effective_to]
+ * sẽ dùng danh sách điểm dừng trong phiếu thay cho lộ trình gốc.
+ */
+export interface EVRouteChangeRequest {
+  request_id: string;
+  request_code?: string;            // VD: RCR-20261113-0001
+  route_id: string;
+  route_name: string;
+  /** Sản phẩm áp dụng (VD: 'Sữa tươi 100%'). Rỗng = áp dụng chung cho lộ trình. */
+  product_name?: string;
+  effective_from: string;           // YYYY-MM-DD
+  effective_to: string;             // YYYY-MM-DD
+  reason?: string;
+  status: EVRouteChangeStatus;
+  stops: EVRouteChangeStop[];
+  created_by: string;               // employee_id / username người tạo (Nhân sự)
+  created_by_name?: string;
+  submitted_at: string;
+  approved_by?: string;             // Giám đốc
+  approved_by_name?: string;
+  approved_at?: string;
+  approval_notes?: string;
+  rejected_by?: string;
+  rejected_by_name?: string;
+  rejected_at?: string;
+  rejected_reason?: string;
+  cancelled_by?: string;
+  cancelled_at?: string;
+  cancel_reason?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
 }
 
 /** Ca vận chuyển (Driver Assignment) */
@@ -97,6 +161,8 @@ export interface EVShift {
   shift_date: string;              // YYYY-MM-DD
   planned_start_at: string;        // ISO timestamp
   planned_end_at?: string;
+  /** Sản phẩm của ca (VD: 'Sữa tươi 100%') — dùng để chọn phiếu đổi lộ trình phù hợp. */
+  product_name?: string;
   actual_start_at?: string;
   actual_end_at?: string;
   status: 'SCHEDULED' | 'IN_PROGRESS' | 'CHARGING' | 'RETURNING' | 'COMPLETED' | 'CANCELLED' | 'PAUSED';
@@ -119,6 +185,8 @@ export interface EVShiftCheckin {
   shift_id: string;
   stop_id: string;
   stop_order: number;
+  /** Tên điểm dừng tại thời điểm check-in (điểm dừng có thể đến từ phiếu đổi lộ trình). */
+  stop_name?: string;
   checked_in_at: string;           // ISO timestamp
   latitude: number;
   longitude: number;
@@ -289,6 +357,7 @@ export type EVWSEventType =
   | 'ev:live:charging:started'
   | 'ev:live:charging:ended'
   | 'ev:live:charging-station'
+  | 'ev:live:route-changed'
   | 'ev:live:ticket:status'
   | 'ev:live:payroll:updated';
 

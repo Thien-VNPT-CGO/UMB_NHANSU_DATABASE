@@ -493,6 +493,13 @@ export function MilkRouteDriverView({ employee, showToast, refreshKey = 0 }: Pro
               <div style={{ fontSize: '11.5px', color: MUTED, fontWeight: 600, marginTop: '3px' }}>
                 🚐 {detail?.vehiclePlate || '—'} • Ca {String(current.shift_date || '').split('-').reverse().join('/')} • {fmtTime(current.planned_start_at)}
               </div>
+              {current.product_name && (
+                <div style={{ marginTop: '5px' }}>
+                  <span style={{ fontSize: '10.5px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px', backgroundColor: '#FFF7ED', color: '#7C2D12' }}>
+                    🧃 Sản phẩm: {current.product_name}
+                  </span>
+                </div>
+              )}
             </div>
             {(() => {
               const st = STATUS_LABEL[status] || STATUS_LABEL.SCHEDULED;
@@ -555,7 +562,14 @@ export function MilkRouteDriverView({ employee, showToast, refreshKey = 0 }: Pro
       {/* ---------- Danh sách điểm dừng ---------- */}
       {current && stops.length > 0 && (
         <div style={{ backgroundColor: '#FFF', border: `1.5px solid ${BORDER}`, borderRadius: '12px', padding: '14px' }}>
-          <div style={{ fontSize: '13px', fontWeight: 900, color: '#0F172A', marginBottom: '10px' }}>Điểm giao trên lộ trình</div>
+          <div style={{ fontSize: '13px', fontWeight: 900, color: '#0F172A', marginBottom: '10px' }}>
+            Điểm giao trên lộ trình
+            {stops.some((s: any) => s.change_request_id) && (
+              <span style={{ marginLeft: '8px', fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px', backgroundColor: '#F5F3FF', color: '#7C3AED' }}>
+                LỘ TRÌNH ĐÃ ĐIỀU CHỈNH
+              </span>
+            )}
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {stops.map((s: any) => {
               const done = !!s.isCompleted;

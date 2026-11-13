@@ -112,6 +112,11 @@ export const evRouteStopIdParams = z.object({
 
 export const evRouteStopsQuery = z.object({
   routeId: idSchema,
+  /** Ngày hiệu lực (mặc định hôm nay) — trả điểm dừng sau khi áp phiếu đổi lộ trình. */
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  product_name: z.string().max(100).optional(),
+  /** 'true' = lấy điểm dừng gốc (không áp phiếu đổi lộ trình). */
+  base: z.enum(['true', 'false']).optional(),
 });
 
 // EV Shift
@@ -122,6 +127,7 @@ export const evShiftCreateBody = z.object({
   shift_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   planned_start_at: z.string().datetime(),
   planned_end_at: z.string().datetime().optional(),
+  product_name: z.string().max(100).optional(),
   work_day_index: z.number().int().positive().optional(),
   notes: z.string().optional(),
 });
@@ -133,6 +139,7 @@ export const evShiftUpdateBody = z.object({
   shift_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   planned_start_at: z.string().datetime().optional(),
   planned_end_at: z.string().datetime().optional(),
+  product_name: z.string().max(100).optional(),
   status: evShiftStatus.optional(),
   work_day_index: z.number().int().positive().optional(),
   notes: z.string().optional(),
@@ -252,4 +259,68 @@ export const evPayrollQuery = z.object({
 // Live tracking
 export const evLiveShiftsQuery = z.object({
   status: z.enum(['IN_PROGRESS', 'CHARGING', 'RETURNING']).optional(),
+});
+
+// ============================================================
+// PHIẾU ĐỔI LỘ TRÌNH (Nhân sự tạo — Giám đốc duyệt)
+// ============================================================
+
+const evRouteChangeStopBody = z.object({
+  stop_id: idSchema.optional(),
+  stop_order: z.number().int().positive(),
+  name: z.string().min(1).max(100),
+  branch_id: z.string().max(64).optional(),
+  address: z.string().max(300).optional(),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  geofence_radius_m: z.number().int().positive().default(100),
+  sla_minutes: z.number().int().nonnegative().default(0),
+  stop_type: z.enum(['START', 'DELIVERY', 'OFFICE', 'CHARGING', 'END']),
+  is_mandatory: z.boolean().default(true),
+  notes: z.string().max(500).optional(),
+});
+
+const evRouteChangeDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+export const evRouteChangeCreateBody = z.object({
+  route_id: idSchema,
+  product_name: z.string().max(100).optional(),
+  effective_from: evRouteChangeDate,
+  effective_to: evRouteChangeDate,
+  reason: z.string().max(1000).optional(),
+  stops: z.array(evRouteChangeStopBody).min(2).max(50),
+});
+
+export const evRouteChangeUpdateBody = z.object({
+  product_name: z.string().max(100).optional(),
+  effective_from: evRouteChangeDate.optional(),
+  effective_to: evRouteChangeDate.optional(),
+  reason: z.string().max(1000).optional(),
+  stops: z.array(evRouteChangeStopBody).min(2).max(50).optional(),
+});
+
+export const evRouteChangeIdParams = z.object({
+  id: idSchema,
+});
+
+export const evRouteChangeApproveBody = z.object({
+  notes: z.string().max(1000).optional(),
+});
+
+export const evRouteChangeRejectBody = z.object({
+  reason: z.string().min(1).max(1000),
+});
+
+export const evRouteChangeCancelBody = z.object({
+  reason: z.string().max(1000).optional(),
+});
+
+export const evRouteChangeQuery = z.object({
+  route_id: idSchema.optional(),
+  status: z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']).optional(),
+  date: evRouteChangeDate.optional(),
+  date_from: evRouteChangeDate.optional(),
+  date_to: evRouteChangeDate.optional(),
+  limit: z.coerce.number().int().positive().max(200).default(100),
+  offset: z.coerce.number().int().nonnegative().default(0),
 });

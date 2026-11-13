@@ -37,6 +37,7 @@ import {
   EVChargingTicket,
   EVGPSPoint,
   EVDriverPayroll,
+  EVRouteChangeRequest,
 } from '@ubm/shared';
 import { ISheetsRepository } from './sheets.interface.js';
 import { dedupeShiftAssignments, findLiveShift } from './shift-dedupe.js';
@@ -115,6 +116,8 @@ export class MockSheetsAdapter implements ISheetsRepository {
   public evChargingTickets: EVChargingTicket[] = [];
   public evGpsPoints: EVGPSPoint[] = [];
   public evDriverPayroll: EVDriverPayroll[] = [];
+  /** Phiếu đề xuất đổi lộ trình (Nhân sự tạo — Giám đốc duyệt). */
+  public evRouteChangeRequests: EVRouteChangeRequest[] = [];
 
   // Nhân viên TERMINATED đã thu hồi token (tránh audit spam mỗi lần pull)
   public terminatedRevoked: Set<string> = new Set();
@@ -176,6 +179,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
       evShiftCheckins: clone(this.evShiftCheckins),
       evChargingTickets: clone(this.evChargingTickets),
       evDriverPayroll: clone(this.evDriverPayroll),
+      evRouteChangeRequests: clone(this.evRouteChangeRequests),
       // evGpsPoints cố ý KHÔNG đưa vào snapshot: dữ liệu realtime, ghi rất dày
       // (mỗi 15s/xe) sẽ làm file snapshot phình to; Live Map tự nạp lại khi chạy.
       terminatedRevoked: Array.from(this.terminatedRevoked),
@@ -196,7 +200,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
       'testSubmissions', 'operations', 'auditLogs', 'branches', 'backupSnapshots',
       // MILKROUTE EV (BETA) — khôi phục từ snapshot khi chạy chế độ Sheets.
       'evVehicles', 'evRoutes', 'evRouteStops', 'evShifts', 'evShiftCheckins',
-      'evChargingTickets', 'evDriverPayroll',
+      'evChargingTickets', 'evDriverPayroll', 'evRouteChangeRequests',
     ] as const;
     for (const key of arrayKeys) {
       if (Array.isArray(state[key])) {
@@ -1694,6 +1698,59 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return true;
   }
 
+  // ---------- Phiếu đổi lộ trình (Nhân sự tạo — Giám đốc duyệt) ----------
+  async createEVRouteChangeRequest(input: Partial<EVRouteChangeRequest>): Promise<EVRouteChangeRequest> {
+    this.checkErrors();
+    const routeId = String(input?.route_id ?? '').trim();
+    if (!routeId) throw new Error('ROUTE_CHANGE_ROUTE_REQUIRED');
+    const route = this.evRoutes.find(r => r.route_id === routeId);
+    if (!route) throw new Error('ROUTE_NOT_FOUND');
+    const stops = Array.isArray(input?.stops) ? input!.stops : [];
+    if (!stops.length) throw new Error('ROUTE_CHANGE_STOPS_REQUIRED');
+    const now = new Date().toISOString();
+    const seq = this.evRouteChangeRequests.length + 1;
+    const created: EVRouteChangeRequest = {
+      request_id: uuidv4(),
+      request_code: `RCR-${now.slice(0, 10).replace(/-/g, '')}-${String(seq).padStart(4, '0')}`,
+      route_id: routeId,
+      route_name: String(input?.route_name ?? route.name ?? '').trim(),
+      product_name: String(input?.product_name ?? '').trim() || undefined,
+      effective_from: String(input?.effective_from ?? '').slice(0, 10),
+      effective_to: String(input?.effective_to ?? '').slice(0, 10),
+      reason: String(input?.reason ?? '').trim() || undefined,
+      status: (input?.status as EVRouteChangeRequest['status']) || 'PENDING',
+      stops: stops.map((s: any) => ({ ...s })),
+      created_by: String(input?.created_by ?? '').trim() || 'SYSTEM',
+      created_by_name: String(input?.created_by_name ?? '').trim() || undefined,
+      submitted_at: String(input?.submitted_at ?? now),
+      version: 1,
+      created_at: now,
+      updated_at: now,
+    };
+    this.evRouteChangeRequests.push(created);
+    return { ...created, stops: created.stops.map((s) => ({ ...s })) };
+  }
+
+  async updateEVRouteChangeRequest(requestId: string, updates: Partial<EVRouteChangeRequest>): Promise<EVRouteChangeRequest> {
+    this.checkErrors();
+    const idx = this.evRouteChangeRequests.findIndex(r => r.request_id === requestId);
+    if (idx === -1) throw new Error('ROUTE_CHANGE_NOT_FOUND');
+    const next: any = { ...(updates || {}) };
+    delete next.request_id;
+    delete next.created_at;
+    if (Array.isArray(next.stops)) next.stops = next.stops.map((s: any) => ({ ...s }));
+    this.evRouteChangeRequests[idx] = this.touchEv({ ...this.evRouteChangeRequests[idx], ...next });
+    return { ...this.evRouteChangeRequests[idx], stops: this.evRouteChangeRequests[idx].stops.map((s) => ({ ...s })) };
+  }
+
+  async deleteEVRouteChangeRequest(requestId: string): Promise<boolean> {
+    this.checkErrors();
+    const idx = this.evRouteChangeRequests.findIndex(r => r.request_id === requestId);
+    if (idx === -1) return false;
+    this.evRouteChangeRequests.splice(idx, 1);
+    return true;
+  }
+
   // ---------- Ca vận chuyển ----------
   async createEVShift(input: Partial<EVShift>): Promise<EVShift> {
     this.checkErrors();
@@ -1720,6 +1777,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
       shift_date: shiftDate,
       planned_start_at: String(input?.planned_start_at ?? now),
       planned_end_at: input?.planned_end_at || undefined,
+      product_name: String(input?.product_name ?? '').trim() || undefined,
       status: 'SCHEDULED',
       penalty_points: 0,
       penalty_amount: 0,
@@ -1768,7 +1826,11 @@ export class MockSheetsAdapter implements ISheetsRepository {
     const stopId = String(input?.stop_id ?? '').trim();
     if (!shiftId || !stopId) throw new Error('CHECKIN_REQUIRED_FIELDS');
     if (!this.evShifts.some(s => s.shift_id === shiftId)) throw new Error('SHIFT_NOT_FOUND');
-    if (!this.evRouteStops.some(s => s.stop_id === stopId)) throw new Error('STOP_NOT_FOUND');
+    // Điểm dừng có thể đến từ phiếu đổi lộ trình đã duyệt (id RCS_... không nằm
+    // trong evRouteStops gốc) → chấp nhận khi có kèm stop_name.
+    const knownStop = this.evRouteStops.some(s => s.stop_id === stopId);
+    const stopName = String(input?.stop_name ?? '').trim();
+    if (!knownStop && !stopName) throw new Error('STOP_NOT_FOUND');
     if (this.evShiftCheckins.some(c => c.shift_id === shiftId && c.stop_id === stopId)) {
       throw new Error('ALREADY_CHECKED_IN: Đã check-in tại điểm này');
     }
@@ -1778,6 +1840,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
       shift_id: shiftId,
       stop_id: stopId,
       stop_order: Number(input?.stop_order) || 0,
+      stop_name: stopName || undefined,
       checked_in_at: String(input?.checked_in_at ?? now),
       latitude: Number(input?.latitude) || 0,
       longitude: Number(input?.longitude) || 0,

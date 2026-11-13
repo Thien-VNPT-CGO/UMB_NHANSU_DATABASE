@@ -52,6 +52,7 @@ const TABLES = {
   evChargingTickets: 'ev_charging_tickets',
   evGpsPoints: 'ev_gps_points',
   evDriverPayroll: 'ev_driver_payroll',
+  evRouteChangeRequests: 'ev_route_change_requests',
 } as const;
 
 type CollectionKey = keyof typeof TABLES;
@@ -207,6 +208,12 @@ const COLLECTIONS: CollectionDef[] = [
     id: r => str(r.payroll_id),
     bucketMonth: r => monthOf(r.period),
   },
+  {
+    key: 'evRouteChangeRequests',
+    table: TABLES.evRouteChangeRequests,
+    id: r => str(r.request_id),
+    bucketMonth: r => monthOf(r.effective_from),
+  },
 ];
 
 const SINGLETON_KEYS = ['shiftTemplates', 'policies', 'maintenance', 'systemSettings'] as const;
@@ -278,6 +285,8 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_ev_gps_driver_time ON ev_gps_points ((data->>'driver_id'), (data->>'recorded_at'))`,
   `CREATE INDEX IF NOT EXISTS idx_ev_gps_vehicle_time ON ev_gps_points ((data->>'vehicle_id'), (data->>'recorded_at'))`,
   `CREATE INDEX IF NOT EXISTS idx_ev_payroll_driver_period ON ev_driver_payroll ((data->>'driver_id'), (data->>'period'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_route_changes_route_dates ON ev_route_change_requests ((data->>'route_id'), (data->>'effective_from'), (data->>'effective_to'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_route_changes_status ON ev_route_change_requests ((data->>'status'))`,
   `CREATE INDEX IF NOT EXISTS idx_ev_vehicles_driver ON ev_vehicles ((data->>'assigned_driver_id'))`,
   `CREATE INDEX IF NOT EXISTS idx_ev_vehicles_status ON ev_vehicles ((data->>'status'))`,
 ];
@@ -690,6 +699,14 @@ export class PostgresStore {
           break;
         case 'deleteEVDriverPayroll':
           await this.deleteRecord(TABLES.evDriverPayroll, str(args[0]), client);
+          break;
+
+        case 'createEVRouteChangeRequest':
+        case 'updateEVRouteChangeRequest':
+          await upsert('evRouteChangeRequests', result);
+          break;
+        case 'deleteEVRouteChangeRequest':
+          await this.deleteRecord(TABLES.evRouteChangeRequests, str(args[0]), client);
           break;
 
         default:
