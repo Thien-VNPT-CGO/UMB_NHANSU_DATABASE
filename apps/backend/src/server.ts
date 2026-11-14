@@ -212,7 +212,7 @@ const socketAuth = new AuthService(adapter);
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token || socket.handshake.query?.token;
   if (!token || typeof token !== 'string') {
-    return next(new Error('AUTHENTICATION_ERROR: Missing token'));
+    return next(new Error('AUTHENTICATION_ERROR: Thiếu mã xác thực'));
   }
 
   socketAuth
@@ -237,7 +237,7 @@ io.use((socket, next) => {
           next();
         })
         .catch(() => {
-          next(new Error('AUTHENTICATION_ERROR: Invalid token'));
+          next(new Error('AUTHENTICATION_ERROR: Mã xác thực không hợp lệ'));
         });
     });
 });

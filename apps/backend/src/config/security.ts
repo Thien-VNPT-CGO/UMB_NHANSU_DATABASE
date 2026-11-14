@@ -196,7 +196,7 @@ export function generalRateLimiter() {
     },
     message: {
       error: 'TOO_MANY_REQUESTS',
-      message: 'Quá nhiều request từ cùng một địa chỉ mạng, vui lòng chậm lại một chút',
+      message: 'Quá nhiều yêu cầu từ cùng một địa chỉ mạng. Vui lòng chờ một lát rồi thử lại.',
     },
   });
 }

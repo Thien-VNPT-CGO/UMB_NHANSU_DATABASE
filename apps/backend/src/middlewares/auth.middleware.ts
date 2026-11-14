@@ -24,7 +24,7 @@ export function createAuthMiddleware(repo: ISheetsRepository) {
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({
         error: ERROR_CODES.UNAUTHORIZED,
-        message: 'Thiếu Authorization Bearer token',
+        message: 'Bạn chưa đăng nhập. Vui lòng đăng nhập để tiếp tục.',
       });
     }
 
@@ -32,7 +32,7 @@ export function createAuthMiddleware(repo: ISheetsRepository) {
     if (!token) {
       return res.status(401).json({
         error: ERROR_CODES.UNAUTHORIZED,
-        message: 'Thiếu Authorization Bearer token',
+        message: 'Phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại.',
       });
     }
 
@@ -80,7 +80,7 @@ export function createAuthMiddleware(repo: ISheetsRepository) {
       if (msg === 'TOKEN_EXPIRED') {
         return res.status(401).json({
           error: ERROR_CODES.UNAUTHORIZED,
-          message: 'Token đã hết hạn, vui lòng đăng nhập lại hoặc dùng refresh token',
+          message: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
           code: 'TOKEN_EXPIRED',
         });
       }
@@ -102,7 +102,7 @@ export function createAuthMiddleware(repo: ISheetsRepository) {
       }
       return res.status(401).json({
         error: ERROR_CODES.UNAUTHORIZED,
-        message: 'Token không hợp lệ hoặc đã hết hạn',
+        message: 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.',
       });
     }
   };
@@ -113,6 +113,6 @@ export function createAuthMiddleware(repo: ISheetsRepository) {
 export function authMiddleware(_req: AuthenticatedRequest, res: Response, _next: NextFunction) {
   return res.status(500).json({
     error: ERROR_CODES.UNAUTHORIZED,
-    message: 'Auth middleware chưa được khởi tạo với repository (dùng createAuthMiddleware)',
+    message: 'Máy chủ chưa cấu hình xác thực đúng cách. Vui lòng báo bộ phận kỹ thuật.',
   });
 }

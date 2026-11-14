@@ -16,6 +16,7 @@ import {
   AuditLogEntry,
   CandidateApplication,
   BRANCHES,
+  toVietnameseErrorMessage,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { MockSheetsAdapter } from '../repositories/mock-sheets.adapter.js';
@@ -2140,7 +2141,7 @@ export class GoogleSheetsSyncService {
         success: false,
         createdSheets: [],
         existingSheets: [],
-        message: `Lỗi Google Sheets API: ${err.message}`,
+        message: `Lỗi Google Sheets API: ${toVietnameseErrorMessage(err?.message, 'không xác định được nguyên nhân')}`,
       };
     }
   }
