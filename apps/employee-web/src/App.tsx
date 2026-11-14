@@ -2343,7 +2343,7 @@ export function App() {
         await fetchMyAdjustmentsRef.current().catch(() => null);
       }
       // Bài test / Đào tạo: tải lại ngay
-      if (!entity || entity === 'tests' || entity === 'all' || activeTabRef.current === 'test_exam' || activeTabRef.current === 'test_training') {
+      if (!entity || entity === 'tests' || entity === 'probationAssessment' || entity === 'all' || activeTabRef.current === 'test_exam' || activeTabRef.current === 'test_training') {
         await fetchMyTestsRef.current().catch(() => null);
         await fetchProbationAssessmentRef.current().catch(() => null);
       }
@@ -2510,7 +2510,7 @@ export function App() {
         }
 
         // Bài kiểm tra / Đào tạo / Đánh giá thử việc
-        if (!entity || entity === 'tests' || entity === 'all') {
+        if (!entity || entity === 'tests' || entity === 'probationAssessment' || entity === 'all') {
           fetchMyTestsRef.current().catch(() => null);
           fetchProbationAssessmentRef.current().catch(() => null);
         }
@@ -3920,7 +3920,7 @@ export function App() {
   };
 
   // Determine tabs for role
-  const isProbation = employee?.employment_status === 'PROBATION';
+  const isProbation = String(employee?.employment_status || '').trim().toUpperCase() === 'PROBATION';
 
   // NHÂN VIÊN KHỐI VĂN PHÒNG (group = VAN_PHONG): bộ 8 tab riêng — lịch hành chính,
   // nghỉ phép 1 ngày/tháng (duyệt Nhân sự → Kế toán → Giám đốc), điểm danh 08:00–08:30
@@ -3929,6 +3929,15 @@ export function App() {
     const g = String((employee as any)?.group ?? '').trim().toUpperCase();
     return g === 'VAN_PHONG' || g === 'VANPHONG' || g === 'OFFICE' || g.includes('VĂN PHÒNG') || g.includes('VAN PHONG');
   })();
+
+  // Hộp thư tự reset 23h00 mỗi ngày (thông báo cũ bị dọn), còn lịch kiểm tra
+  // đầu ra thì vẫn hiệu lực. Mỗi lần mở Trang chủ / Lịch / Thông báo phải tải
+  // lại lịch để banner + nút "Vào Meet vấn đáp" không bị mất.
+  useEffect(() => {
+    if (!isLoggedIn || !isProbation) return;
+    if (!['home', 'schedule', 'notifs_salary'].includes(activeTab)) return;
+    fetchProbationAssessmentRef.current?.().catch(() => null);
+  }, [activeTab, isLoggedIn, isProbation]);
 
   const officeTabs = [
     { id: 'home', label: '1. Trang chủ', icon: Home },
@@ -7916,27 +7925,34 @@ export function App() {
                         {n.created_at ? new Date(n.created_at).toLocaleString('vi-VN') : ''}
                       </div>
                       {/* Thông báo lịch kiểm tra đầu ra: cho bấm Meet NGAY trong thông báo
-                          (trước đây chỉ có link ở Trang chủ nên NV không thấy). */}
-                      {n.type === 'PROBATION_ASSESSMENT' && (probationAssessment?.meetUrl || probationAssessment?.meetDate) && (
-                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '8px' }}>
-                          {probationAssessment?.meetUrl ? (
-                            <a
-                              href={probationAssessment.meetUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              style={{ backgroundColor: '#2563EB', color: '#FFF', borderRadius: '6px', padding: '7px 12px', fontSize: '12px', fontWeight: 800, textDecoration: 'none' }}
-                            >
-                              🎥 Vào Meet vấn đáp
-                            </a>
-                          ) : null}
-                          {probationAssessment?.meetDate ? (
-                            <span style={{ fontSize: '11px', fontWeight: 700, color: '#1E40AF' }}>
-                              {probationAssessment.meetTime || ''} ngày {String(probationAssessment.meetDate).split('-').reverse().join('/')}
-                            </span>
-                          ) : null}
-                        </div>
-                      )}
+                          (trước đây chỉ có link ở Trang chủ nên NV không thấy).
+                          Ưu tiên link gắn trong chính thông báo (server luôn dựng lại
+                          thông báo từ lịch thật vì hộp thư reset 23h mỗi ngày). */}
+                      {n.type === 'PROBATION_ASSESSMENT' && (probationAssessment?.meetUrl || probationAssessment?.meetDate || (n as any).meetUrl) && (() => {
+                        const meetUrl = String((n as any).meetUrl || probationAssessment?.meetUrl || '').trim();
+                        const meetDate = String((n as any).meetDate || probationAssessment?.meetDate || '');
+                        const meetTime = String((n as any).meetTime || probationAssessment?.meetTime || '');
+                        return (
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '8px' }}>
+                            {meetUrl ? (
+                              <a
+                                href={meetUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ backgroundColor: '#2563EB', color: '#FFF', borderRadius: '6px', padding: '7px 12px', fontSize: '12px', fontWeight: 800, textDecoration: 'none' }}
+                              >
+                                🎥 Vào Meet vấn đáp
+                              </a>
+                            ) : null}
+                            {meetDate ? (
+                              <span style={{ fontSize: '11px', fontWeight: 700, color: '#1E40AF' }}>
+                                {meetTime} ngày {meetDate.split('-').reverse().join('/')}
+                              </span>
+                            ) : null}
+                          </div>
+                        );
+                      })()}
                     </div>
                     );
                   })

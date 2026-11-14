@@ -636,6 +636,23 @@ export function mergeSystemSettingsFromSheet(curSettings: any, settingsObj: any)
     merged['employee_salary_config'] = map;
   }
 
+  // Lịch kiểm tra đầu ra thử việc (probationAssessments) lưu dạng map
+  // { [employeeId]: { meetDate, meetTime, meetUrl, updatedAt } }, KHÔNG có
+  // updatedAt ở cấp ngoài cùng. Nếu chỉ dựa vào memoTime(map) thì bản Sheet cũ
+  // luôn thắng (cả hai đều 0) → HR vừa lên lịch xong, lượt pull kế tiếp ghi đè
+  // mất lịch, cổng nhân viên không còn thấy thông báo/link Google Meet.
+  // Gộp theo TỪNG nhân viên và so updatedAt của chính bản ghi đó.
+  const sheetAssess = sheet['probationAssessments'];
+  const memAssess = cur['probationAssessments'];
+  if (memAssess && typeof memAssess === 'object' && sheetAssess && typeof sheetAssess === 'object') {
+    const map: any = { ...memAssess };
+    for (const [eid, sheetEntry] of Object.entries(sheetAssess as Record<string, any>)) {
+      const memEntry = map[eid];
+      if (!memEntry || memoTime(sheetEntry) > memoTime(memEntry)) map[eid] = sheetEntry;
+    }
+    merged['probationAssessments'] = map;
+  }
+
   for (const k of Object.keys(sheet)) {
     if (k === 'employee_salary_config') continue;
     const sheetV: any = sheet[k];

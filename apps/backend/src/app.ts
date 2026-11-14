@@ -3056,7 +3056,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         if (s) quiz = { status: s.status, score: s.score ?? null, passed: s.passed ?? null };
       }
       const emp = await employeesService.getEmployee(employeeId).catch(() => null);
-      res.json({ assessment: { ...a, quiz, endDate: emp ? probationEndDateOf(emp) : '' } });
+      // Lịch cũ có thể thiếu meetUrl (dữ liệu trước khi hệ thống tự điền link).
+      // Luôn trả link Meet hệ thống để cổng NV hiện nút "Vào Meet vấn đáp".
+      const meetUrl = String(a.meetUrl || '').trim() || defaultMeetUrl();
+      res.json({ assessment: { ...a, meetUrl, quiz, endDate: emp ? probationEndDateOf(emp) : '' } });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -8072,10 +8075,47 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       } catch {}
 
       const items = await notificationsService.getInbox(recipientId, unreadOnly);
-      const filtered = (items || []).filter(item =>
+      let filtered = (items || []).filter(item =>
         item.type !== 'CHECKIN_REMINDER' &&
         !/nhắc.*(?:check-?in|điểm danh)/i.test(`${item.title || ''} ${item.summary || ''}`)
       );
+
+      // Hộp thư tự reset 23h00 mỗi ngày và pull chỉ giữ thông báo trong ngày, nên
+      // thông báo lịch kiểm tra đầu ra thử việc (đặt trước nhiều ngày) sẽ biến mất
+      // → NV không còn thấy link Google Meet. Luôn dựng lại thông báo này từ lịch
+      // thật trong cài đặt hệ thống cho tới khi buổi Meet kết thúc/chấm xong.
+      try {
+        const employeeId = req.user?.employeeId;
+        if (employeeId) {
+          const all = await readAssessments();
+          const a: any = all[employeeId];
+          const meetDate = String(a?.meetDate || '').slice(0, 10);
+          const stillUpcoming = /^\d{4}-\d{2}-\d{2}$/.test(meetDate) && meetDate >= vnTodayISO();
+          if (a && stillUpcoming && !a.meetDone) {
+            const already = filtered.some(n => n.type === 'PROBATION_ASSESSMENT');
+            if (!already) {
+              const fmtDate = meetDate.split('-').reverse().join('/');
+              filtered = [{
+                inbox_id: `PROBATION_ASSESSMENT:${employeeId}:${meetDate}:${a.meetTime || ''}`,
+                notification_id: `PROBATION_ASSESSMENT:${employeeId}`,
+                recipient_id: employeeId,
+                type: 'PROBATION_ASSESSMENT',
+                severity: 'ACTION_REQUIRED' as any,
+                title: `📅 Lịch kiểm tra đầu ra thử việc — ${a.meetTime || ''} ngày ${fmtDate}`,
+                summary: `Bạn được xếp kiểm tra đầu ra lúc ${a.meetTime || ''} ngày ${fmtDate} qua Google Meet. Bấm vào để xem link Meet!`,
+                target_path: '/schedule',
+                created_at: String(a.updatedAt || a.createdAt || new Date().toISOString()),
+                version: 1,
+                // Gắn kèm để UI hiện nút Meet ngay cả khi lần tải lịch riêng bị lỗi.
+                meetUrl: String(a.meetUrl || '').trim() || defaultMeetUrl(),
+                meetDate,
+                meetTime: a.meetTime || '',
+              } as any, ...filtered];
+            }
+          }
+        }
+      } catch { /* chỉ bổ sung hiển thị, không chặn hộp thư */ }
+
       res.json(filtered);
     } catch (err: any) {
       res.status(500).json({ error: err.message });

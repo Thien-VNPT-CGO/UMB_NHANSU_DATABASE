@@ -69,3 +69,25 @@ test('employee_salary_config vẫn gộp theo từng nhân viên như cũ', () =
   assert.equal(merged.employee_salary_config.E1.base, 25000, 'E1: bộ nhớ mới hơn');
   assert.equal(merged.employee_salary_config.E2.base, 22000, 'E2: Sheet mới hơn');
 });
+
+test('probationAssessments gộp theo từng nhân viên: lịch vừa đặt không bị Sheet cũ ghi đè', () => {
+  // HR vừa lên lịch cho E1 (bộ nhớ) nhưng Sheet chưa kịp ghi bản mới → pull về
+  // bản cũ không được xóa mất lịch/link Meet của nhân viên thử việc.
+  const mem = {
+    probationAssessments: {
+      E1: { meetDate: '2026-11-20', meetTime: '09:00', meetUrl: 'https://meet.google.com/new', updatedAt: '2026-11-14T09:00:00.000Z' },
+      E2: { meetDate: '2026-11-10', meetTime: '10:00', meetUrl: 'https://meet.google.com/old', updatedAt: '2026-11-01T00:00:00.000Z' },
+    },
+  };
+  const sheet = {
+    probationAssessments: {
+      E1: { meetDate: '2026-11-12', meetTime: '08:00', meetUrl: 'https://meet.google.com/stale', updatedAt: '2026-11-12T08:00:00.000Z' },
+      E2: { meetDate: '2026-11-21', meetTime: '11:00', meetUrl: 'https://meet.google.com/from-sheet', updatedAt: '2026-11-14T10:00:00.000Z' },
+    },
+  };
+
+  const merged = mergeSystemSettingsFromSheet(mem, sheet);
+
+  assert.equal(merged.probationAssessments.E1.meetUrl, 'https://meet.google.com/new', 'E1: lịch vừa đặt trong bộ nhớ phải giữ');
+  assert.equal(merged.probationAssessments.E2.meetUrl, 'https://meet.google.com/from-sheet', 'E2: lịch Sheet mới hơn thì nhận');
+});
