@@ -9577,6 +9577,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
 
+  // --- 404 cho API: luôn trả JSON tiếng Việt thay vì trang HTML mặc định của Express ---
+  // Người dùng có thể gặp khi gõ sai đường dẫn hoặc client gọi route không tồn tại;
+  // trả JSON để frontend hiển thị thông báo tiếng Việt thay vì "Cannot GET ...".
+  const apiRouteNotFound = (req: express.Request, res: express.Response) => {
+    res.status(404).json({
+      error: 'API_ROUTE_NOT_FOUND',
+      message: 'Không tìm thấy chức năng yêu cầu. Vui lòng tải lại trang rồi thử lại.',
+    });
+  };
+  app.use('/api', apiRouteNotFound);
+  app.use('/auth', apiRouteNotFound);
+
   // --- STATIC FRONTENDS SERVING (For All-in-One Cloud Deployment e.g. Render / Railway / Docker) ---
   const possibleAdminDirs = [
     path.resolve(process.cwd(), 'apps/admin-web/dist'),

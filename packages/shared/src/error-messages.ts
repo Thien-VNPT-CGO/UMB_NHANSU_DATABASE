@@ -76,6 +76,7 @@ export const ERROR_CODE_MESSAGES: Record<string, string> = {
   CORS_FORBIDDEN: 'Nguồn truy cập không được phép.',
   WEBHOOK_FORBIDDEN: 'Yêu cầu webhook không được phép.',
   NOT_FOUND: 'Không tìm thấy dữ liệu yêu cầu.',
+  API_ROUTE_NOT_FOUND: 'Không tìm thấy chức năng yêu cầu. Vui lòng tải lại trang rồi thử lại.',
   NO_DATA: 'Không có dữ liệu.',
   ME_FAILED: 'Không tải được thông tin cá nhân. Vui lòng thử lại.',
   OVERVIEW_FAILED: 'Không tải được dữ liệu tổng quan. Vui lòng thử lại.',
