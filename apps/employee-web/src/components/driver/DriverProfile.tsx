@@ -6,6 +6,7 @@ import {
   BatteryMedium, CalendarDays, ChevronRight, KeyRound, LogOut, MapPin, Phone, RefreshCw, ShieldCheck, Truck, User,
 } from 'lucide-react';
 import { apiRequest } from '../../services/api';
+import { getErrorCode } from '@ubm/shared';
 import { BigButton, Card, DC, Empty, Pill, ScreenTitle, STATUS_LABEL, fmtDay, fmtMin, fmtMoney } from './driver-shared';
 import type { DriverData } from './useDriverData';
 
@@ -34,7 +35,7 @@ export function DriverProfile({ d, onLogout, showToast }: { d: DriverData; onLog
       // Đổi PIN làm tăng version tài khoản → token cũ bị thu hồi, phải đăng nhập lại.
       onLogout();
     } catch (e: any) {
-      showToast(`⚠️ ${e?.message === 'INVALID_PIN' ? 'Mã PIN hiện tại không đúng.' : e?.message || 'Đổi PIN thất bại.'}`);
+      showToast(`⚠️ ${getErrorCode(e) === 'INVALID_PIN' ? 'Mã PIN hiện tại không đúng.' : e?.message || 'Đổi PIN thất bại.'}`);
     } finally {
       setPinBusy(false);
     }

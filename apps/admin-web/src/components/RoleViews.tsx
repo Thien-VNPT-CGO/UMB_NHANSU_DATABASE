@@ -540,7 +540,10 @@ class TabErrorBoundary extends React.Component<{ tabName: string; children: Reac
   }
   render() {
     if ((this.state as any).error) {
-      const msg = String((this.state as any).error?.message || (this.state as any).error);
+      const msg = toVietnameseErrorMessage(
+        String((this.state as any).error?.message || (this.state as any).error || ''),
+        'Tab gặp lỗi hiển thị. Vui lòng tải lại trang.',
+      );
       return (
         <div style={{ backgroundColor: '#FEF2F2', border: '1.5px solid #FCA5A5', borderRadius: '12px', padding: '24px', textAlign: 'center' }}>
           <div style={{ fontSize: '15px', fontWeight: 800, color: '#991B1B' }}>⚠️ Tab {(this.props as any).tabName} gặp lỗi hiển thị</div>
@@ -954,6 +957,8 @@ import {
   officeDayHoursLabel,
   officeCheckInWindowOf,
   evaluateCandidateAge,
+  getErrorCode,
+  toVietnameseErrorMessage,
 } from '@ubm/shared';
 
 /** Chuẩn hóa mã chi nhánh (Sheets có thể ghi CN1..CN4, hệ thống dùng CN130/261/120/111). */
@@ -1982,7 +1987,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     } catch (err: any) {
       // FIX PAYSLIP_NOT_FOUND sau restart: phiếu trên màn hình là state cũ, server
       // không còn — tải lại danh sách (tự tạo lại nếu thiếu) để bấm lại là được.
-      if (String(err?.message || '').includes('PAYSLIP_NOT_FOUND')) {
+      if (getErrorCode(err) === 'PAYSLIP_NOT_FOUND') {
         showToast('⚠️ Phiếu trên màn hình đã cũ (server vừa khởi động lại). Đang tải lại phiếu, bấm PUBLISHED lại giúp!');
         try { await loadPeriodSlips(sampleMonth, true); } catch { /* giữ state cũ */ }
       } else {
@@ -2440,8 +2445,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       const d = await apiRequest(`/payroll/runs/${runId}`);
       setPayRunDetail(d);
     } catch (e: any) {
-      const msg = String(e?.message || '');
-      if (msg.includes('PAYROLL_RUN_NOT_FOUND')) {
+      const code = getErrorCode(e);
+      if (code === 'PAYROLL_RUN_NOT_FOUND') {
         showToast(`ℹ️ Kỳ lương ${runId} chưa được tính nháp. Vui lòng bấm "Tính Lương" ở mục 1 trước.`);
       } else {
         showToast(e?.message || 'Lỗi khi tải chi tiết kỳ lương!');
@@ -2464,11 +2469,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       if (onRefreshData) await onRefreshData();
       if (onSyncSheets) await onSyncSheets();
     } catch (e: any) {
-      const msg = String(e?.message || '');
-      if (msg.includes('PAYROLL_RUN_NOT_FOUND')) {
+      const code = getErrorCode(e);
+      if (code === 'PAYROLL_RUN_NOT_FOUND') {
         showToast(`⚠️ Không tìm thấy kỳ lương ${runId}. Đang làm mới danh sách kỳ lương...`);
         if (onRefreshData) await onRefreshData();
-      } else if (msg.includes('SEPARATION_OF_DUTIES_VIOLATION')) {
+      } else if (code === 'SEPARATION_OF_DUTIES_VIOLATION') {
         showToast('⚠️ Quy tắc phân quyền: Người tính lương không được tự duyệt kỳ lương của mình!');
       } else {
         showToast(e?.message || 'Lỗi!');

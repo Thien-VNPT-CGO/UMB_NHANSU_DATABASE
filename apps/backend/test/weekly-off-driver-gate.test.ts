@@ -55,3 +55,20 @@ test('cổng OFF tuần: nhân viên chưa đăng ký vẫn bị khóa ở chứ
   assert.equal(gate.locked, true, 'chức năng ngoài allowlist vẫn bị khóa');
   assert.equal(gate.window.phase, 'OPEN');
 });
+
+test('cổng OFF tuần: điểm danh check-in/check-out KHÔNG bao giờ bị khóa', async () => {
+  const repo = await setup();
+  const user = { role: 'EMPLOYEE', employeeId: 'EMP_DRIVER_GATE' };
+
+  // Đúng khung cổng mở (T6 09h00 → T7 09h00 VN) trùng giờ vào ca: NV chưa đăng
+  // ký 2 ngày OFF vẫn phải check-in/check-out được, không được 403.
+  for (const path of [
+    '/attendance/checkin',
+    '/attendance/checkout',
+    '/attendance/adjustments',
+    '/attendance/adjustments/ADJ_1',
+  ]) {
+    const gate = await checkWeeklyOffGate(repo, user, path, NOW);
+    assert.equal(gate.locked, false, `${path} phải được phép khi cổng OFF tuần đang mở`);
+  }
+});

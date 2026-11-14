@@ -9,6 +9,7 @@ import {
 import { TetCountdownAndFireworks } from './TetCountdownAndFireworks';
 import { ThemeAmbientEffects } from './ThemeAmbientEffects';
 import { EventAnnouncementCountdown, ScheduledThemeProp } from './EventAnnouncementCountdown';
+import { getErrorCode } from '@ubm/shared';
 
 /**
  * PremiumLogin — Màn hình đăng nhập SĐT + PIN 6 số cho cổng nhân viên UBM.
@@ -314,7 +315,7 @@ export function PremiumLogin({
       setTimeout(fireConfetti, 60);
       successTimer.current = setTimeout(() => onSuccess?.(phone), 1900);
     } catch (e: any) {
-      if (e?.message === 'MUST_CHANGE_PIN' || e?.code === 'MUST_CHANGE_PIN') return;
+      if (getErrorCode(e) === 'MUST_CHANGE_PIN') return;
       const msg = e?.message === 'demo-invalid'
         ? `Mã PIN chưa đúng (demo: ${demoPin}). Nhập lại nhé!`
         : (e?.message || 'Mã PIN chưa đúng. Vui lòng thử lại!');

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, tryRefreshSession } from './services/api';
 import { connectRealtime } from './services/realtime';
-import { effectivePayMode, payModeLabel } from '@ubm/shared';
+import { effectivePayMode, getErrorCode, payModeLabel, toVietnameseErrorMessage } from '@ubm/shared';
 import { APP_COMMIT } from './app-version';
 import {
   Users,
@@ -605,7 +605,7 @@ function ZaloMobileAuthView({ hrName, sessionToken }: { hrName: string; sessionT
 class RoleViewsErrorBoundary extends React.Component<{ tab: string; children: React.ReactNode }, { error: string | null }> {
   state = { error: null as string | null };
   static getDerivedStateFromError(err: any) {
-    return { error: String(err?.message || err || 'Lỗi hiển thị') };
+    return { error: toVietnameseErrorMessage(String(err?.message || err || ''), 'Tab gặp lỗi hiển thị. Vui lòng bấm Thử lại hoặc tải lại trang.') };
   }
   componentDidCatch() { /* đã hiện UI bên dưới */ }
   render() {
@@ -814,6 +814,9 @@ export function App() {
     const id = `toast_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
     const newToast: LiveToastItem = {
       ...toast,
+      // Thông báo realtime có thể chứa mã lỗi/câu tiếng Anh từ backend cũ — luôn
+      // hiển thị tiếng Việt cho người dùng.
+      message: toast.message ? toVietnameseErrorMessage(toast.message) : toast.message,
       id,
       timestamp: new Date().toISOString(),
       duration: toast.duration || 6000,
@@ -833,7 +836,7 @@ export function App() {
       {
         id,
         title: toast.title,
-        message: toast.message,
+        message: newToast.message,
         created_at: new Date().toISOString(),
         type: toast.type || 'INFO',
         linkTab: toast.linkTab,
@@ -850,18 +853,24 @@ export function App() {
     }, toast.duration || 6000);
   };
 
-  const showToast = (msg: string, type: 'INFO' | 'WARNING' = 'INFO', customTitle?: string) => {
+  const showToast = (rawMsg: string, type: 'INFO' | 'WARNING' = 'INFO', customTitle?: string) => {
+    // Mọi thông báo hiển thị cho Admin/HR đều phải là tiếng Việt — chuẩn hóa cả
+    // mã lỗi tiếng Anh lẫn câu lỗi tiếng Anh trước khi phân loại thành công/cảnh báo.
+    const msg = toVietnameseErrorMessage(rawMsg);
     // Lỗi backend trả về mã tiếng Anh (ADJUSTMENT_DUPLICATE, GPS_OUT_OF_BOUNDS,
     // SHIFT_NOT_FOUND...) — không chứa chữ "lỗi" nên trước đây render nhầm thành
-    // "Thao Tác Thành Công". Nhận diện cả mã lỗi + từ khóa tiếng Anh để không bao
-    // giờ báo thành công giả.
+    // "Thao Tác Thành Công". Nhận diện cả mã lỗi + từ khóa tiếng Anh/tiếng Việt.
     const lower = msg.toLowerCase();
     // Mã lỗi backend toàn chữ hoa (ADJUSTMENT_DUPLICATE, SESSION_EXPIRED...).
     // Loại token chứa số trước (UBM_NV0001, EMP_..., SWP_... là mã đơn/hồ sơ, không phải lỗi).
     const noIds = msg.replace(/\b[A-Z]{2,}_[A-Z0-9_]*(?:\d[A-Z0-9_]*)+\b/g, '');
     const isBackendCode = /[A-Z]{2,}_[A-Z0-9_]{2,}/.test(noIds);
     const enErr = ['fail', 'error', 'forbidden', 'unauthorized', 'denied', 'invalid', 'required', 'timeout', 'exception', 'exceed', 'unavailable', 'missing', 'mismatch', 'conflict', 'duplicat', 'expired', 'not found', 'not_found', 'cannot', "can't", 'could not', 'unable', 'bad request', 'too many', 'out of'];
-    const isWarn = msg.includes('⚠️') || lower.includes('lỗi') || type === 'WARNING' || isBackendCode || enErr.some(k => lower.includes(k));
+    // Câu lỗi đã dịch sang tiếng Việt không còn chứa chữ "error" — nhận diện theo
+    // từ khóa tiếng Việt để không báo "Thành Công" giả.
+    const viErr = ['lỗi', 'thất bại', 'không thể', 'không hợp lệ', 'không đúng', 'không tìm thấy', 'không tồn tại', 'không được', 'không có quyền', 'không còn', 'chưa ', 'sai ', 'hết hạn', 'bị khóa', 'bị trùng', 'bị từ chối', 'từ chối', 'thiếu ', 'vui lòng thử lại', 'vui lòng kiểm tra', 'quá lớn', 'quá nhiều', 'đã tồn tại'];
+    const isWarn = msg.includes('⚠️') || lower.includes('lỗi') || type === 'WARNING' || isBackendCode
+      || enErr.some(k => lower.includes(k)) || viErr.some(k => lower.includes(k));
     let title = customTitle || (isWarn ? '⚠️ Cảnh Báo Hệ Thống' : '✨ Thao Tác Thành Công');
     if (!customTitle && !isWarn) {
       const lower = msg.toLowerCase();
@@ -957,7 +966,7 @@ export function App() {
       setRevealedPins(prev => ({ ...prev, [accountId]: pin }));
       setSuccessMsg(`PIN hiện tại của ${item.fullName} (${item.phone}): ${pin} — đọc cho NV để NV đăng nhập bằng PIN này rồi tự đổi PIN mới (không reset).`);
     } catch (err: any) {
-      setErrorMsg(err?.message === 'PIN_NOT_AVAILABLE'
+      setErrorMsg(getErrorCode(err) === 'PIN_NOT_AVAILABLE'
         ? 'Tài khoản đang bị khóa hoặc chưa có PIN. Mở khóa tài khoản để cấp PIN khởi tạo mới.'
         : (err?.message || 'Không xem được PIN. Vui lòng thử lại.'));
     } finally {
@@ -1148,9 +1157,9 @@ export function App() {
       }
       await loadAllData();
     } catch (err: any) {
-      setErrorMsg(err.message === 'ZALO_NOT_CONNECTED'
+      setErrorMsg(getErrorCode(err) === 'ZALO_NOT_CONNECTED'
         ? 'Zalo cá nhân HR chưa kết nối! Vào tab Zalo quét QR đăng nhập trước khi gửi PIN.'
-        : err.message);
+        : (err.message || 'Gửi mã PIN thất bại. Vui lòng thử lại.'));
       setShowPinModal(true);
     } finally {
       setPinSending(false);
@@ -1197,11 +1206,12 @@ export function App() {
       setSuccessMsg(`Đăng nhập thành công với vai trò: ${res.user.role}`);
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
-      setLoginError(err.message === 'INVALID_CREDENTIALS'
+      const code = getErrorCode(err);
+      setLoginError(code === 'INVALID_CREDENTIALS'
         ? 'Tên đăng nhập hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại!'
-        : err.message === 'ACCOUNT_LOCKED'
+        : code === 'ACCOUNT_LOCKED'
           ? 'Tài khoản này đã bị khóa. Vui lòng liên hệ quản trị viên hệ thống để mở khóa!'
-          : err.message);
+          : toVietnameseErrorMessage(err?.message, 'Đăng nhập thất bại. Vui lòng thử lại!'));
     } finally {
       setLoading(false);
     }
@@ -1601,8 +1611,12 @@ export function App() {
           .catch((err) => {
             // ONLY log out if backend explicitly rejected with 401 Unauthorized / Token expired
             // DO NOT log out on network disconnect or server cold boot
+            const code = getErrorCode(err);
             const msg = (err?.message || '').toLowerCase();
-            if (msg.includes('401') || msg.includes('unauthorized') || msg.includes('hết hạn') || msg.includes('không hợp lệ')) {
+            // Chỉ đăng xuất khi backend từ chối rõ ràng (401/hết hạn/thu hồi token),
+            // không đăng xuất khi mất mạng hoặc server đang khởi động lại.
+            if (code === 'SESSION_EXPIRED' || code === 'UNAUTHORIZED' || code === 'TOKEN_EXPIRED'
+              || msg.includes('401') || msg.includes('unauthorized') || msg.includes('hết hạn') || msg.includes('không hợp lệ')) {
               handleLogout();
             }
           });

@@ -1,3 +1,5 @@
+import { formatVietnameseErrorDetails, toVietnameseErrorMessage } from '@ubm/shared';
+
 // Backend VPS tự vận hành (Docker + Nginx + SSL) đồng bộ 2 cổng web (admin + nhân viên).
 export const DEFAULT_API_BASE = 'https://umbomilk-nhansu-diemdanh.duckdns.org/api';
 // Backend Render (PaaS) đã ngừng sử dụng — URL cũ lưu trong máy người dùng tự migrate về mặc định mới.
@@ -189,15 +191,20 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
         err.code = 'SESSION_EXPIRED';
         throw err;
       }
-      const detailText = Array.isArray((data as any)?.details)
-        ? ` — ${(data as any)?.details.map((d: any) => `${d.path || 'field'}: ${d.message}`).join('; ')}`
-        : '';
+      const details = (data as any)?.details;
+      const detailText = formatVietnameseErrorDetails(details);
       // Ưu tiên message tiếng Việt của server (VD: thiếu quyền role nào) thay vì
       // mã lỗi khô (VD: FORBIDDEN) để HR/Kế toán đọc là hiểu ngay.
       const serverMsg = String((data as any)?.message || '').trim();
-      const err: any = new Error(`${serverMsg || data.error || `Lỗi máy chủ (${res.status})`}${detailText}`);
-      err.code = data.error;
-      err.details = (data as any)?.details;
+      const serverError = String((data as any)?.error || '').trim();
+      const errorCode = serverError || String((data as any)?.code || '').trim();
+      const mainText = toVietnameseErrorMessage(
+        serverMsg || serverError || errorCode,
+        `Máy chủ trả về lỗi (HTTP ${res.status}). Vui lòng thử lại.`,
+      );
+      const err: any = new Error(detailText ? `${mainText} — ${detailText}` : mainText);
+      err.code = errorCode;
+      err.details = details;
       throw err;
     }
 

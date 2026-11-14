@@ -118,6 +118,7 @@ import {
   type LoginLockoutResult,
 } from './services/login-lockout.service.js';
 import { validate } from './middlewares/validate.middleware.js';
+import { vietnameseErrorResponses } from './middlewares/vietnamese-errors.middleware.js';
 import {
   changePasswordBody,
   adminLoginBody,
@@ -259,7 +260,7 @@ import {
   requireRole,
   enforceBranchScope,
 } from './middlewares/rbac.middleware.js';
-import { BRANCHES, ERROR_CODES, SHIFT_TEMPLATES } from '@ubm/shared';
+import { BRANCHES, ERROR_CODES, SHIFT_TEMPLATES, toVietnameseErrorMessage } from '@ubm/shared';
 import { SHEETS_DEFINITIONS } from './services/google-sheets-sync.service.js';
 import {
   addDaysIso,
@@ -361,6 +362,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const documentJsonParser = express.json({ limit: '40mb' });
   app.use(['/employees/:id/contract', '/me/contract-file'], documentJsonParser);
   app.use(express.json({ limit: '10mb' }));
+  // Mọi phản hồi lỗi (kể cả route chỉ trả mã lỗi) đều có `message` tiếng Việt.
+  app.use(vietnameseErrorResponses);
   app.use(generalRateLimiter());
   app.use('/auth/', authRateLimiter());
   // Cổng vi phạm có cổng đăng nhập PIN riêng — chống dò PIN 8 số.
@@ -9651,9 +9654,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
     }
     if (err instanceof SyntaxError && 'body' in err) {
-      return res.status(400).json({ error: 'INVALID_JSON', message: 'Body không phải JSON hợp lệ' });
+      return res.status(400).json({ error: 'INVALID_JSON', message: 'Dữ liệu gửi lên không đúng định dạng.' });
     }
-    next(err);
+    // Mọi lỗi chưa được xử lý ở route: trả JSON tiếng Việt thay vì trang lỗi mặc định.
+    const rawStatus = Number(err?.status || err?.statusCode);
+    const status = Number.isFinite(rawStatus) && rawStatus >= 400 && rawStatus < 600 ? rawStatus : 500;
+    console.error('[unhandled-error]', String(req.method || ''), String(req.originalUrl || '').split('?')[0], err?.message || err);
+    return res.status(status).json({
+      error: 'INTERNAL_ERROR',
+      message: toVietnameseErrorMessage(err?.message),
+    });
   });
 
   return {

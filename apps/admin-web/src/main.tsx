@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { toVietnameseErrorMessage } from '@ubm/shared';
 import { App } from './App';
 import './index.css';
 
@@ -8,7 +9,10 @@ import './index.css';
 // vì để trang trắng trơn khó chẩn đoán trên VPS.
 window.addEventListener('error', (event) => {
   try {
-    const msg = String((event as ErrorEvent)?.message || '').slice(0, 300);
+    const msg = toVietnameseErrorMessage(
+      String((event as ErrorEvent)?.message || '').slice(0, 300),
+      'Không xác định được nguyên nhân. Vui lòng tải lại trang (F5).',
+    );
     if (!msg) return;
     const root = document.getElementById('root');
     if (root && root.childElementCount === 0) {

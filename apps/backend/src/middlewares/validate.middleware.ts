@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { zodIssueToVietnamese } from '../utils/zod-vi.js';
 
 export interface ValidateSchemas {
   body?: z.ZodTypeAny;
@@ -30,7 +31,7 @@ export function validate(schemas: ValidateSchemas) {
       if (err instanceof z.ZodError) {
         const details = err.errors.map(e => ({
           path: e.path.join('.'),
-          message: e.message,
+          message: zodIssueToVietnamese(e),
         }));
         // Log chi tiết để debug form admin (trước đây chỉ trả code chung).
         console.warn(`[validate] ${req.method} ${req.path} FAILED:`, JSON.stringify(details));

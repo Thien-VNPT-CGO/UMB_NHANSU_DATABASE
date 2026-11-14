@@ -403,7 +403,7 @@ export class PayslipDriveService {
     try {
       const { slips, empMap } = await this.latestSlipsOfPeriod(period);
       const drive = getDriveStorage();
-      if (!drive.isConfigured()) throw new Error('DRIVE_NOT_CONFIGURED: Google Drive chua duoc cau hinh tren server!');
+      if (!drive.isConfigured()) throw new Error('DRIVE_NOT_CONFIGURED: Google Drive chưa được cấu hình trên máy chủ!');
       const files: Array<{ fileName: string; link?: string; count?: number }> = [];
       let total = 0, count = 0, firstLink: string | undefined;
       for (const def of filesDef) {

@@ -1,3 +1,5 @@
+import { formatVietnameseErrorDetails, toVietnameseErrorMessage } from '@ubm/shared';
+
 // Backend VPS tự vận hành (Docker + Nginx + SSL) đồng bộ 2 cổng web (admin + nhân viên).
 export const DEFAULT_API_BASE = 'https://umbomilk-nhansu-diemdanh.duckdns.org/api';
 // Backend Render (PaaS) đã ngừng sử dụng — URL cũ lưu trong máy người dùng tự migrate về mặc định mới.
@@ -136,6 +138,17 @@ function clearSession() {
   try { localStorage.removeItem('ubm_emp_refresh'); } catch {}
 }
 
+/**
+ * Mã lỗi chuẩn do backend trả ở field `error` (VD `WEEKLY_OFF_REGISTRATION_REQUIRED`,
+ * `PIN_CHANGE_REQUIRED`, `UNAUTHORIZED`) — KHÔNG phải câu thông báo cho người dùng.
+ * Trước đây client luôn ưu tiên `error` nên toast hiện nguyên mã code; nay nếu
+ * server có `message` tiếng Việt thì dùng message, mã vẫn giữ ở `err.code`.
+ */
+function looksLikeErrorCode(value: unknown): boolean {
+  const s = typeof value === 'string' ? value.trim() : '';
+  return /^[A-Z][A-Z0-9_]{2,}$/.test(s);
+}
+
 // Ràng buộc chu kỳ đổi PIN: server trả 403 PIN_CHANGE_REQUIRED khi NV chưa đổi
 // PIN mới theo chu kỳ (kể cả dính gate GIỮA PHIÊN, VD sang tháng mới). App đăng
 // ký 1 lần để tự khóa toàn bộ chức năng về màn đổi PIN (không bấm gì được nữa).
@@ -254,12 +267,22 @@ async function performRequest<T = any>(endpoint: string, options: RequestInit = 
         err.code = 'SESSION_EXPIRED';
         throw err;
       }
-      const detailText = Array.isArray((data as any)?.details)
-        ? ` — ${(data as any).details.map((d: any) => `${d.path || 'field'}: ${d.message}`).join('; ')}`
-        : '';
-      const err: any = new Error(`${data.error || data.message || `Lỗi ${res.status}`}${detailText}`);
-      err.code = data.error;
-      err.details = (data as any)?.details;
+      const details = (data as any)?.details;
+      const detailText = formatVietnameseErrorDetails(details);
+      const serverError = typeof (data as any)?.error === 'string' ? (data as any).error : '';
+      const serverMessage = typeof (data as any)?.message === 'string' ? (data as any).message : '';
+      // `error` là mã code chuẩn -> ưu tiên câu `message` thân thiện của server,
+      // và luôn chuyển sang tiếng Việt trước khi hiển thị.
+      const rawText = (looksLikeErrorCode(serverError) && serverMessage)
+        ? serverMessage
+        : (serverMessage || serverError);
+      const mainText = toVietnameseErrorMessage(
+        rawText,
+        `Máy chủ trả về lỗi (HTTP ${res.status}). Vui lòng thử lại.`,
+      );
+      const err: any = new Error(detailText ? `${mainText} — ${detailText}` : mainText);
+      err.code = serverError || (data as any)?.code;
+      err.details = details;
       throw err;
     }
 

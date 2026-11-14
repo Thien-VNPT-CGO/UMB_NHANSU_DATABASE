@@ -365,7 +365,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
 
   private checkErrors() {
     if (this.simulateNetworkError || this.simulateQuotaError) {
-      throw new Error('SHEETS_UNAVAILABLE: Google Sheets API quota exceeded or network timeout');
+      throw new Error('SHEETS_UNAVAILABLE: Google Sheets API quá tải hoặc kết nối mạng bị gián đoạn');
     }
   }
 
@@ -804,7 +804,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
   async updateSwapRequest(id: string, updates: Partial<SwapRequest>): Promise<SwapRequest> {
     this.checkErrors();
     if (this.simulatePartialWriteError) {
-      throw new Error('NEEDS_RECONCILIATION: Partial write failed during multi-tab swap update');
+      throw new Error('NEEDS_RECONCILIATION: Ghi dữ liệu đổi ca bị gián đoạn, cần đối soát lại');
     }
     // Cập nhật TẤT CẢ dòng trùng id (dữ liệu cũ gửi đôi cùng mili-giây để lại
     // 2 dòng trùng swap_id): 1 lần duyệt lật cả bản ma PENDING, banner B hết kẹt.
@@ -1044,7 +1044,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
 
     // Rule: separation of duties - approver must be different from creator (trừ admin hệ thống)
     if (status === 'APPROVED' && run.created_by === actorId && actorId !== 'ADM_001' && actorId !== 'ADMIN') {
-      throw new Error('SEPARATION_OF_DUTIES_VIOLATION: Payroll creator cannot approve own payroll run');
+      throw new Error('SEPARATION_OF_DUTIES_VIOLATION: Người tạo kỳ lương không được tự duyệt kỳ lương của mình');
     }
 
     // QUY TRÌNH TUẦN TỰ CẤP KỲ: DRAFT -> RECONCILED -> APPROVED -> PUBLISHED -> PAID.
@@ -1494,7 +1494,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
     if (!snap) throw new Error('SNAPSHOT_NOT_FOUND');
     return {
       success: true,
-      message: `Snapshot ${snapshotId} integrity verified successfully across all 23 tabs and Google Drive storage. Recovery test PASS.`,
+      message: `Đã xác minh toàn vẹn snapshot ${snapshotId} trên tất cả 23 tab và Google Drive. Kiểm tra khôi phục ĐẠT.`,
       verified_tabs: 23,
     };
   }

@@ -351,8 +351,13 @@ export async function getWeeklyOffCompletion(
  * `/ev/me/` = app TÀI XẾ giao sữa: tài khoản tài xế không có tab đăng ký OFF
  * tuần, công việc tính theo ca vận chuyển do Quản lý vận chuyển phân công —
  * nếu chặn sẽ khóa cứng tài xế ngoài đường, không có cách tự mở khóa.
+ * `/attendance/` = ĐIỂM DANH (check-in/check-out + điều chỉnh công): đây là
+ * chứng từ tính lương/đối soát công, cổng OFF tuần TUYỆT ĐỐI không được chặn.
+ * Trước đây cổng mở T6 09h00 → T7 09h00 trùng đúng giờ vào ca nên NV chưa đăng
+ * ký bị 403 WEEKLY_OFF_REGISTRATION_REQUIRED ngay khi bấm Check-in (mất công,
+ * bị phạt trễ oan). Giờ chỉ khóa các tab không thiết yếu, không khóa điểm danh.
  */
-const GATE_ALLOW = ['/me', '/leave-requests', '/leaves', '/auth/', '/ev/me/'];
+const GATE_ALLOW = ['/me', '/leave-requests', '/leaves', '/auth/', '/ev/me/', '/attendance'];
 
 function isAllowedPath(path: string): boolean {
   if (!path) return false;
@@ -368,6 +373,8 @@ export interface GateCheck {
 /**
  * Kiểm tra khóa cổng đăng ký OFF tuần cho nhân viên chính thức.
  * - Chỉ khóa khi: role EMPLOYEE + employment OFFICIAL + đang OPEN + path ngoài allowlist + chưa đủ 2 ngày.
+ * - Điểm danh (`/attendance/*`) luôn được phép: chứng từ công/lương không thể
+ *   bị khóa bởi cổng đăng ký nghỉ.
  * - Lỗi Sheets -> fail-open (cho qua, route tự báo lỗi) để không chặn nhầm.
  */
 export async function checkWeeklyOffGate(

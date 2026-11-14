@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { attShiftStatus, inferExtraShiftCode, mergeOrphanCheckins, shiftPayInfo } from '@ubm/shared';
+import { attShiftStatus, getErrorCode, inferExtraShiftCode, mergeOrphanCheckins, shiftPayInfo, toVietnameseErrorMessage } from '@ubm/shared';
 import { Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, onPinLockRequired, tryRefreshSession, clearApiCache } from './services/api';
 import { connectRealtime, stopRealtimeRevive } from './services/realtime';
@@ -1456,8 +1456,8 @@ export function App() {
       void loadEmployeeData(employee?.employee_id, true);
     } catch (err: any) {
       const msg = String(err?.message || '');
-      if (/MAX_2_SHIFTS_PER_DAY/.test(msg)) {
-        showToast(`🚨 Ngày này bạn đã đủ 2 ca — hệ thống KHÔNG cho xếp thêm và đã báo Nhân sự! ${msg.replace(/^MAX_2_SHIFTS_PER_DAY:\s*/, '')}`);
+      if (getErrorCode(err) === 'MAX_2_SHIFTS_PER_DAY') {
+        showToast(`🚨 Ngày này bạn đã đủ 2 ca — hệ thống KHÔNG cho xếp thêm và đã báo Nhân sự! ${msg}`);
       } else {
         showToast(msg || 'Lỗi khi tự thêm ca!');
       }
@@ -1836,7 +1836,9 @@ export function App() {
   }, [activeTestId, testLeft]);
 
   const showToast = (msg: string) => {
-    setToastMsg(msg);
+    // Mọi thông báo hiển thị cho nhân viên đều phải là tiếng Việt, kể cả khi
+    // server/API trả về mã lỗi hoặc câu tiếng Anh.
+    setToastMsg(toVietnameseErrorMessage(msg));
     setTimeout(() => setToastMsg(null), 3500);
   };
 
@@ -1850,9 +1852,11 @@ export function App() {
       setIsLoggedIn(true);
       await loadEmployeeData(data.employee?.employee_id || employee?.employee_id);
     } catch (err: any) {
+      const code = getErrorCode(err);
       const msg = (err?.message || '').toLowerCase();
       // Only force logout if token is explicitly rejected (401 / expired), not on network sleep
-      if (msg.includes('401') || msg.includes('unauthorized') || msg.includes('hết hạn') || msg.includes('không hợp lệ')) {
+      if (code === 'SESSION_EXPIRED' || code === 'UNAUTHORIZED' || code === 'TOKEN_EXPIRED'
+        || msg.includes('401') || msg.includes('unauthorized') || msg.includes('hết hạn') || msg.includes('không hợp lệ')) {
         handleLogout();
       }
     }
@@ -2010,27 +2014,28 @@ export function App() {
       }
       await finishLogin(res);
     } catch (err: any) {
-      if (err.message === 'ACCOUNT_NOT_FOUND') {
+      const code = getErrorCode(err);
+      if (code === 'ACCOUNT_NOT_FOUND') {
         setCheckingStatus('ERROR');
         setLoginError(`Số điện thoại ${cleaned} chưa tồn tại trên Google Sheets Master. Vui lòng liên hệ HR để nộp hồ sơ.`);
-      } else if (err.message === 'PIN_NOT_SET') {
+      } else if (code === 'PIN_NOT_SET') {
         setCheckingStatus('ERROR');
         setLoginError(`Tài khoản ${cleaned} chưa được cấp mã PIN. Vui lòng liên hệ HR để nhận mã PIN đăng nhập!`);
-      } else if (err.message === 'INVALID_PIN') {
+      } else if (code === 'INVALID_PIN') {
         setCheckingStatus('ERROR');
         setLoginError('Mã PIN không đúng! Nhập lại mã PIN 6 số của bạn. Nếu quên, hỏi HR xem lại mã PIN hiện tại.');
-      } else if (err.message === 'DUPLICATE_PHONE_NEEDS_HR') {
+      } else if (code === 'DUPLICATE_PHONE_NEEDS_HR') {
         setCheckingStatus('ERROR');
         setLoginError(`Số điện thoại ${cleaned} bị trùng lặp trên 2 hồ sơ khác nhau. Cần gặp HR để đối soát thông tin.`);
-      } else if (err.message === 'SHEETS_LOADING') {
+      } else if (code === 'SHEETS_LOADING') {
         setCheckingStatus('ERROR');
         setLoginError('⏳ Hệ thống vừa khởi động, đang tải dữ liệu (khoảng 30 giây). Vui lòng đợi rồi bấm ĐĂNG NHẬP lại — tài khoản của bạn vẫn còn, KHÔNG cần tạo lại!');
-      } else if (err.message === 'SHEETS_UNAVAILABLE') {
+      } else if (code === 'SHEETS_UNAVAILABLE') {
         setCheckingStatus('ERROR');
         setLoginError('⚠️ Máy chủ tạm thời không đọc được dữ liệu. Vui lòng báo HR/Admin kiểm tra, không tạo lại tài khoản.');
       } else {
         setCheckingStatus('ERROR');
-        setLoginError(err.message);
+        setLoginError(toVietnameseErrorMessage(err?.message, 'Đăng nhập thất bại. Vui lòng thử lại!'));
       }
     } finally {
       setLoading(false);
@@ -2108,7 +2113,7 @@ export function App() {
       premiumResRef.current = res;
       setCheckingStatus('ACTIVE');
     } catch (err: any) {
-      if (err?.code === 'MUST_CHANGE_PIN' || err?.message === 'MUST_CHANGE_PIN') throw err;
+      if (getErrorCode(err) === 'MUST_CHANGE_PIN') throw err;
       setCheckingStatus('ERROR');
       const msg = premiumErrorText(err, cleaned);
       setLoginError(msg);
@@ -2160,10 +2165,13 @@ export function App() {
       setMustChangePin(false);
       await handlePhoneLogin(loginPhone, newPin);
     } catch (err: any) {
-      if (err.message === 'SAME_PIN') {
+      const code = getErrorCode(err);
+      if (code === 'SAME_PIN') {
         setLoginError('Mã PIN mới phải khác mã PIN cũ hiện tại!');
       } else {
-        setLoginError(err.message === 'INVALID_PIN' ? 'Mã PIN hiện tại không đúng!' : err.message);
+        setLoginError(code === 'INVALID_PIN'
+          ? 'Mã PIN hiện tại không đúng!'
+          : toVietnameseErrorMessage(err?.message, 'Đổi mã PIN thất bại. Vui lòng thử lại!'));
       }
     } finally {
       setLoading(false);
@@ -2719,9 +2727,16 @@ export function App() {
   const notifyRegWindowClosed = () => {
       showToast(`⏰ CHƯA ĐẾN GIỜ MỞ ĐĂNG KÝ! Cổng đăng ký 2 ngày nghỉ OFF mở lúc ${weeklyOffOpensAtStr} đến 09h00 Thứ 7. Hệ thống sẽ tự gửi thông báo trước 5 phút!`);
   };
+  // Các tab LUÔN vào được khi cổng đăng ký OFF/tuần đang mở:
+  // - leave: nơi đăng ký (mục tiêu của cổng)
+  // - attendance: ĐIỂM DANH là chứng từ công/lương, không được khóa (server
+  //   cũng đã allowlist `/attendance`); trước đây khóa tab này khiến NV bấm
+  //   Check-in bị 403 WEEKLY_OFF_REGISTRATION_REQUIRED ngay giờ vào ca.
+  // - home: xem banner nhắc + lối tắt đăng ký.
+  const GATE_OPEN_TABS = new Set(['home', 'leave', 'attendance']);
   const handleTabClick = (tabId: string) => {
-    if (!isProbation && !isOffice && weeklyOffGateLocked && tabId !== 'leave') {
-      showToast('🔒 QUY CHẾ BẮT BUỘC: Đang trong chu kỳ mở đăng ký 2 ngày nghỉ/tuần! Bạn bắt buộc phải hoàn thành đăng ký 2 ngày nghỉ để mở khóa các chức năng khác.');
+    if (!isProbation && !isOffice && weeklyOffGateLocked && !GATE_OPEN_TABS.has(tabId)) {
+      showToast('🔒 QUY CHẾ BẮT BUỘC: Đang trong chu kỳ mở đăng ký 2 ngày nghỉ/tuần! Hoàn tất đăng ký 2 ngày nghỉ để mở khóa các chức năng khác (Điểm danh vẫn dùng được bình thường).');
       setActiveTab('leave');
       return;
     }
@@ -2751,16 +2766,16 @@ export function App() {
             day2: d.day2 || st.registered[1] || '',
           }));
         }
-      } else if (!st.completed) {
-        // HR/Admin đã xóa OFF (hoặc chưa đủ 2 ngày) -> mở khóa để NV đăng ký lại khi cổng mở
+      } else {
+        // Chưa đủ 2 ngày (hoặc HR/Admin vừa xóa OFF) -> bỏ cờ "đã đăng ký"
+        // để NV vào đăng ký lại khi cổng mở.
         setHasRegisteredWeeklyOff(false);
-        setWeeklyOffLocked(false);
         persistWeeklyOff(false, targetWk);
-      } else if (st.window?.phase === 'OPEN') {
-        // Chu kỳ mới đang mở mà chưa đủ 2 ngày -> khóa lại
-        setHasRegisteredWeeklyOff(false);
-        setWeeklyOffLocked(true);
-        persistWeeklyOff(false, targetWk);
+        // QUAN TRỌNG: không được tự mở khóa khi cổng đang OPEN. Trước đây nhánh
+        // này gán cứng weeklyOffLocked=false nên UI cho vào tab Điểm danh, bấm
+        // Check-in mới bị server trả 403 WEEKLY_OFF_REGISTRATION_REQUIRED (toast
+        // hiện nguyên mã lỗi). Giữ đúng trạng thái server: st.locked = OPEN && chưa đủ.
+        setWeeklyOffLocked(typeof st?.locked === 'boolean' ? st.locked : st?.window?.phase === 'OPEN');
       }
     } catch {}
   };
@@ -2768,10 +2783,12 @@ export function App() {
 
   // Dịch mã lỗi cổng đăng ký thành thông báo thân thiện
   const weeklyOffErrMsg = (err: any, fallback: string) => {
-    const m = String(err?.message || '');
+    // Ghép code + message: api.ts nay ưu tiên message thân thiện của server nên
+    // không thể chỉ dò chuỗi mã trong message.
+    const m = `${err?.code || ''} ${err?.message || ''}`;
     if (m.includes('WEEKLY_OFF_REGISTRATION_REQUIRED')) {
       setActiveTab('leave');
-      return '🔒 Cổng đăng ký 2 ngày nghỉ đang mở — các chức năng khác bị KHÓA đến khi bạn hoàn tất đăng ký!';
+      return '🔒 Cổng đăng ký 2 ngày nghỉ đang mở — vui lòng hoàn tất đăng ký 2 ngày nghỉ (Điểm danh vẫn dùng được bình thường)!';
     }
     if (m.includes('WEEKLY_OFF_WINDOW_CLOSED')) {
       return '⏰ Đăng ký 2 ngày nghỉ OFF chỉ mở từ 09h00 Thứ 6 đến 09h00 Thứ 7 hàng tuần!';
@@ -3307,7 +3324,9 @@ export function App() {
       );
       void loadEmployeeData(employee?.employee_id, true);
     } catch (err: any) {
-      showToast(err.message || 'Lỗi khi điểm danh!');
+      // Không hiện mã lỗi thô (VD WEEKLY_OFF_REGISTRATION_REQUIRED): dịch sang
+      // thông báo tiếng Việt thân thiện trước khi hiện toast.
+      showToast(weeklyOffErrMsg(err, err?.message || 'Lỗi khi điểm danh!'));
       setAttendanceStep('READY_CAMERA');
     } finally {
       attendBusyRef.current = false;
@@ -3700,7 +3719,7 @@ export function App() {
       showToast('🚨 ĐÃ GỬI ĐƠN BÁO NGHỈ KHẨN CẤP! Lượt dùng 1 lần của bạn đã hết — chức năng tự ẩn. Dữ liệu đã đồng bộ realtime sang HR Tab 10 và Google Sheets.');
       void loadEmployeeData(employee?.employee_id, true);
     } catch (err: any) {
-      if (String(err?.message || '').includes('EMERGENCY_LEAVE_NOT_GRANTED')) {
+      if (getErrorCode(err) === 'EMERGENCY_LEAVE_NOT_GRANTED') {
         setEmergencyEnabled(false);
       }
       showToast(err.message || 'Lỗi khi gửi báo nghỉ khẩn cấp');
@@ -3965,6 +3984,18 @@ export function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, currentTabIds, isLoggedIn]);
+
+  // Cổng OFF/tuần vừa chuyển sang LOCKED (realtime/tải lại) khi đang đứng ở tab
+  // bị khóa (VD mở từ deep-link thông báo) -> đưa về tab Đăng ký OFF, tránh để
+  // người dùng thao tác rồi mới ăn 403. Riêng Trang chủ/Điểm danh/Đăng ký OFF
+  // luôn được phép (điểm danh là chứng từ công, server không chặn).
+  useEffect(() => {
+    if (!isLoggedIn || isProbation || isOffice) return;
+    if (!weeklyOffGateLocked) return;
+    if (GATE_OPEN_TABS.has(activeTab)) return;
+    setActiveTab('leave');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weeklyOffGateLocked, activeTab, isLoggedIn, isProbation, isOffice]);
 
   // =========================================================================
   // VIEW: PHONE LOGIN
@@ -4551,8 +4582,8 @@ export function App() {
           </div>
           <div style={{ fontSize: '12px', color: '#9F1239', lineHeight: '1.4' }}>
             {(weeklyOffWindow as any)?.manual
-              ? <>Admin vừa mở bổ sung cổng đăng ký cho tuần <strong>{(weeklyOffWindow as any)?.targetWeekMon} → {(weeklyOffWindow as any)?.targetWeekSun}</strong>. Tranh thủ đăng ký ngay trước giờ đóng! <strong>Toàn bộ các chức năng khác tạm thời bị KHÓA</strong> cho đến khi bạn hoàn tất đăng ký 2 ngày nghỉ!</>
-              : <>Hệ thống đã tự động gửi thông báo trước 5 phút giờ mở cửa đăng ký. Hiện tại đang mở cổng đăng ký 2 ngày nghỉ/tuần định kỳ. <strong>Toàn bộ các chức năng khác tạm thời bị KHÓA</strong> cho đến khi bạn hoàn tất đăng ký 2 ngày nghỉ!</>}
+              ? <>Admin vừa mở bổ sung cổng đăng ký cho tuần <strong>{(weeklyOffWindow as any)?.targetWeekMon} → {(weeklyOffWindow as any)?.targetWeekSun}</strong>. Tranh thủ đăng ký ngay trước giờ đóng! <strong>Các chức năng khác (Lịch, Đổi ca, Công/Lương...) tạm thời bị KHÓA</strong> cho đến khi bạn hoàn tất đăng ký 2 ngày nghỉ — riêng <strong>Điểm danh vẫn dùng được bình thường</strong>.</>
+              : <>Hệ thống đã tự động gửi thông báo trước 5 phút giờ mở cửa đăng ký. Hiện tại đang mở cổng đăng ký 2 ngày nghỉ/tuần định kỳ. <strong>Các chức năng khác (Lịch, Đổi ca, Công/Lương...) tạm thời bị KHÓA</strong> cho đến khi bạn hoàn tất đăng ký 2 ngày nghỉ — riêng <strong>Điểm danh vẫn dùng được bình thường</strong>.</>}
           </div>
           {activeTab !== 'leave' && (
             <button
@@ -4570,7 +4601,7 @@ export function App() {
                 cursor: 'pointer',
               }}
             >
-              👉 ĐĂNG KÝ 2 NGÀY NGHỈ OFF NGAY ĐỂ MỞ KHÓA TOÀN BỘ CHỨC NĂNG
+              👉 ĐĂNG KÝ 2 NGÀY NGHỈ OFF NGAY ĐỂ MỞ KHÓA CÁC CHỨC NĂNG KHÁC
             </button>
           )}
         </div>
@@ -4601,7 +4632,7 @@ export function App() {
             <div style={{ fontSize: '12px', color: '#7F1D1D', marginTop: '4px' }}>{redo[0].summary || ''}</div>
             <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
               <button
-                onClick={() => setActiveTab('attendance')}
+                onClick={() => handleTabClick('attendance')}
                 style={{ flex: 1, backgroundColor: '#DC2626', color: '#FFF', border: 'none', borderRadius: '6px', padding: '9px 12px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}
               >
                 👉 Điểm danh lại ngay
@@ -4642,7 +4673,7 @@ export function App() {
           </div>
           <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
             <button
-              onClick={() => setActiveTab('swap_shift')}
+              onClick={() => handleTabClick('swap_shift')}
               style={{ flex: 1, backgroundColor: '#D97706', color: '#FFF', border: 'none', borderRadius: '6px', padding: '9px 12px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}
             >
               👉 Xem & xác nhận ngay
@@ -7868,12 +7899,12 @@ export function App() {
                             setNotifications((prev: any[]) => (Array.isArray(prev) ? prev.map(x => x.inbox_id === n.inbox_id ? { ...x, read_at: new Date().toISOString() } : x) : prev));
                           } catch { /* offline: vẫn cho điều hướng */ }
                         }
-                        if (goTab === '/test_exam' || goTab === '/test_training') setActiveTab(isProbation ? 'test_exam' : 'test_training');
-                        else if (goTab === '/adjustment') setActiveTab(isProbation ? 'adjustment' : 'emergency_adjust');
+                        if (goTab === '/test_exam' || goTab === '/test_training') handleTabClick(isProbation ? 'test_exam' : 'test_training');
+                        else if (goTab === '/adjustment') handleTabClick(isProbation ? 'adjustment' : 'emergency_adjust');
                         else if (canGo) {
                           // Thông báo phát hành lịch tuần → mở tab Lịch đúng tuần sau vừa publish.
                           if ((n as any)?.type === 'schedule.published') { schedWeekTouched.current = true; setSchedWeekSel('NEXT'); }
-                          setActiveTab(goTab.slice(1));
+                          handleTabClick(goTab.slice(1));
                         }
                       }}
                       title={canGo ? 'Bấm để mở đúng mục liên quan' : undefined}

@@ -20,6 +20,7 @@ import { apiRequest, getApiBase, getAuthToken } from '../services/api.js';
 import {
   payslipStage, PAYSLIP_STAGE_LABEL,
   monthShortFolder, periodLabel, parsePeriod,
+  getErrorCode,
 } from '@ubm/shared';
 import { SalaryConfigView } from './SalaryConfigView.js';
 import { OfficeApprovalsView } from './OfficeApprovalsView.js';
@@ -931,8 +932,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
       showToast(`Đã ${labels[action].toLowerCase()} kỳ lương!`);
       refreshCurrentTab();
     } catch (e: any) {
-      const msg = String(e?.message || '');
-      if (msg.includes('SEPARATION_OF_DUTIES_VIOLATION')) showToast('⚠️ Người tính lương không được tự duyệt kỳ của mình!');
+      if (getErrorCode(e) === 'SEPARATION_OF_DUTIES_VIOLATION') showToast('⚠️ Người tính lương không được tự duyệt kỳ của mình!');
       else showToast(e?.message || 'Lỗi chuyển trạng thái kỳ!');
     }
   }, [post, showToast, refreshCurrentTab]);

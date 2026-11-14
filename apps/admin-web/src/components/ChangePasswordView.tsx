@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { KeyRound, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { apiRequest } from '../services/api';
+import { getErrorCode, toVietnameseErrorMessage } from '@ubm/shared';
 
 /**
  * Đổi mật khẩu tài khoản nội bộ (Giám đốc / IT / các vai trò quản trị).
@@ -40,14 +41,14 @@ export const ChangePasswordView: React.FC = () => {
       setNewPassword('');
       setConfirmPassword('');
     } catch (err: any) {
-      const code = String(err?.message || '');
+      const code = getErrorCode(err);
       setMessage({
         kind: 'err',
         text: code === 'INVALID_CREDENTIALS' || code === 'INVALID_PASSWORD'
           ? 'Mật khẩu hiện tại không đúng.'
           : code === 'WEAK_PASSWORD'
             ? 'Mật khẩu mới quá yếu, vui lòng chọn mật khẩu mạnh hơn.'
-            : (code || 'Không đổi được mật khẩu, vui lòng thử lại.'),
+            : toVietnameseErrorMessage(err?.message, 'Không đổi được mật khẩu, vui lòng thử lại.'),
       });
     } finally {
       setBusy(false);

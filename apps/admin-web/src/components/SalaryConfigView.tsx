@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DollarSign, RefreshCw, Save, Search, CheckCircle2, AlertTriangle, Building2, Lock, Wallet } from 'lucide-react';
 import { apiRequest } from '../services/api';
-import { effectivePayMode, isPayModeLockedToGroup, payModeLabel, type PayMode } from '@ubm/shared';
+import { effectivePayMode, getErrorCode, isPayModeLockedToGroup, payModeLabel, type PayMode } from '@ubm/shared';
 import {
   FINANCE_BLOCK_OPTIONS,
   FINANCE_BLOCK_SHORT,
@@ -168,7 +168,7 @@ export const SalaryConfigView: React.FC<{ currentUser: any; cols?: any; onToggle
       return { ok: true, persisted: true, kind, text };
     } catch (err: any) {
       const msg = String(err?.message || err);
-      const persistedUnknown = /NOT_PERSISTED|PERSIST_FAILED/.test(msg);
+      const persistedUnknown = /NOT_PERSISTED|PERSIST_FAILED/.test(getErrorCode(err) || msg);
       setRowSync(prev => ({ ...prev, [employeeId]: { state: 'err', text: msg, at: new Date().toISOString() } }));
       setNotice({
         kind: 'err',
