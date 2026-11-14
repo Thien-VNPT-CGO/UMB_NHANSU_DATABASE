@@ -2952,11 +2952,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const settings = (await adapter.getSystemSettings()) || {};
       const all = { ...((settings as any)[ASSESSMENT_KEY] || {}) };
       const prev = all[employeeId] || {};
+      // Đổi ngày/giờ = buổi vấn đáp MỚI (VD thi lại sau khi trượt). Phải xoá
+      // meetDone của buổi cũ, nếu không cổng NV coi như đã chấm xong và ẩn cả
+      // banner lẫn nút "Vào Meet vấn đáp" dù HR vừa đặt lịch.
+      const isNewSession = prev.meetDate !== meetDate || prev.meetTime !== meetTime;
       all[employeeId] = {
         ...prev,
         meetDate, meetTime, meetUrl,
         ...(quizTestId ? { quizTestId } : {}),
-        meetDone: prev.meetDone || null,
+        meetDone: isNewSession ? null : (prev.meetDone || null),
         createdBy: req.user!.id,
         createdAt: prev.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
