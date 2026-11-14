@@ -1021,6 +1021,7 @@ export class EmployeesService {
       received_date?: string;
       quantity?: number;
       unit_price?: number;
+      health_support_amount?: number;
       sizes?: { L?: number; XL?: number };
     },
     actorId: string,
@@ -1038,6 +1039,9 @@ export class EmployeesService {
           quantity: input.quantity,
           sizes: input.sizes,
           unit_price: input.unit_price,
+          // Không gửi trường này (client cũ) -> giữ nguyên số tiền hỗ trợ KSK
+          // đã nhập trước đó; gửi 0 -> xóa hẳn.
+          health_support_amount: input.health_support_amount ?? previous?.health_support_amount,
           updated_at: new Date().toISOString(),
           updated_by: String(actorId || ''),
         });
@@ -1068,7 +1072,7 @@ export class EmployeesService {
             action: 'UPDATE_UNIFORM',
             target_entity: 'NHAN_VIEN_MASTER',
             target_id: employeeId,
-            details: `Nhận đồng phục: ${current.quantity} áo${uniformSizesLabel(current) ? ` (${uniformSizesLabel(current)})` : ''} × ${current.unit_price.toLocaleString('vi-VN')}đ = ${current.amount.toLocaleString('vi-VN')}đ (ngày ${current.received_date})`,
+            details: `Nhận đồng phục: ${current.quantity} áo${uniformSizesLabel(current) ? ` (${uniformSizesLabel(current)})` : ''} × ${current.unit_price.toLocaleString('vi-VN')}đ = ${current.amount.toLocaleString('vi-VN')}đ (ngày ${current.received_date})${current.health_support_amount ? ` + hỗ trợ khám sức khỏe ${current.health_support_amount.toLocaleString('vi-VN')}đ` : ''}`,
           } as any);
         } catch { /* non-fatal */ }
         return { employee: updated as EmployeeMaster, previous, current };

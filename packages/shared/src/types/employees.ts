@@ -109,6 +109,11 @@ export interface EmployeeUniformInfo {
   unit_price: number;
   /** Tổng tiền = quantity × unit_price. */
   amount: number;
+  /**
+   * Tiền hỗ trợ khám sức khỏe (VNĐ) do HR nhập tay — được hoàn lại cùng tiền
+   * đồng phục khi NV đủ 6 tháng kể từ `received_date`. 0/không có = chưa nhập.
+   */
+  health_support_amount?: number;
   /** ISO timestamp lần cập nhật gần nhất. */
   updated_at?: string;
   /** ID admin/HR cập nhật gần nhất. */

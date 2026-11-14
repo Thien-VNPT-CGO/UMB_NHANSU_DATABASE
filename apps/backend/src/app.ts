@@ -3613,6 +3613,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
               ? { L: Number(body.sizes.L) || 0, XL: Number(body.sizes.XL) || 0 }
               : undefined,
             unit_price: body.unit_price === undefined ? undefined : Number(body.unit_price),
+            health_support_amount: body.health_support_amount === undefined
+              ? undefined
+              : Number(body.health_support_amount),
           },
           req.user!.id,
         );

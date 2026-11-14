@@ -1,6 +1,7 @@
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { NotificationsService } from './notifications.service.js';
 import { ZaloService } from './zalo.service.js';
+import { parseUniform, uniformRefundMilestoneDate, uniformRefundTotal } from '../utils/uniform.js';
 
 /**
  * Nhắc việc tự động (chạy mỗi 5 phút từ server.ts):
@@ -9,6 +10,8 @@ import { ZaloService } from './zalo.service.js';
  *  3. Nhắc HR/Admin (in-app): đơn chờ duyệt quá 24h (nghỉ/đổi ca/bổ sung công).
  *  4. Nhắc hoàn thành thử việc (in-app): NV hết hạn hôm nay / còn ≤2 ngày
  *     (ngày hoàn thành = start_date + 11) + báo chính NV đó trong ngày cuối.
+ *  5. Nhắc HR (in-app) hoàn tiền đồng phục + hỗ trợ KSK khi NV chính thức đủ
+ *     6 tháng kể từ ngày nhận đồng phục — nhắc trước 1 ngày.
  * Chống spam bằng cờ theo ngày trong bộ nhớ.
  */
 
@@ -318,6 +321,60 @@ export async function autoRemindersTick(
         }
       } catch (e: any) {
         console.warn('[auto-reminders] probation tick:', e?.message || e);
+      }
+    }
+
+    // 5. Hoàn tiền đồng phục + hỗ trợ khám sức khỏe sau đủ 6 tháng làm việc
+    // chính thức. Mốc = NGÀY NHẬN ĐỒNG PHỤC + 6 tháng; nhắc HR TRƯỚC 1 NGÀY.
+    // Nếu hôm qua server bận/restart nên lỡ nhắc, hôm nay đúng mốc sẽ báo bù.
+    if (!notifiedDaily.has(`uniform-refund:${today}`)) {
+      try {
+        const emps = await repo.listEmployees().catch(() => []);
+        const tomorrow = vnDateStr(new Date(vn.getTime() + DAY_MS));
+        const dueTomorrow: Array<{ emp: any; u: any }> = [];
+        const dueToday: Array<{ emp: any; u: any }> = [];
+        for (const emp of emps || []) {
+          if ((emp as any)?.employment_status !== 'OFFICIAL') continue;
+          const u = parseUniform((emp as any)?.uniform);
+          if (!u) continue;
+          const milestone = uniformRefundMilestoneDate(u.received_date);
+          if (!milestone) continue;
+          if (milestone === tomorrow) dueTomorrow.push({ emp, u });
+          else if (milestone === today) dueToday.push({ emp, u });
+        }
+        if (dueTomorrow.length > 0 || dueToday.length > 0) {
+          notifiedDaily.add(`uniform-refund:${today}`);
+          const fmtDay = (iso: string) => iso.split('-').reverse().join('/');
+          const fmtEmp = ({ emp, u }: { emp: any; u: any }) => {
+            const health = Math.max(0, Math.floor(Number(u?.health_support_amount) || 0));
+            const total = uniformRefundTotal(u);
+            const parts = [`ĐP ${Number(u?.amount || 0).toLocaleString('vi-VN')}đ`];
+            if (health > 0) parts.push(`KSK ${health.toLocaleString('vi-VN')}đ`);
+            const more = health > 0 ? '' : ' — chưa nhập tiền hỗ trợ KSK';
+            return `${emp.full_name} (${emp.employee_code}): ${total.toLocaleString('vi-VN')}đ [${parts.join(' + ')}]${more}`;
+          };
+          const cap = (rows: Array<{ emp: any; u: any }>) => {
+            const shown = rows.slice(0, 5).map(fmtEmp).join('; ');
+            return rows.length > 5 ? `${shown} (+${rows.length - 5} NV khác)` : shown;
+          };
+          const lines: string[] = [];
+          if (dueTomorrow.length > 0) lines.push(`Mai (${fmtDay(tomorrow)}): ${cap(dueTomorrow)}`);
+          if (dueToday.length > 0) lines.push(`Hôm nay (${fmtDay(today)}): ${cap(dueToday)}`);
+          const titleParts: string[] = [];
+          if (dueTomorrow.length > 0) titleParts.push(`mai đủ 6 tháng: ${dueTomorrow.length} NV`);
+          if (dueToday.length > 0) titleParts.push(`hôm nay đủ 6 tháng: ${dueToday.length} NV`);
+          await notifications.sendNotification({
+            recipientIds: ids,
+            type: 'UNIFORM_REFUND_DUE',
+            severity: 'ACTION_REQUIRED',
+            title: `💸 Hoàn tiền đồng phục + KSK — ${titleParts.join(' • ')}`,
+            summary: `${lines.join(' • ')}. Vào Hồ Sơ Nhân Viên để kiểm tra và hoàn tiền cho NV.`,
+            targetPath: '/hr-profile',
+            actorId: 'SYSTEM',
+          }).catch(() => null);
+        }
+      } catch (e: any) {
+        console.warn('[auto-reminders] uniform refund tick:', e?.message || e);
       }
     }
 

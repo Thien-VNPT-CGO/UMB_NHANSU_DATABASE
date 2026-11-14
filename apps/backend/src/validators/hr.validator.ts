@@ -92,6 +92,8 @@ export const employeeUniformBody = z
       })
       .optional(),
     unit_price: z.coerce.number().int().min(0).max(10_000_000).optional(),
+    // Tiền hỗ trợ khám sức khỏe HR nhập tay (hoàn cùng tiền đồng phục sau 6 tháng).
+    health_support_amount: z.coerce.number().int().min(0).max(10_000_000).optional(),
   })
   .passthrough();
 

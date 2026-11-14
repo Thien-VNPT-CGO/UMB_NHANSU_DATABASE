@@ -959,6 +959,9 @@ import {
   evaluateCandidateAge,
   getErrorCode,
   toVietnameseErrorMessage,
+  uniformRefundMilestoneDate,
+  uniformRefundReminderDate,
+  uniformRefundTotal,
 } from '@ubm/shared';
 
 /** Chuẩn hóa mã chi nhánh (Sheets có thể ghi CN1..CN4, hệ thống dùng CN130/261/120/111). */
@@ -3968,6 +3971,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Mặc định 0: không tự điền 1 áo khi NV chưa có dữ liệu (tránh lưu nhầm 150.000đ).
   const [uniformL, setUniformL] = useState('0');
   const [uniformXL, setUniformXL] = useState('0');
+  // Tiền hỗ trợ khám sức khỏe HR nhập tay — hoàn cùng tiền đồng phục sau 6 tháng.
+  const [uniformHealthSupport, setUniformHealthSupport] = useState('0');
   const [uniformBusy, setUniformBusy] = useState(false);
   const currentUniform: any = (() => {
     const e = (allEmployees || []).find((x: any) => x.employee_id === profileEmpId);
@@ -3982,6 +3987,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         currentUniform.unit_price ?? '',
         currentUniform.sizes?.L ?? '',
         currentUniform.sizes?.XL ?? '',
+        currentUniform.health_support_amount ?? '',
         currentUniform.updated_at || '',
       ].join('|')
     : '';
@@ -3998,6 +4004,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       setUniformL(String(legacyQty));
       setUniformXL('0');
     }
+    setUniformHealthSupport(String(Math.max(0, Math.floor(Number(currentUniform?.health_support_amount) || 0))));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileEmpId, uniformSyncKey]);
   // Thu nhập tạm tính realtime theo điểm danh hằng ngày (mục Lương & Thu nhập trong Hồ Sơ).
@@ -16290,6 +16297,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       UNKNOWN: { name: 'Chưa gán chi nhánh', short: 'Khác', color: '#94A3B8', icon: '📍' },
     };
     const STORE_BRANCH_ORDER = ['CN130', 'CN261', 'CN120', 'CN111', 'UNKNOWN'];
+    // Cảnh báo hoàn tiền đồng phục + hỗ trợ KSK: NV chính thức đủ 6 tháng kể từ
+    // ngày nhận đồng phục — ưu tiên hiện trước 1 ngày, giữ thêm ngày đến hạn.
+    const vnTodayIso = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
+    const vnTomorrowIso = new Date(Date.parse(`${vnTodayIso}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    const uniformRefundDue = (allEmployees || [])
+      .filter((e: any) => e.employment_status === 'OFFICIAL' && e.uniform?.received_date)
+      .map((e: any) => {
+        const u: any = e.uniform;
+        return {
+          emp: e,
+          milestone: uniformRefundMilestoneDate(String(u.received_date || '')),
+          total: uniformRefundTotal(u),
+        };
+      })
+      .filter((r: any) => r.milestone === vnTodayIso || r.milestone === vnTomorrowIso);
     const groupEmps = (allEmployees || [])
       .filter((e: any) => (profileGroup === 'ALL' ? true : (e.group || e.nhom) === profileGroup));
     const searchEmps = groupEmps.filter((e: any) => {
@@ -16551,9 +16573,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         return;
       }
       const amount = qty * UNIFORM_PRICE;
+      const healthSupport = Math.max(0, Math.floor(Number(uniformHealthSupport) || 0));
+      const refundTotal = amount + healthSupport;
       const sizeText = qty > 0 ? ` [${[sizeL > 0 ? `L: ${sizeL}` : '', sizeXL > 0 ? `XL: ${sizeXL}` : ''].filter(Boolean).join(' · ')}]` : '';
-      if (qty > 0 && !window.confirm(`Xác nhận ${profEmp.full_name} nhận ${qty} áo${sizeText} đồng phục (${amount.toLocaleString('vi-VN')}đ), trừ vào lương tháng ${uniformDate.slice(0, 7)}?`)) return;
-      if (qty === 0 && !window.confirm(`Gỡ thông tin đồng phục của ${profEmp.full_name}?`)) return;
+      if (qty > 0 && !window.confirm(`Xác nhận ${profEmp.full_name} nhận ${qty} áo${sizeText} đồng phục (${amount.toLocaleString('vi-VN')}đ), trừ vào lương tháng ${uniformDate.slice(0, 7)}?\n\nSau 6 tháng kể từ ngày nhận, hệ thống sẽ nhắc HR hoàn trả: đồng phục ${amount.toLocaleString('vi-VN')}đ + hỗ trợ khám sức khỏe ${healthSupport.toLocaleString('vi-VN')}đ = ${refundTotal.toLocaleString('vi-VN')}đ.`)) return;
+      if (qty === 0 && !window.confirm(`Gỡ thông tin đồng phục của ${profEmp.full_name}? Tiền hỗ trợ khám sức khỏe đã nhập (nếu có) cũng sẽ bị xóa.`)) return;
       setUniformBusy(true);
       try {
         const r: any = await apiRequest(`/employees/${profEmp.employee_id}/uniform`, {
@@ -16562,10 +16586,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             received_date: qty > 0 ? uniformDate : '',
             quantity: qty,
             sizes: { L: qty > 0 ? sizeL : 0, XL: qty > 0 ? sizeXL : 0 },
+            health_support_amount: qty > 0 ? healthSupport : 0,
           }),
         });
         const savedUniform: any = r?.uniform || null;
         const savedAmount = Number(savedUniform?.amount ?? amount) || 0;
+        const savedHealth = Number(savedUniform?.health_support_amount || 0);
         // Đồng bộ ngay form theo dữ liệu server trả về (không chờ vòng reload),
         // để reload/realtime sau đó luôn hiển thị đúng size đã lưu.
         if (savedUniform) {
@@ -16573,13 +16599,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           const sz = savedUniform.sizes;
           setUniformL(String(Math.max(0, Math.floor(Number(sz ? sz.L : savedUniform.quantity) || 0))));
           setUniformXL(String(Math.max(0, Math.floor(Number(sz ? sz.XL : 0) || 0))));
+          setUniformHealthSupport(String(Math.max(0, Math.floor(savedHealth))));
         } else {
           setUniformDate('');
           setUniformL('0');
           setUniformXL('0');
+          setUniformHealthSupport('0');
         }
         showToast(qty > 0
-          ? `✓ Đã lưu ${qty} áo${sizeText} đồng phục (${savedAmount.toLocaleString('vi-VN')}đ) vào lương tháng ${String(savedUniform?.received_date || uniformDate).slice(0, 7)}!`
+          ? `✓ Đã lưu ${qty} áo${sizeText} đồng phục (${savedAmount.toLocaleString('vi-VN')}đ)${savedHealth > 0 ? ` + hỗ trợ KSK ${savedHealth.toLocaleString('vi-VN')}đ` : ''} vào lương tháng ${String(savedUniform?.received_date || uniformDate).slice(0, 7)}!`
           : '✓ Đã gỡ thông tin đồng phục.');
         if (onRefreshData) await onRefreshData();
         if (onPushSheets) await onPushSheets();
@@ -16697,7 +16725,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             const sz = u?.sizes
               ? [Number(u.sizes.L) > 0 ? `L: ${u.sizes.L}` : '', Number(u.sizes.XL) > 0 ? `XL: ${u.sizes.XL}` : ''].filter(Boolean).join(' · ')
               : '';
-            return row('Đồng phục', `${u.quantity} áo${sz ? ` (${sz})` : ''} × ${unit.toLocaleString('vi-VN')}đ = ${amt.toLocaleString('vi-VN')}đ (ngày ${String(u.received_date || '').split('-').reverse().join('/')})`);
+            const health = Math.max(0, Math.floor(Number(u.health_support_amount) || 0));
+            const milestone = uniformRefundMilestoneDate(String(u.received_date || ''));
+            return row('Đồng phục', `${u.quantity} áo${sz ? ` (${sz})` : ''} × ${unit.toLocaleString('vi-VN')}đ = ${amt.toLocaleString('vi-VN')}đ (ngày ${String(u.received_date || '').split('-').reverse().join('/')})`)
+              + row('Hỗ trợ khám sức khỏe', health > 0 ? `${health.toLocaleString('vi-VN')}đ (HR nhập)` : 'Chưa nhập')
+              + row('Hoàn tiền sau 6 tháng', milestone
+                ? `${String(milestone).split('-').reverse().join('/')} — tổng ${uniformRefundTotal({ amount: amt, health_support_amount: health }).toLocaleString('vi-VN')}đ`
+                : '—');
           })()
         + `</table>`
         + `<p style="margin-top:26px;font-size:13px;">Người lập phiếu (HR ký): ............................. &nbsp;&nbsp; Nhân viên (ký): .............................</p>`
@@ -16741,6 +16775,27 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Cảnh báo hoàn tiền đồng phục + KSK (đủ 6 tháng kể từ ngày nhận đồng phục) */}
+        {uniformRefundDue.length > 0 && (
+          <div style={{ backgroundColor: '#FFF7ED', border: '1.5px solid #FED7AA', borderRadius: '12px', padding: '12px 16px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+            <span style={{ fontSize: '20px', lineHeight: 1 }}>💸</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 800, fontSize: '13px', color: '#9A3412' }}>
+                {uniformRefundDue.length} NV cần hoàn tiền đồng phục + hỗ trợ khám sức khỏe
+              </div>
+              <div style={{ fontSize: '12px', color: '#7C2D12', marginTop: '3px', lineHeight: 1.55 }}>
+                {uniformRefundDue.slice(0, 6).map((r: any) => (
+                  `${r.emp.full_name} (${r.milestone === vnTodayIso ? 'HÔM NAY' : 'MAI'}): ${r.total.toLocaleString('vi-VN')}đ`
+                )).join(' • ')}
+                {uniformRefundDue.length > 6 ? ` (+${uniformRefundDue.length - 6} NV khác)` : ''}
+              </div>
+              <div style={{ fontSize: '11px', color: '#9A3412', marginTop: '2px' }}>
+                Mốc = ngày nhận đồng phục + 6 tháng. Chọn NV bên dưới để kiểm tra và hoàn tiền.
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* BỘ CHỌN NHÂN VIÊN — nhóm STORE tách riêng theo từng chi nhánh */}
         <div style={{ ...card, padding: '18px 20px' }}>
@@ -17250,6 +17305,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       ? [Number(savedUniform.sizes.L) > 0 ? `L: ${savedUniform.sizes.L}` : '', Number(savedUniform.sizes.XL) > 0 ? `XL: ${savedUniform.sizes.XL}` : ''].filter(Boolean).join(' · ')
                       : '';
                     const savedAmount = Number(savedUniform?.amount ?? (Number(savedUniform?.quantity || 0) * (Number(savedUniform?.unit_price) || UNIFORM_PRICE))) || 0;
+                    const savedHealthSupport = Math.max(0, Math.floor(Number(savedUniform?.health_support_amount) || 0));
+                    const savedRefundTotal = uniformRefundTotal(savedUniform);
+                    const refundMilestone = savedUniform?.received_date ? uniformRefundMilestoneDate(String(savedUniform.received_date)) : '';
+                    const refundReminder = savedUniform?.received_date ? uniformRefundReminderDate(String(savedUniform.received_date)) : '';
+                    const vnToday = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
+                    const daysToMilestone = refundMilestone
+                      ? Math.round((Date.parse(`${refundMilestone}T00:00:00Z`) - Date.parse(`${vnToday}T00:00:00Z`)) / 86_400_000)
+                      : null;
+                    const fmtDay = (iso: string) => (iso ? iso.split('-').reverse().join('/') : '—');
                     return (
                       <div style={{ marginTop: '14px', borderTop: '1px dashed var(--border)', paddingTop: '12px' }}>
                         <div style={{ fontWeight: 800, fontSize: '13.5px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
@@ -17267,6 +17331,27 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '10px' }}>
                           Nhập ngày nhận + số lượng theo size L / XL. Số tiền được <strong>tự động trừ vào lương đúng tháng của ngày nhận</strong> trên cổng Kế Toán (realtime).
                         </div>
+                        {savedUniform && refundMilestone && (
+                          <div style={{ backgroundColor: '#F0FDF4', border: '1px solid #A7F3D0', borderRadius: '8px', padding: '9px 11px', marginBottom: '10px', fontSize: '11.5px', color: '#065F46', lineHeight: 1.55 }}>
+                            🎁 <strong>Hoàn tiền sau 6 tháng:</strong> {fmtDay(refundMilestone)}
+                            {' — '}
+                            <strong>{(savedRefundTotal).toLocaleString('vi-VN')}đ</strong>
+                            {' '}(đồng phục {savedAmount.toLocaleString('vi-VN')}đ
+                            {savedHealthSupport > 0
+                              ? ` + KSK ${savedHealthSupport.toLocaleString('vi-VN')}đ)`
+                              : ' • chưa nhập tiền hỗ trợ KSK)'}
+                            {daysToMilestone !== null && (
+                              daysToMilestone > 0
+                                ? <span style={{ color: '#B45309', fontWeight: 800 }}> • còn {daysToMilestone} ngày</span>
+                                : daysToMilestone === 0
+                                  ? <span style={{ color: '#B91C1C', fontWeight: 800 }}> • ĐẾN HẠN HÔM NAY</span>
+                                  : <span style={{ color: '#B91C1C', fontWeight: 800 }}> • đã quá hạn {-daysToMilestone} ngày</span>
+                            )}
+                            <div style={{ marginTop: '2px', color: '#047857' }}>
+                              🔔 Hệ thống tự nhắc HR trước 1 ngày: <strong>{fmtDay(refundReminder)}</strong>. Chỉ áp dụng NV chính thức.
+                            </div>
+                          </div>
+                        )}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', alignItems: 'end' }}>
                           <label style={{ fontSize: '12px', fontWeight: 700 }}>
                             Ngày nhận đồng phục
@@ -17299,6 +17384,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}
                             />
                           </label>
+                          <label style={{ fontSize: '12px', fontWeight: 700 }}>
+                            Hỗ trợ khám sức khỏe (VNĐ)
+                            <input
+                              type="number"
+                              min={0}
+                              step={1000}
+                              value={uniformHealthSupport}
+                              onChange={(e) => setUniformHealthSupport(e.target.value)}
+                              placeholder="VD: 300000"
+                              style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}
+                            />
+                          </label>
                           <div style={{ fontSize: '12px', fontWeight: 700 }}>
                             Tổng: {qty} áo — Thành tiền
                             <div style={{ marginTop: '4px', padding: '7px 9px', borderRadius: '6px', backgroundColor: 'var(--bg)', border: '1px solid var(--border)', color: '#B91C1C', fontSize: '14px' }}>
@@ -17326,7 +17423,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             </button>
                           )}
                           <span style={{ fontSize: '11px', color: 'var(--text-muted)', alignSelf: 'center' }}>
-                            {qty > 0 && uniformDate ? `→ Trừ ${amount.toLocaleString('vi-VN')}đ vào lương tháng ${uniformDate.slice(0, 7)}` : 'Nhập số lượng 0 để gỡ.'}
+                            {qty > 0 && uniformDate
+                              ? `→ Trừ ${amount.toLocaleString('vi-VN')}đ vào lương tháng ${uniformDate.slice(0, 7)} • Hoàn sau 6 tháng: ${(amount + Math.max(0, Math.floor(Number(uniformHealthSupport) || 0))).toLocaleString('vi-VN')}đ`
+                              : 'Nhập số lượng 0 để gỡ.'}
                           </span>
                         </div>
                       </div>

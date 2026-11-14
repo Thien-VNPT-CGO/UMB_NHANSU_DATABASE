@@ -9,6 +9,22 @@
  */
 
 import type { EmployeeUniformInfo } from '@ubm/shared';
+import {
+  UNIFORM_REFUND_MONTHS,
+  addMonthsClamped,
+  uniformRefundMilestoneDate,
+  uniformRefundReminderDate,
+  uniformRefundTotal,
+} from '@ubm/shared';
+
+// Công thức mốc hoàn tiền dùng chung với admin-web (packages/shared).
+export {
+  UNIFORM_REFUND_MONTHS,
+  addMonthsClamped,
+  uniformRefundMilestoneDate,
+  uniformRefundReminderDate,
+  uniformRefundTotal,
+};
 
 /** Đơn giá chuẩn 1 áo đồng phục (VNĐ). */
 export const UNIFORM_UNIT_PRICE = 150_000;
@@ -90,12 +106,15 @@ export function parseUniform(value: unknown): EmployeeUniformInfo | null {
   if (!received_date || quantity <= 0) return null;
 
   const unit_price = Math.max(0, Math.floor(Number(raw.unit_price ?? raw.unitPrice) || UNIFORM_UNIT_PRICE)) || UNIFORM_UNIT_PRICE;
+  // Tiền hỗ trợ khám sức khỏe: HR nhập tay, 0/không có thì bỏ khỏi JSON.
+  const healthSupport = Math.max(0, Math.floor(Number(raw.health_support_amount ?? raw.healthSupportAmount) || 0));
   return {
     received_date,
     quantity,
     ...(sizes ? { sizes } : {}),
     unit_price,
     amount: quantity * unit_price,
+    ...(healthSupport > 0 ? { health_support_amount: healthSupport } : {}),
     updated_at: String(raw.updated_at ?? raw.updatedAt ?? '').trim() || undefined,
     updated_by: String(raw.updated_by ?? raw.updatedBy ?? '').trim() || undefined,
   };
