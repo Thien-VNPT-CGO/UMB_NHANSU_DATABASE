@@ -895,4 +895,14 @@ body.theme-halloween .btn-primary:hover {
   .subtabs-heading { border-right: none; padding-right: 0; }
 }
 
+/* Tab Hồ Sơ Nhân Viên — bộ chọn nhân viên nhóm theo chi nhánh */
+.hr-emp-scroll { scrollbar-width: thin; }
+.hr-emp-scroll::-webkit-scrollbar { width: 8px; }
+.hr-emp-scroll::-webkit-scrollbar-track { background: transparent; }
+.hr-emp-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+.hr-emp-scroll::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+.hr-emp-card { transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease; }
+.hr-emp-card:hover { transform: translateY(-1px); border-color: var(--brand) !important; box-shadow: 0 8px 18px rgba(232, 93, 146, 0.14); }
+.hr-emp-card:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
 

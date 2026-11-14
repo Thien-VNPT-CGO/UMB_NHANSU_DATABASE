@@ -2575,6 +2575,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Hồ sơ nhân viên (HR): NV đang xem + sub-tab danh mục + bộ lọc tìm kiếm
   const [profileSearch, setProfileSearch] = useState('');
   const [profileGroup, setProfileGroup] = useState('SALE');
+  // Nhóm STORE: lọc riêng theo từng chi nhánh (CN130/CN261/CN120/CN111).
+  const [profileBranch, setProfileBranch] = useState('ALL');
   const [profileEmpId, setProfileEmpId] = useState<string | null>(null);
   const [profileSub, setProfileSub] = useState<'overview' | 'identity' | 'att' | 'pay' | 'legal'>('overview');
   const loadAdjustments = async () => {
@@ -16278,21 +16280,100 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   if (activeTab === 'hr-profile') {
     const vnd = (n: number) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
-    const filteredEmps = (allEmployees || [])
-      .filter((e: any) => (profileGroup === 'ALL' ? true : (e.group || e.nhom) === profileGroup))
-      .filter((e: any) => {
-        if (!profileSearch.trim()) return true;
-        // Tìm không dấu: gõ "nguyen"/"van kiep" vẫn ra "Nguyễn"/"Vạn Kiếp".
-        const q = stripAccentsVI(profileSearch.trim());
-        return stripAccentsVI(e.full_name).includes(q)
-          || String(e.employee_code || '').toLowerCase().includes(q)
-          || String(e.employee_id || '').toLowerCase().includes(q)
-          || stripAccentsVI(e.phone_normalized || e.phone).includes(q);
-      });
+    // Mã chi nhánh chuẩn hóa (Sheet có thể ghi CN1..CN4) → nhóm STORE tách đúng chi nhánh.
+    const branchKeyOf = (e: any) => canonicalBranchId((e as any)?.default_branch_id || (e as any)?.branch_id || '') || 'UNKNOWN';
+    const STORE_BRANCH_META: Record<string, { name: string; short: string; color: string; icon: string }> = {
+      CN130: { name: 'CN1 · 130 Vạn Kiếp (Bình Thạnh)', short: 'CN1', color: '#E85D92', icon: '🏬' },
+      CN261: { name: 'CN2 · 261 Tô Hiến Thành (Q.10)', short: 'CN2', color: '#8B5CF6', icon: '🏬' },
+      CN120: { name: 'CN3 · 120 Hoàng Diệu 2 (Thủ Đức)', short: 'CN3', color: '#0EA5E9', icon: '🏬' },
+      CN111: { name: 'CN4 · 111 Tôn Đản (Q.4)', short: 'CN4', color: '#10B981', icon: '🏬' },
+      UNKNOWN: { name: 'Chưa gán chi nhánh', short: 'Khác', color: '#94A3B8', icon: '📍' },
+    };
+    const STORE_BRANCH_ORDER = ['CN130', 'CN261', 'CN120', 'CN111', 'UNKNOWN'];
+    const groupEmps = (allEmployees || [])
+      .filter((e: any) => (profileGroup === 'ALL' ? true : (e.group || e.nhom) === profileGroup));
+    const searchEmps = groupEmps.filter((e: any) => {
+      if (!profileSearch.trim()) return true;
+      // Tìm không dấu: gõ "nguyen"/"van kiep" vẫn ra "Nguyễn"/"Vạn Kiếp".
+      const q = stripAccentsVI(profileSearch.trim());
+      return stripAccentsVI(e.full_name).includes(q)
+        || String(e.employee_code || '').toLowerCase().includes(q)
+        || String(e.employee_id || '').toLowerCase().includes(q)
+        || stripAccentsVI(e.phone_normalized || e.phone).includes(q);
+    });
+    // Đếm theo chi nhánh TRƯỚC khi lọc chi nhánh — chip luôn hiện đủ số để chọn.
+    const branchCounts = searchEmps.reduce((acc: Record<string, number>, e: any) => {
+      const k = branchKeyOf(e);
+      acc[k] = (acc[k] || 0) + 1;
+      return acc;
+    }, {});
+    const branchKeys = Object.keys(branchCounts).sort((a, b) => {
+      const ia = STORE_BRANCH_ORDER.indexOf(a);
+      const ib = STORE_BRANCH_ORDER.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b);
+    });
+    const filteredEmps = searchEmps.filter((e: any) =>
+      profileGroup !== 'STORE' || profileBranch === 'ALL' || branchKeyOf(e) === profileBranch
+    );
     const saleFirst = [...filteredEmps].sort((a: any, b: any) =>
       ((b.group === 'SALE' ? 1 : 0) - (a.group === 'SALE' ? 1 : 0)) ||
       String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi')
     );
+    // Nhóm STORE chia thành từng khối chi nhánh, trong mỗi khối xếp tên A→Z.
+    const storeGroups = profileGroup === 'STORE'
+      ? branchKeys
+          .map((k) => ({
+            key: k,
+            meta: STORE_BRANCH_META[k] || { name: k, short: k, color: '#64748B', icon: '🏬' },
+            emps: saleFirst.filter((e: any) => branchKeyOf(e) === k),
+          }))
+          .filter((g) => g.emps.length > 0)
+      : [];
+    const empInitials = (name: string) => String(name || '?').split(' ').filter(Boolean).map((w: string) => w[0]).slice(-2).join('').toUpperCase();
+    const firstEmpOfBranch = (k: string) => searchEmps
+      .filter((e: any) => branchKeyOf(e) === k)
+      .sort((a: any, b: any) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'))[0];
+    // Thẻ nhân viên dùng chung cho mọi nhóm (giữ tên/mã/ca + chấm trạng thái).
+    const renderEmpCard = (e: any) => {
+      const active = profEmp?.employee_id === e.employee_id;
+      const status = String(e.employment_status || '');
+      const statusColor = status === 'OFFICIAL' ? '#10B981' : status === 'PROBATION' ? '#F59E0B' : '#94A3B8';
+      return (
+        <button
+          key={e.employee_id}
+          className="hr-emp-card"
+          onClick={() => { setProfileEmpId(e.employee_id); setProfileSub('overview'); }}
+          title={`${e.full_name} (${e.employee_code})${status === 'OFFICIAL' ? ' • Chính thức' : status === 'PROBATION' ? ' • Thử việc' : ''}`}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '9px', width: '100%', minWidth: 0, textAlign: 'left',
+            padding: '8px 10px', borderRadius: '11px', cursor: 'pointer',
+            border: active ? '1.5px solid var(--brand)' : '1px solid var(--border)',
+            backgroundColor: active ? 'var(--surface)' : 'var(--bg)',
+            backgroundImage: active ? 'linear-gradient(135deg, rgba(232,93,146,0.10), rgba(139,92,246,0.08))' : 'none',
+            boxShadow: active ? '0 6px 16px rgba(232,93,146,0.16)' : 'none',
+            transition: 'all .16s ease',
+          }}
+        >
+          <div style={{
+            width: '32px', height: '32px', borderRadius: '10px', flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: '11px', fontWeight: 800, color: '#FFF',
+            background: active ? 'linear-gradient(135deg, #E85D92, #8B5CF6)' : 'linear-gradient(135deg, #94A3B8, #64748B)',
+          }}>
+            {empInitials(e.full_name)}
+          </div>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: '12.5px', fontWeight: 800, color: active ? 'var(--brand)' : 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {e.full_name}{e.group === 'SALE' ? ' ⭐' : ''}
+            </div>
+            <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '1px' }}>
+              {e.employee_code}{e.default_shift_code ? ` • ${String(e.default_shift_code).replace('CA_', 'Ca ')}` : ''}
+            </div>
+          </div>
+          <span title={status === 'OFFICIAL' ? 'Chính thức' : status === 'PROBATION' ? 'Thử việc' : status} style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: statusColor, flexShrink: 0, boxShadow: `0 0 0 3px ${statusColor}22` }} />
+        </button>
+      );
+    };
     const profEmp = (allEmployees || []).find((e: any) => e.employee_id === profileEmpId)
       || saleFirst.find((e: any) => e.group === 'SALE') || saleFirst[0] || null;
     profIncomeEmpRef.current = profEmp?.employee_id || '';
@@ -16524,7 +16605,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         ['Giới tính', profEmp.gender || ''],
         ['Ngày sinh', profEmp.birth_date || ''],
         ['CCCD', profEmp.id_card_number || ''],
-        ['Chi nhánh', getDisplayBranch(profEmp.default_branch_id) || profEmp.default_branch_id || ''],
+        ['Chi nhánh', getDisplayBranch(profEmp.default_branch_id, profEmp.group) || profEmp.default_branch_id || ''],
         ['Nhóm', profEmp.group || ''],
         ['Ca cố định', profEmp.default_shift_code || ''],
         ['Trạng thái', profEmp.employment_status || ''],
@@ -16584,7 +16665,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         + `</table>`
         + sec('2. Công việc')
         + `<table style="border-collapse:collapse;width:100%;font-size:13px;">`
-        + row('Chi nhánh', getDisplayBranch(profEmp.default_branch_id) || profEmp.default_branch_id)
+        + row('Chi nhánh', getDisplayBranch(profEmp.default_branch_id, profEmp.group) || profEmp.default_branch_id)
         + row('Nhóm', profEmp.group)
         + row('Ca cố định', profEmp.default_shift_code)
         + row('Trạng thái', statusVI)
@@ -16661,45 +16742,154 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         </div>
 
-        {/* BỘ CHỌN NHÂN VIÊN */}
-        <div style={card}>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
-            <div style={{ position: 'relative', flex: '2 1 220px' }}>
-              <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-              <input
-                value={profileSearch}
-                onChange={e => setProfileSearch(e.target.value)}
-                placeholder="Tìm tên / mã NV (gõ không dấu vẫn ra)..."
-                style={{ width: '100%', padding: '8px 12px 8px 32px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px' }}
-              />
+        {/* BỘ CHỌN NHÂN VIÊN — nhóm STORE tách riêng theo từng chi nhánh */}
+        <div style={{ ...card, padding: '18px 20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+              <div style={{ width: '34px', height: '34px', borderRadius: '11px', background: 'linear-gradient(135deg, #E85D92, #8B5CF6)', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(232,93,146,0.25)', flexShrink: 0 }}>
+                <Users size={17} />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: '14px', fontWeight: 800 }}>Chọn nhân viên</div>
+                <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginTop: '1px' }}>
+                  {filteredEmps.length} nhân viên
+                  {profileGroup === 'STORE' && storeGroups.length > 0 ? ` • ${storeGroups.length} chi nhánh` : ''}
+                  {profileSearch.trim() ? ' • đang lọc theo từ khóa' : ''}
+                </div>
+              </div>
             </div>
-            <select value={profileGroup} onChange={e => { setProfileGroup(e.target.value); }} style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px', fontWeight: 700 }}>
-              <option value="SALE">Nhóm SALE</option>
-              <option value="ALL">Tất cả nhóm</option>
-              <option value="STORE">STORE</option>
-              <option value="VAN_PHONG">Văn phòng</option>
-              <option value="XUONG">Xưởng</option>
-            </select>
-          </div>
-          <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
-            {saleFirst.slice(0, 30).map((e: any) => {
-              const active = profEmp?.employee_id === e.employee_id;
-              return (
-                <button
-                  key={e.employee_id}
-                  onClick={() => { setProfileEmpId(e.employee_id); setProfileSub('overview'); }}
-                  title={`${e.full_name} (${e.employee_code})`}
-                  style={{
-                    flexShrink: 0, padding: '8px 14px', borderRadius: '999px', fontSize: '12px', fontWeight: 700, cursor: 'pointer',
-                    border: active ? '2px solid var(--brand)' : '1px solid var(--border)',
-                    backgroundColor: active ? '#FDF2F8' : 'var(--bg)', color: active ? 'var(--brand)' : 'var(--text)',
-                  }}
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', flex: '1 1 340px', justifyContent: 'flex-end' }}>
+              <div style={{ position: 'relative', flex: '1 1 220px', maxWidth: '340px', minWidth: '180px' }}>
+                <Search size={14} style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                <input
+                  value={profileSearch}
+                  onChange={e => setProfileSearch(e.target.value)}
+                  placeholder="Tìm tên / mã NV / SĐT (gõ không dấu vẫn ra)..."
+                  style={{ width: '100%', padding: '9px 32px 9px 32px', borderRadius: '10px', border: '1px solid var(--border)', fontSize: '13px', backgroundColor: 'var(--bg)', boxSizing: 'border-box' }}
+                />
+                {profileSearch && (
+                  <button
+                    onClick={() => setProfileSearch('')}
+                    title="Xóa tìm kiếm"
+                    style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: '3px' }}
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+              <div style={{ position: 'relative' }}>
+                <Filter size={13} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--brand)', pointerEvents: 'none' }} />
+                <select
+                  value={profileGroup}
+                  onChange={e => { setProfileGroup(e.target.value); setProfileBranch('ALL'); setProfileEmpId(null); }}
+                  title="Lọc theo nhóm nhân sự"
+                  style={{ padding: '9px 12px 9px 30px', borderRadius: '10px', border: '1px solid var(--border)', fontSize: '13px', fontWeight: 800, backgroundColor: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}
                 >
-                  {e.full_name}{e.group === 'SALE' ? ' ⭐' : ''}
-                </button>
-              );
-            })}
-            {saleFirst.length === 0 && <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Không tìm thấy nhân viên.</span>}
+                  <option value="SALE">Nhóm SALE</option>
+                  <option value="ALL">Tất cả nhóm</option>
+                  <option value="STORE">STORE (cửa hàng)</option>
+                  <option value="VAN_PHONG">Văn phòng</option>
+                  <option value="XUONG">Xưởng</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Thanh chọn chi nhánh — chỉ hiện khi xem nhóm STORE */}
+          {profileGroup === 'STORE' && branchKeys.length > 0 && (
+            <div style={{ display: 'flex', gap: '7px', overflowX: 'auto', paddingBottom: '4px', marginBottom: '12px' }}>
+              <button
+                onClick={() => setProfileBranch('ALL')}
+                style={{
+                  flexShrink: 0, display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', borderRadius: '999px',
+                  fontSize: '12px', fontWeight: 800, cursor: 'pointer',
+                  border: profileBranch === 'ALL' ? '1.5px solid var(--brand)' : '1px solid var(--border)',
+                  backgroundColor: profileBranch === 'ALL' ? 'var(--brand)' : 'var(--bg)',
+                  color: profileBranch === 'ALL' ? '#FFF' : 'var(--text)',
+                  boxShadow: profileBranch === 'ALL' ? '0 4px 12px rgba(232,93,146,0.28)' : 'none',
+                }}
+              >
+                🏬 Tất cả
+                <span style={{ fontSize: '10.5px', fontWeight: 800, padding: '1px 6px', borderRadius: '999px', backgroundColor: profileBranch === 'ALL' ? 'rgba(255,255,255,0.25)' : 'var(--surface)', border: profileBranch === 'ALL' ? 'none' : '1px solid var(--border)' }}>
+                  {searchEmps.length}
+                </span>
+              </button>
+              {branchKeys.map(k => {
+                const meta = STORE_BRANCH_META[k] || { name: k, short: k, color: '#64748B', icon: '🏬' };
+                const active = profileBranch === k;
+                return (
+                  <button
+                    key={k}
+                    onClick={() => {
+                      setProfileBranch(k);
+                      setProfileSub('overview');
+                      // Đang xem NV chi nhánh khác → nhảy sang NV đầu tiên của chi nhánh vừa chọn.
+                      const current = (allEmployees || []).find((x: any) => x.employee_id === profileEmpId);
+                      if (!current || branchKeyOf(current) !== k) {
+                        const first = firstEmpOfBranch(k);
+                        if (first) setProfileEmpId(first.employee_id);
+                      }
+                    }}
+                    title={meta.name}
+                    style={{
+                      flexShrink: 0, display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', borderRadius: '999px',
+                      fontSize: '12px', fontWeight: 800, cursor: 'pointer',
+                      border: active ? `1.5px solid ${meta.color}` : '1px solid var(--border)',
+                      backgroundColor: active ? meta.color : 'var(--bg)',
+                      color: active ? '#FFF' : 'var(--text)',
+                      boxShadow: active ? `0 4px 12px ${meta.color}44` : 'none',
+                    }}
+                  >
+                    <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: active ? '#FFF' : meta.color, flexShrink: 0 }} />
+                    {meta.short}{k === 'UNKNOWN' ? '' : ` · ${k}`}
+                    <span style={{ fontSize: '10.5px', fontWeight: 800, padding: '1px 6px', borderRadius: '999px', backgroundColor: active ? 'rgba(255,255,255,0.25)' : 'var(--surface)', border: active ? 'none' : '1px solid var(--border)' }}>
+                      {branchCounts[k] || 0}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="hr-emp-scroll" style={{ maxHeight: '390px', overflowY: 'auto', paddingRight: '4px' }}>
+            {profileGroup === 'STORE' ? (
+              storeGroups.length === 0 ? (
+                <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '12.5px', padding: '20px 0' }}>
+                  Không tìm thấy nhân viên phù hợp.
+                  {(profileSearch.trim() || profileBranch !== 'ALL') && (
+                    <button className="btn-secondary" style={{ marginLeft: '8px', fontSize: '11.5px', padding: '4px 10px' }} onClick={() => { setProfileSearch(''); setProfileBranch('ALL'); }}>
+                      Xóa bộ lọc
+                    </button>
+                  )}
+                </div>
+              ) : storeGroups.map(g => (
+                <div key={g.key} style={{ marginBottom: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap', position: 'sticky', top: 0, zIndex: 1, background: 'var(--surface)', padding: '2px 0 6px' }}>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: g.meta.color, boxShadow: `0 0 0 4px ${g.meta.color}1F` }} />
+                    <span style={{ fontSize: '12.5px', fontWeight: 800 }}>{g.meta.icon} {g.meta.name}</span>
+                    <span style={{ fontSize: '10.5px', fontWeight: 800, color: g.meta.color, backgroundColor: `${g.meta.color}14`, border: `1px solid ${g.meta.color}33`, padding: '2px 8px', borderRadius: '999px' }}>
+                      {g.emps.length} NV
+                    </span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(195px, 1fr))', gap: '8px' }}>
+                    {g.emps.map((e: any) => renderEmpCard(e))}
+                  </div>
+                </div>
+              ))
+            ) : saleFirst.length === 0 ? (
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '12.5px', padding: '20px 0' }}>
+                Không tìm thấy nhân viên phù hợp.
+                {profileSearch.trim() && (
+                  <button className="btn-secondary" style={{ marginLeft: '8px', fontSize: '11.5px', padding: '4px 10px' }} onClick={() => setProfileSearch('')}>
+                    Xóa tìm kiếm
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(195px, 1fr))', gap: '8px' }}>
+                {saleFirst.map((e: any) => renderEmpCard(e))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -16720,12 +16910,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               )}
               <div style={{ flex: '1 1 220px' }}>
                 <div style={{ fontSize: '19px', fontWeight: 800 }}>{profEmp.full_name}</div>
-                <div style={{ fontSize: '12px', opacity: 0.85, marginTop: '2px' }}>{profEmp.employee_code} • {getDisplayBranch(profEmp.default_branch_id) || profEmp.default_branch_id} • {profEmp.group}</div>
+                <div style={{ fontSize: '12px', opacity: 0.85, marginTop: '2px' }}>{profEmp.employee_code} • Nhóm {profEmp.group || '—'}{profEmp.default_shift_code ? ` • ${String(profEmp.default_shift_code).replace('CA_', 'Ca ')}` : ''}</div>
                 <div style={{ display: 'flex', gap: '6px', marginTop: '8px', flexWrap: 'wrap' }}>
                   <span className="badge" style={{ backgroundColor: profEmp.employment_status === 'OFFICIAL' ? '#10B981' : '#F59E0B', color: '#FFF', fontWeight: 800 }}>
                     {profEmp.employment_status === 'OFFICIAL' ? 'Chính thức' : profEmp.employment_status === 'PROBATION' ? 'Thử việc' : profEmp.employment_status}
                   </span>
-                  <span className="badge" style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: '#FFF', fontWeight: 700 }}>💰 {vnd(profEmp.current_rate_per_hour)}/giờ</span>
+                  <span className="badge" style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: '#FFF', fontWeight: 700 }}>📍 {getDisplayBranch(profEmp.default_branch_id, profEmp.group) || profEmp.default_branch_id || '—'}</span>
+                  {!isOfficeGroup(profEmp.group) && (
+                    <span className="badge" style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: '#FFF', fontWeight: 700 }}>💰 {vnd(profEmp.current_rate_per_hour)}/giờ</span>
+                  )}
                   <span className="badge" style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: '#FFF', fontWeight: 700 }}>Vào làm: {profEmp.start_date || '—'}</span>
                 </div>
               </div>
@@ -16760,16 +16953,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </button>
             </div>
 
-            {/* SUB-TAB THÔNG MINH */}
-            <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '2px' }}>
+            {/* SUB-TAB THÔNG MINH — thanh danh mục hồ sơ */}
+            <div style={{ ...card, padding: '8px', display: 'flex', alignItems: 'center', gap: '6px', overflowX: 'auto' }}>
               {subTabs.map(t => (
                 <button
                   key={t.id}
                   onClick={() => setProfileSub(t.id)}
                   style={{
                     flexShrink: 0, padding: '9px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 800, cursor: 'pointer',
-                    border: profileSub === t.id ? 'none' : '1px solid var(--border)',
-                    backgroundColor: profileSub === t.id ? 'var(--brand)' : 'var(--surface)', color: profileSub === t.id ? '#FFF' : 'var(--text)',
+                    border: profileSub === t.id ? '1px solid var(--brand)' : '1px solid transparent',
+                    backgroundColor: profileSub === t.id ? 'var(--brand)' : 'transparent',
+                    color: profileSub === t.id ? '#FFF' : 'var(--text)',
+                    boxShadow: profileSub === t.id ? '0 4px 12px rgba(232,93,146,0.28)' : 'none',
+                    whiteSpace: 'nowrap',
                   }}
                 >
                   {t.label}
@@ -16822,7 +17018,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     ['SĐT', profEmp.phone_normalized || '—'],
                     ['Email công ty', profEmp.email || '—'],
                     ['Giới tính', profEmp.gender || '—'],
-                    ['Chi nhánh', getDisplayBranch(profEmp.default_branch_id) || profEmp.default_branch_id || '—'],
+                    ['Chi nhánh', getDisplayBranch(profEmp.default_branch_id, profEmp.group) || profEmp.default_branch_id || '—'],
                     ['Nhóm', profEmp.group || '—'],
                     ['Ca cố định', profEmp.default_shift_code || '—'],
                   ].map(([k, v]) => (
