@@ -1066,9 +1066,10 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
   setTimeout(interviewReminderTickSafe, 30_000);
   setInterval(interviewReminderTickSafe, 60_000);
 
-  // TỰ NHẮC ZALO TRƯỚC GIỜ PV 30 PHÚT (mỗi 60s): gửi lại thư mời + link RSVP để
-  // ứng viên xác nhận lần cuối. Chống lặp bằng `interview_reminder_at` (khóa
-  // ngày|giờ của lịch đã nhắc) -> đổi lịch là tự nhắc lại.
+  // TỰ NHẮC ZALO TRONG CỬA SỔ 45 PHÚT TRƯỚC GIỜ PV (mỗi 60s): gửi lại thư mời
+  // kèm link RSVP, TỐI ĐA 3 LẦN cách nhau 15 phút. Ứng viên đã xác nhận/từ chối
+  // -> dừng ngay. Chống lặp bằng bộ đếm + mốc gửi gần nhất theo lịch (được giữ
+  // qua các lượt pull Google Sheets, xem interview-zalo-reminder.service.ts).
   const interviewZaloReminderTickSafe = () => {
     interviewZaloReminderTick(adapter, services.zaloService, {
       buildRsvpUrl: (sid: string) => {

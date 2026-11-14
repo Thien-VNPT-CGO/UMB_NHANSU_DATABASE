@@ -9302,7 +9302,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         const pdVI = /^\d{4}-\d{2}-\d{2}$/.test(pd) ? `${pd.slice(8, 10)}/${pd.slice(5, 7)}/${pd.slice(0, 4)}` : pd;
         return res.send(rsvpPage(
           'Đã ghi nhận đề xuất lịch mới',
-          `Chào <b>${escapeHtml(cand.full_name || 'bạn')}</b>! Bạn đã từ chối lịch cũ và đề xuất lịch mới${pt || pd ? `: <b>${escapeHtml(pt || '?')}</b>${pdVI ? ` ngày <b>${escapeHtml(pdVI)}</b>` : ''}` : ''}.${cand.interview_decline_reason ? `<br/>Lý do bạn gửi: <i>“${escapeHtml(String(cand.interview_decline_reason))}”</i>` : ''}<br/>HR sẽ xem xét đề xuất này và gửi lại thư mời xác nhận qua Zalo. Hệ thống cũng tự nhắc bạn trước giờ hẹn <b>30 phút</b>.`,
+          `Chào <b>${escapeHtml(cand.full_name || 'bạn')}</b>! Bạn đã từ chối lịch cũ và đề xuất lịch mới${pt || pd ? `: <b>${escapeHtml(pt || '?')}</b>${pdVI ? ` ngày <b>${escapeHtml(pdVI)}</b>` : ''}` : ''}.${cand.interview_decline_reason ? `<br/>Lý do bạn gửi: <i>“${escapeHtml(String(cand.interview_decline_reason))}”</i>` : ''}<br/>HR sẽ xem xét đề xuất này và gửi lại thư mời xác nhận qua Zalo. Hệ thống cũng tự nhắc bạn qua Zalo tối đa <b>3 lần</b> trong 45 phút trước giờ hẹn.`,
           null,
           { badge: 'Đã ghi nhận đề xuất', tone: 'pending' }
         ));
