@@ -4,18 +4,28 @@ import { ZaloService, defaultMeetUrl } from './zalo.service.js';
 import { candidateInterviewStartMs } from './interview-slots.service.js';
 
 /**
- * TỰ NHẮC ZALO TRƯỚC GIỜ PHỎNG VẤN 30 PHÚT.
+ * TỰ NHẮC ZALO TRƯỚC GIỜ PHỎNG VẤN — TỐI ĐA 3 LẦN, CÁCH NHAU 15 PHÚT.
  *
- * Vì sao cần: ứng viên đã xác nhận (hoặc vừa được chốt lịch theo đề xuất) nhưng
- * vẫn có thể quên/đổi ý. Trước giờ hẹn 30 phút hệ thống gửi lại thư mời kèm
- * link RSVP để ứng viên xác nhận lại lần cuối — nếu không đến HR bấm "Hủy PV"
- * và ứng viên vào thẳng danh sách đen.
+ * Vì sao cần: ứng viên đã được xếp lịch nhưng vẫn có thể quên/đổi ý. Bắt đầu
+ * từ trước giờ hẹn 45 phút, hệ thống gửi thư nhắc kèm link RSVP; mỗi tin cách
+ * nhau ít nhất 15 phút và chỉ gửi tối đa 3 lần (T-45, T-30, T-15).
  *
- * Chống gửi lặp: `interview_reminder_at` lưu khóa `YYYY-MM-DD|HH:mm` của lịch
- * đã nhắc. Đổi lịch -> khóa đổi -> tự nhắc lại cho lịch mới.
+ * Chống spam:
+ *  - Chỉ nhắc khi ứng viên còn ở trạng thái INVITED_INTERVIEW. Ứng viên đã
+ *    XÁC NHẬN / TỪ CHỐI / xin dời lịch -> dừng ngay, không gửi thêm.
+ *  - `interview_reminder_key` giữ khóa lịch `YYYY-MM-DD|HH:mm`, kèm
+ *    `interview_reminder_count` (số lần đã nhắc) và `interview_reminder_at`
+ *    (mốc gửi gần nhất). Đổi lịch -> khóa đổi -> đếm lại từ đầu.
+ *  - Các trường này phải được giữ qua mỗi lượt pull Google Sheets (xem
+ *    google-sheets-sync.service.ts); nếu mất, tick 60s sẽ gửi lặp vô hạn.
  */
 
-export const ZALO_INTERVIEW_REMIND_MINUTES = 30;
+/** Bắt đầu chuỗi nhắc trước giờ hẹn 45 phút (đủ chỗ cho 3 lần × 15 phút). */
+export const ZALO_INTERVIEW_REMIND_WINDOW_MINUTES = 45;
+/** Khoảng cách tối thiểu giữa 2 lần nhắc. */
+export const ZALO_INTERVIEW_REMIND_INTERVAL_MINUTES = 15;
+/** Số lần nhắc tối đa cho mỗi lịch PV. */
+export const ZALO_INTERVIEW_REMIND_MAX_ATTEMPTS = 3;
 
 /** Khóa chống gửi lặp theo đúng lịch hiện tại. */
 export function reminderKeyOf(date: string, timeSlot: string): string {
@@ -78,15 +88,26 @@ export async function interviewZaloReminderTick(
   for (const c of list) {
     try {
       const st = String(c?.status || '');
-      if (!['INVITED_INTERVIEW', 'CONFIRMED'].includes(st)) continue;
+      // Ứng viên đã xác nhận/từ chối (hoặc xin dời lịch, vắng, blacklist...):
+      // không nhắc nữa. Chỉ nhắc khi vẫn đang chờ phản hồi.
+      if (st !== 'INVITED_INTERVIEW') continue;
       const date = String(c?.interview_date || '').slice(0, 10);
       const timeSlot = String(c?.interview_time_slot || '').slice(0, 5);
       const key = reminderKeyOf(date, timeSlot);
-      if (c?.interview_reminder_at === key) continue; // đã nhắc cho đúng lịch này
+
+      // Đếm số lần đã nhắc cho ĐÚNG lịch này. Đổi lịch (key khác) -> reset.
+      const storedKey = String((c as any)?.interview_reminder_key || '');
+      const sameSchedule = storedKey === key;
+      const sentCount = sameSchedule ? Math.max(0, Number((c as any)?.interview_reminder_count) || 0) : 0;
+      const lastSentMs = sameSchedule ? Date.parse(String((c as any)?.interview_reminder_at || '')) : NaN;
+      if (sentCount >= ZALO_INTERVIEW_REMIND_MAX_ATTEMPTS) continue;
+      if (Number.isFinite(lastSentMs)
+        && nowMs - lastSentMs < ZALO_INTERVIEW_REMIND_INTERVAL_MINUTES * 60_000) continue;
+
       const startMs = candidateInterviewStartMs(c);
       if (startMs === null) continue;
       const diff = startMs - nowMs;
-      if (diff <= 0 || diff > ZALO_INTERVIEW_REMIND_MINUTES * 60_000) continue;
+      if (diff <= 0 || diff > ZALO_INTERVIEW_REMIND_WINDOW_MINUTES * 60_000) continue;
 
       const phone = String(c?.phone_normalized || c?.phone || '').replace(/\D/g, '');
       if (!phone) { out.skipped.push({ submissionId: c.submission_id, reason: 'NO_PHONE' }); continue; }
@@ -111,7 +132,11 @@ export async function interviewZaloReminderTick(
       text.push('📌 Nếu không xác nhận và không đến đúng giờ, HR sẽ hủy lịch và hồ sơ được ghi nhận vi phạm quy chế tuyển dụng.');
 
       await zalo.sendText(found.uid, text.join('\n'));
-      await repo.updateCandidate(String(c.submission_id), { interview_reminder_at: key } as any);
+      await repo.updateCandidate(String(c.submission_id), {
+        interview_reminder_key: key,
+        interview_reminder_count: sentCount + 1,
+        interview_reminder_at: new Date(nowMs).toISOString(),
+      } as any);
       out.sent.push({
         submissionId: String(c.submission_id),
         candidateName: String(c?.full_name || ''),

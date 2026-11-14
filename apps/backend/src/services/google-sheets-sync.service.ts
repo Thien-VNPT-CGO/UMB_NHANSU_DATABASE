@@ -4316,6 +4316,13 @@ export class GoogleSheetsSyncService {
               interview_score: prev.interview_score,
               interview_rubric: prev.interview_rubric || undefined,
               interview_score_detail: prev.interview_score_detail || undefined,
+              // Trạng thái nhắc Zalo (chống spam 3 lần × 15 phút) là trường vận
+              // hành chỉ có trong bộ nhớ/Google Sheets master, form gốc không có.
+              // BẮT BUỘC giữ lại khi pull, nếu không tick 60s sẽ gửi lặp vô hạn.
+              interview_reminder_at: (prev as any).interview_reminder_at || undefined,
+              interview_reminder_count: (prev as any).interview_reminder_count ?? undefined,
+              interview_reminder_key: (prev as any).interview_reminder_key || undefined,
+              interview_mode: (prev as any).interview_mode || undefined,
               zalo_invite_status: zaloSrc.status || prev.zalo_invite_status || undefined,
               zalo_invite_note: zaloSrc.note || prev.zalo_invite_note || undefined,
               zalo_invite_at: getVal(colZaloAt) || prev.zalo_invite_at || undefined,

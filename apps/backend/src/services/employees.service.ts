@@ -1709,8 +1709,11 @@ export class EmployeesService {
       interview_time_slot: checked.value.normalized,
       interviewer_id: interviewerId,
       interview_decline_reason: undefined,
-      // Lịch mới -> xóa mốc nhắc Zalo cũ để hệ thống tự nhắc lại trước giờ 30 phút.
+      // Lịch mới -> reset chuỗi nhắc Zalo (tối đa 3 lần × 15 phút) để nhắc lại
+      // cho đúng lịch mới, kể cả khi trùng lại đúng ngày/giờ cũ.
       interview_reminder_at: undefined,
+      interview_reminder_count: undefined,
+      interview_reminder_key: undefined,
     } as any);
   }
 
@@ -1931,6 +1934,8 @@ export class EmployeesService {
       interviewer_id: undefined,
       interview_decline_reason: clean,
       interview_reminder_at: undefined,
+      interview_reminder_count: undefined,
+      interview_reminder_key: undefined,
     };
     if (wantsProposal) {
       patch.interview_proposed_date = wantedDate;
@@ -1981,6 +1986,8 @@ export class EmployeesService {
       interview_time_slot: time,
       interviewer_id: undefined,
       interview_reminder_at: undefined,
+      interview_reminder_count: undefined,
+      interview_reminder_key: undefined,
       // Đã chốt theo đề xuất -> xóa đề xuất để không hiển thị lại như đang chờ.
       interview_proposed_date: undefined,
       interview_proposed_time_slot: undefined,
@@ -2013,6 +2020,8 @@ export class EmployeesService {
       interview_time_slot: undefined,
       interviewer_id: undefined,
       interview_reminder_at: undefined,
+      interview_reminder_count: undefined,
+      interview_reminder_key: undefined,
       interview_proposed_date: undefined,
       interview_proposed_time_slot: undefined,
       interview_proposed_note: undefined,

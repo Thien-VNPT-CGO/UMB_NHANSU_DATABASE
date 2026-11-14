@@ -6709,7 +6709,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                     const dd = String((c as any).interview_proposed_date || '');
                                     const tt = String((c as any).interview_proposed_time_slot || '');
                                     const ddVI = /^\d{4}-\d{2}-\d{2}$/.test(dd) ? `${dd.slice(8, 10)}/${dd.slice(5, 7)}/${dd.slice(0, 4)}` : dd;
-                                    if (!window.confirm(`Chốt lịch phỏng vấn theo đề xuất của ${c.full_name || sid}?\n\n⏰ ${tt || '?'} ngày ${ddVI || '?'}${(c as any).interview_proposed_note ? `\n💬 Ghi chú: ${String((c as any).interview_proposed_note)}` : ''}\n\nỨng viên sẽ được hệ thống tự nhắc qua Zalo trước giờ hẹn 30 phút.`)) return;
+                                    if (!window.confirm(`Chốt lịch phỏng vấn theo đề xuất của ${c.full_name || sid}?\n\n⏰ ${tt || '?'} ngày ${ddVI || '?'}${(c as any).interview_proposed_note ? `\n💬 Ghi chú: ${String((c as any).interview_proposed_note)}` : ''}\n\nỨng viên sẽ được hệ thống tự nhắc qua Zalo tối đa 3 lần trong 45 phút trước giờ hẹn.`)) return;
                                     const k = `ap-${sid}`;
                                     setCandActionBusyId(k);
                                     try {
