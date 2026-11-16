@@ -68,6 +68,28 @@ export const haversine = (lat1: number, lon1: number, lat2: number, lon2: number
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
+/**
+ * Bấm xác nhận điểm giao: GPS trong cửa hàng / khu phố thường sai số lớn nên
+ * dùng chung quy tắc với backend — bán kính điểm dừng (đã nới theo cấu hình
+ * chi nhánh) cộng dung sai theo sai số thiết bị (tối đa 100m). Chỉ chặn khi
+ * sai số vô lý (>1000m). Nhờ vậy tài xế đứng tại chi nhánh không bị kẹt nút.
+ */
+export const CHECKIN_GPS_TOLERANCE_MAX_M = 100;
+export const CHECKIN_ACCURACY_MAX_M = 1000;
+/** Sai số tốt để hiển thị "GPS tốt" (không dùng để chặn bấm điểm). */
+export const CHECKIN_ACCURACY_GOOD_M = 120;
+
+export const checkinRadius = (stop: any) => Math.max(Number(stop?.geofence_radius_m) || 0, 100);
+
+export const checkinTolerance = (accuracy?: number | null) =>
+  Math.min(Math.max(Number(accuracy) || 0, 0), CHECKIN_GPS_TOLERANCE_MAX_M);
+
+export const checkinAllowedMeters = (stop: any, accuracy?: number | null) =>
+  checkinRadius(stop) + checkinTolerance(accuracy);
+
+export const isCheckinDistanceOk = (stop: any, distance: number | null, accuracy?: number | null) =>
+  distance != null && distance <= checkinAllowedMeters(stop, accuracy);
+
 export const fmtClock = (sec: number) => {
   const s = Math.max(0, Math.floor(sec));
   const h = Math.floor(s / 3600);

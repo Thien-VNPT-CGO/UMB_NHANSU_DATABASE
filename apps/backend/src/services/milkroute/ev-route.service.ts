@@ -1,5 +1,6 @@
 import { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
 import { EVRoute, EVRouteChangeRequest, EVRouteStop, EVShift } from '@ubm/shared';
+import { canonicalBranchId } from '../../utils/geo.js';
 
 /**
  * Từ khoá nhận diện điểm dừng của từng chi nhánh (dữ liệu seed cũ chưa có
@@ -161,21 +162,29 @@ export class EVRouteService {
   /** Tìm chi nhánh ứng với điểm dừng để lấy toạ độ mới nhất. */
   private findBranchForStop(stop: any, branches: any[]): any | null {
     if (!stop || stop.stop_type === 'CHARGING') return null;
-    const bid = String(stop.branch_id || '').trim();
+    // Sheet cũ có thể lưu mã CN1/CN2/CN3/CN4 thay vì CN130/CN261/... →
+    // chuẩn hoá trước khi so khớp để cấu hình chi nhánh luôn được áp dụng.
+    const bid = canonicalBranchId(stop.branch_id);
     if (bid) {
-      const byId = branches.find(b => String(b?.id ?? b?.branch_id) === bid);
+      const byId = branches.find(b => canonicalBranchId(b?.id ?? b?.branch_id) === bid);
       if (byId) return byId;
     }
     const hay = `${normalizeText(stop.name)} | ${normalizeText(stop.address)}`;
     return branches.find((b) => {
-      const id = normalizeText(b?.id ?? b?.branch_id);
-      if (id && hay.includes(id)) return true;
-      const kws = BRANCH_STOP_KEYWORDS[String(b?.id ?? b?.branch_id)] || [];
+      const id = canonicalBranchId(b?.id ?? b?.branch_id);
+      if (id && hay.includes(normalizeText(id))) return true;
+      const kws = BRANCH_STOP_KEYWORDS[id] || [];
       return kws.some((k) => hay.includes(normalizeText(k)));
     }) || null;
   }
 
-  /** Ghi đè toạ độ điểm dừng bằng cấu hình chi nhánh hiện tại (bỏ trạm sạc). */
+  /**
+   * Ghi đè toạ độ + bán kính điểm dừng bằng cấu hình chi nhánh hiện tại
+   * (bỏ trạm sạc). Bán kính lấy theo chi nhánh (mặc định 300m) vì GPS trong
+   * cửa hàng/khu phố thường sai số lớn — trước đây chỉ cho 100m nên tài xế
+   * đứng ngay chi nhánh vẫn bị chặn không bấm xác nhận được.
+   * Chỉ nới rộng, không thu hẹp bán kính Admin đã cấu hình riêng cho điểm dừng.
+   */
   private applyBranchCoords(stops: EVRouteStop[]): EVRouteStop[] {
     const branches: any[] = Array.isArray((this.repo as any).branches) ? (this.repo as any).branches : [];
     if (!branches.length) return stops;
@@ -185,9 +194,16 @@ export class EVRouteService {
       if (!branch) return stop;
       const latitude = Number(branch.latitude);
       const longitude = Number(branch.longitude);
+      const branchRadius = Number(branch.radius_meters);
+      const radius = Number.isFinite(branchRadius) && branchRadius > 0
+        ? Math.max(Number(stop.geofence_radius_m) || 0, branchRadius)
+        : Number(stop.geofence_radius_m) || 0;
+      const sameCoords = Number(stop.latitude) === latitude && Number(stop.longitude) === longitude;
+      const sameRadius = (Number(stop.geofence_radius_m) || 0) === radius;
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return stop;
       if (latitude === 0 && longitude === 0) return stop;
-      return { ...stop, latitude, longitude };
+      if (sameCoords && sameRadius) return stop;
+      return { ...stop, latitude, longitude, geofence_radius_m: radius };
     });
   }
 
@@ -277,11 +293,12 @@ export class EVRouteService {
    */
   private stopBelongsToBranch(stop: EVRouteStop, branchId: string): boolean {
     if (stop.stop_type === 'CHARGING') return false;
-    if (stop.branch_id) return stop.branch_id === branchId;
-    const id = normalizeText(branchId);
+    const target = canonicalBranchId(branchId);
+    if (stop.branch_id) return canonicalBranchId(stop.branch_id) === target;
+    const id = normalizeText(target);
     const haystack = `${normalizeText(stop.name)} | ${normalizeText(stop.address)}`;
     if (id && haystack.includes(id)) return true;
-    const keywords = BRANCH_STOP_KEYWORDS[branchId] || [];
+    const keywords = BRANCH_STOP_KEYWORDS[target] || [];
     return keywords.some((k) => haystack.includes(normalizeText(k)));
   }
 
@@ -294,10 +311,12 @@ export class EVRouteService {
     branch_id?: string;
     latitude?: number | string;
     longitude?: number | string;
+    radius_meters?: number | string;
   }): Promise<number> {
-    const branchId = String(branch?.id ?? branch?.branch_id ?? '').trim();
+    const branchId = canonicalBranchId(String(branch?.id ?? branch?.branch_id ?? '').trim());
     const latitude = Number(branch?.latitude);
     const longitude = Number(branch?.longitude);
+    const branchRadius = Number(branch?.radius_meters);
     if (!branchId) return 0;
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return 0;
     // (0,0) = chi nhánh chưa ghim toạ độ trên bản đồ → giữ nguyên điểm dừng.
@@ -306,11 +325,18 @@ export class EVRouteService {
     let updated = 0;
     for (const stop of this.repo.evRouteStops) {
       if (!this.stopBelongsToBranch(stop, branchId)) continue;
+      // Bán kính check-in = bán kính chi nhánh (Admin cấu hình) nhưng không
+      // thu hẹp bán kính riêng đã đặt cho điểm dừng.
+      const radius = Number.isFinite(branchRadius) && branchRadius > 0
+        ? Math.max(Number(stop.geofence_radius_m) || 0, branchRadius)
+        : Number(stop.geofence_radius_m) || 0;
       const sameCoords = Number(stop.latitude) === latitude && Number(stop.longitude) === longitude;
-      if (sameCoords && stop.branch_id === branchId) continue;
+      const sameRadius = (Number(stop.geofence_radius_m) || 0) === radius;
+      if (sameCoords && sameRadius && stop.branch_id === branchId) continue;
       await this.repo.updateEVRouteStop(stop.stop_id, {
         latitude,
         longitude,
+        geofence_radius_m: radius,
         branch_id: branchId,
       } as Partial<EVRouteStop>);
       updated++;

@@ -7,7 +7,12 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../../services/api';
-import { haversine, type Coords } from './driver-shared';
+import {
+  CHECKIN_ACCURACY_MAX_M,
+  checkinAllowedMeters,
+  haversine,
+  type Coords,
+} from './driver-shared';
 
 const NO_CACHE = { _noCache: true } as any;
 
@@ -238,11 +243,14 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   };
 
   const checkin = async (stop: any) => {
-    const c = needCoords('bấm điểm');
+    // Sai số GPS trong cửa hàng/khu phố thường lớn: chỉ chặn khi GPS hỏng hẳn,
+    // còn lại dùng dung sai như backend để tài xế đứng tại chi nhánh bấm được.
+    const c = needCoords('bấm điểm', CHECKIN_ACCURACY_MAX_M);
     if (!c || !current) return;
     const d = haversine(c.lat, c.lng, Number(stop.latitude), Number(stop.longitude));
-    if (d > Number(stop.geofence_radius_m || 100)) {
-      showToast(`⛔ Bạn đang cách "${stop.name}" ${Math.round(d)}m (cho phép ≤${stop.geofence_radius_m}m).`);
+    const allowed = checkinAllowedMeters(stop, c.accuracy);
+    if (d > allowed) {
+      showToast(`⛔ Bạn đang cách "${stop.name}" ${Math.round(d)}m (cho phép ≤${Math.round(allowed)}m — đã gồm dung sai GPS).`);
       return;
     }
     setBusy(`ci_${stop.stop_id}`);
