@@ -49,6 +49,70 @@ const vehicleDivIcon = (active: boolean) => L.divIcon({
   popupAnchor: [0, -12],
 });
 
+/**
+ * Vệt đường đi realtime trên Live Map.
+ * - Màu cố định theo xe để nhìn nhiều xe không bị lẫn.
+ * - Bỏ đoạn nhiễu < 8m (xe đứng yên mà GPS nhảy) khi tính quãng đường.
+ */
+interface TrailPoint {
+  lat: number;
+  lng: number;
+  at: number;
+}
+
+const TRAIL_COLORS = ['#0EA5E9', '#8B5CF6', '#F59E0B', '#EC4899', '#10B981', '#EF4444', '#14B8A6', '#6366F1'];
+
+const trailColorOf = (vehicleId: string) => {
+  let h = 0;
+  for (let i = 0; i < vehicleId.length; i++) h = (h * 31 + vehicleId.charCodeAt(i)) >>> 0;
+  return TRAIL_COLORS[h % TRAIL_COLORS.length];
+};
+
+const haversineMeters = (a: TrailPoint, b: TrailPoint) => {
+  const R = 6_371_000;
+  const toRad = (v: number) => (v * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+};
+
+const trailDistanceMeters = (points: TrailPoint[]) => {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const d = haversineMeters(points[i - 1], points[i]);
+    // Bỏ nhiễu GPS khi đứng yên, bỏ điểm nhảy vô lý (> 5km/15s).
+    if (d >= 8 && d < 5000) total += d;
+  }
+  return total;
+};
+
+const fmtDistance = (meters: number) => (
+  meters >= 1000 ? `${(meters / 1000).toFixed(2)} km` : `${Math.round(meters)} m`
+);
+
+const trailKeyOf = (lat: number, lng: number, at: number) => `${at}|${lat.toFixed(5)}|${lng.toFixed(5)}`;
+
+/** Gộp điểm GPS mới vào vệt cũ: khử trùng theo thời gian + toạ độ, sắp tăng dần. */
+const mergeTrail = (oldPoints: TrailPoint[] | undefined, rows: any[]): TrailPoint[] => {
+  const map = new Map<string, TrailPoint>();
+  for (const p of oldPoints || []) map.set(trailKeyOf(p.lat, p.lng, p.at), p);
+  for (const r of rows) {
+    const lat = Number(r?.latitude);
+    const lng = Number(r?.longitude);
+    let at = Date.parse(String(r?.recorded_at || r?.recordedAt || ''));
+    if (!Number.isFinite(at)) at = Date.now();
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    if (lat === 0 && lng === 0) continue;
+    const acc = Number(r?.accuracy_m ?? r?.accuracy);
+    if (Number.isFinite(acc) && acc > 300) continue;
+    map.set(trailKeyOf(lat, lng, at), { lat, lng, at });
+  }
+  const arr = Array.from(map.values()).sort((a, b) => a.at - b.at);
+  // Giữ vệt dài nhất ~5000 điểm (≈20 giờ GPS 15 giây) để không phình bộ nhớ.
+  return arr.length > 5000 ? arr.slice(-5000) : arr;
+};
+
 export interface MilkRouteAdminProps {
   currentUser: any;
   allEmployees?: any[];
@@ -221,8 +285,14 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
   const markersRef = useRef<Record<string, any>>({});
   const routeLayerRef = useRef<any>(null);
   const branchLayerRef = useRef<any>(null);
+  const trailLayerRef = useRef<any>(null);
   const branchesSigRef = useRef('');
   const fittedRef = useRef(false);
+  /** Ca đã nạp đủ lịch sử GPS (các vòng sau chỉ nạp 300 điểm mới nhất). */
+  const trailLoadedRef = useRef<Set<string>>(new Set());
+  /** Vệt đường đi theo CA: shiftId -> danh sách điểm GPS đã đi qua. */
+  const [trails, setTrails] = useState<Record<string, TrailPoint[]>>({});
+  const [showTrail, setShowTrail] = useState(true);
 
   const loadLive = useCallback(async () => {
     try {
@@ -305,6 +375,8 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
     mapRef.current = map;
     branchLayerRef.current = L.layerGroup().addTo(map);
     routeLayerRef.current = L.layerGroup().addTo(map);
+    // Vệt đường đi nằm trên tuyến kế hoạch, dưới marker xe.
+    trailLayerRef.current = L.layerGroup().addTo(map);
     // Chống "map co0" khi vừa mount (layout chưa chốt).
     const t = setTimeout(() => map.invalidateSize(), 250);
     return () => {
@@ -314,6 +386,7 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
       markersRef.current = {};
       routeLayerRef.current = null;
       branchLayerRef.current = null;
+      trailLayerRef.current = null;
       fittedRef.current = false;
     };
   }, []);
@@ -413,6 +486,110 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
     }
   }, [resolvedStops]);
 
+  // -------------------- Vệt đường đi realtime --------------------
+  // Ca đang chạy (kể cả đang sạc / về xưởng / tạm dừng) — mỗi ca có lịch sử GPS
+  // riêng để vẽ lại đúng quãng đường xe đã đi.
+  const activeShiftPairs = useMemo(() => {
+    const ACTIVE = ['IN_PROGRESS', 'CHARGING', 'RETURNING', 'PAUSED'];
+    const map = new Map<string, string>();
+    liveShifts.forEach((s: any) => {
+      if (s?.shiftId && ACTIVE.includes(String(s.status || ''))) {
+        map.set(String(s.shiftId), String(s.vehicleId || ''));
+      }
+    });
+    vehicles.forEach((v: any) => {
+      if (v?.shiftId && ACTIVE.includes(String(v.shiftStatus || ''))) {
+        map.set(String(v.shiftId), String(v.vehicleId || ''));
+      }
+    });
+    return Array.from(map.entries())
+      .filter(([shiftId, vehicleId]) => shiftId && vehicleId) as Array<[string, string]>;
+  }, [liveShifts, vehicles]);
+
+  /** shiftId -> vehicleId để tô màu vệt đường đúng xe. */
+  const vehicleOfShift = useMemo(() => {
+    const m: Record<string, string> = {};
+    activeShiftPairs.forEach(([shiftId, vehicleId]) => { m[shiftId] = vehicleId; });
+    return m;
+  }, [activeShiftPairs]);
+
+  /** Nạp lịch sử GPS của ca đang chạy; lần đầu 2000 điểm, sau đó 300 điểm mới. */
+  const syncTrails = useCallback(async (pairs: Array<[string, string]>) => {
+    for (const [shiftId] of pairs) {
+      const first = !trailLoadedRef.current.has(shiftId);
+      try {
+        const rows: any = await apiRequest(
+          `/ev/admin/live/shifts/${encodeURIComponent(shiftId)}/gps?limit=${first ? 2000 : 300}`,
+        );
+        if (!Array.isArray(rows)) continue;
+        trailLoadedRef.current.add(shiftId);
+        setTrails(prev => ({ ...prev, [shiftId]: mergeTrail(prev[shiftId], rows) }));
+      } catch { /* vòng sau thử lại */ }
+    }
+  }, []);
+
+  const activeShiftKey = activeShiftPairs.map(([s, v]) => `${s}:${v}`).join('|');
+  useEffect(() => {
+    if (!activeShiftPairs.length) return;
+    void syncTrails(activeShiftPairs);
+    const t = setInterval(() => void syncTrails(activeShiftPairs), 30000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeShiftKey, syncTrails]);
+
+  // Điểm GPS realtime do App.tsx chuyển tiếp từ socket (phòng admin:live).
+  useEffect(() => {
+    const onGpsUpdate = (event: Event) => {
+      const detail: any = (event as CustomEvent).detail;
+      const d = detail?.data || detail || {};
+      const shiftId = String(detail?.shiftId || '');
+      const lat = Number(d.latitude);
+      const lng = Number(d.longitude);
+      // Chỉ vẽ điểm thuộc ca (GPS chia sẻ trước khi vào ca không có lịch sử).
+      if (!shiftId || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      setTrails(prev => ({
+        ...prev,
+        [shiftId]: mergeTrail(prev[shiftId], [{
+          latitude: lat,
+          longitude: lng,
+          recorded_at: d.recordedAt || new Date().toISOString(),
+          accuracy_m: d.accuracy,
+        }]),
+      }));
+    };
+    window.addEventListener('ubm:ev-gps-update', onGpsUpdate as any);
+    return () => window.removeEventListener('ubm:ev-gps-update', onGpsUpdate as any);
+  }, []);
+
+  // Vẽ vệt đường đi (màu theo xe, xe đang chọn đậm hơn).
+  useEffect(() => {
+    const layer = trailLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (!showTrail) return;
+    Object.entries(trails).forEach(([shiftId, pts]) => {
+      if (!pts || pts.length < 2) return;
+      const vehicleId = vehicleOfShift[shiftId] || shiftId;
+      const color = trailColorOf(vehicleId);
+      const latlngs = pts.map(p => [p.lat, p.lng] as [number, number]);
+      const selected = String(vehicleId) === String(selectedId);
+      L.polyline(latlngs, { color, weight: selected ? 9 : 7, opacity: 0.15, lineJoin: 'round' }).addTo(layer);
+      L.polyline(latlngs, { color, weight: selected ? 5 : 3.5, opacity: selected ? 0.95 : 0.7, lineJoin: 'round' }).addTo(layer);
+      L.circleMarker(latlngs[0], { radius: 5, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 })
+        .bindTooltip('Điểm bắt đầu ghi GPS', { direction: 'top', offset: [0, -6] })
+        .addTo(layer);
+    });
+  }, [trails, showTrail, selectedId, vehicleOfShift]);
+
+  /** Tổng quãng đường đã đi theo từng ca (tính từ vệt GPS). */
+  const trailStats = useMemo(() => {
+    const out: Record<string, { meters: number; points: number }> = {};
+    Object.entries(trails).forEach(([shiftId, pts]) => {
+      out[shiftId] = { meters: trailDistanceMeters(pts), points: pts.length };
+    });
+    return out;
+  }, [trails]);
+
   // Đánh dấu xe realtime.
   useEffect(() => {
     const map = mapRef.current;
@@ -447,6 +624,7 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
           ${active ? '🟢 Đang chạy ca' : '🔵 Online • chưa vào ca'}<br/>
           🚀 Tốc độ: ${Math.round(Number(v.speed) || 0)} km/h<br/>
           🔋 Pin: ${Math.round(Number(v.battery) || 0)}%<br/>
+          🛣️ Đã đi: ${fmtDistance(Number(trailStats[String(v.shiftId)]?.meters) || 0)}<br/>
           📍 GPS: ${agoLabel(v.lastUpdate)}<br/>
           ${live ? `➡️ Điểm tiếp: ${live.nextStopName || '—'} (SLA còn ${fmtCountdown(Number(live.slaRemainingSeconds) || 0)})` : ''}
         </div>`);
@@ -466,7 +644,7 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
         map.fitBounds(L.latLngBounds(pts as any), { padding: [50, 50] });
       }
     }
-  }, [vehicles, liveShifts]);
+  }, [vehicles, liveShifts, trailStats]);
 
   // Poll 10s + giây chạy cho nhãn "x giây trước".
   useEffect(() => {
@@ -503,8 +681,16 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
           style={{ width: '100%', height: '480px', borderRadius: '8px', overflow: 'hidden', background: '#E2E8F0' }}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 4px 2px', fontSize: '11.5px', color: MUTED, fontWeight: 600, flexWrap: 'wrap' }}>
-          <span>🟢 xe đang chạy ca • 🔵 xe online (chưa vào ca) • 🏢 chi nhánh • ⭕ geofence điểm giao</span>
-          <button className="btn-secondary" style={{ marginLeft: 'auto', padding: '5px 11px', fontSize: '11.5px', fontWeight: 700 }} onClick={() => void loadLive()}>
+          <span>🟢 xe đang chạy ca • 🔵 xe online (chưa vào ca) • 🛣️ đường xe đã đi • 🏢 chi nhánh • ⭕ geofence điểm giao</span>
+          <button
+            className="btn-secondary"
+            style={{ marginLeft: 'auto', padding: '5px 11px', fontSize: '11.5px', fontWeight: 700 }}
+            onClick={() => setShowTrail(v => !v)}
+            title="Bật/tắt vệt đường đi realtime trên bản đồ"
+          >
+            <RouteIcon size={13} /> {showTrail ? 'Ẩn đường đi' : 'Hiện đường đi'}
+          </button>
+          <button className="btn-secondary" style={{ padding: '5px 11px', fontSize: '11.5px', fontWeight: 700 }} onClick={() => void loadLive()}>
             <RefreshCw size={13} /> Làm mới
           </button>
         </div>
@@ -565,6 +751,7 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
               <div style={{ display: 'flex', gap: '12px', marginTop: '6px', fontSize: '11.5px', color: MUTED, fontWeight: 700, flexWrap: 'wrap' }}>
                 <span>🚀 {Math.round(Number(v.speed) || 0)} km/h</span>
                 <span>🔋 {Math.round(Number(v.battery) || 0)}%</span>
+                <span>🛣️ {fmtDistance(Number(trailStats[String(v.shiftId)]?.meters) || 0)}</span>
                 <span>📍 {agoLabel(v.lastUpdate)}</span>
               </div>
               {live && (

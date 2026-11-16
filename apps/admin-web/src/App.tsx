@@ -1755,6 +1755,14 @@ export function App() {
         }
       });
 
+      // Vị trí GPS realtime của xe (server gửi cho phòng admin:live) -> chuyển
+      // thành CustomEvent để Live Map vẽ vệt đường đi ngay, không cần socket riêng.
+      socket.on('ev:live:gps:update', (payload: any) => {
+        try {
+          window.dispatchEvent(new CustomEvent('ubm:ev-gps-update', { detail: payload }));
+        } catch { /* non-fatal */ }
+      });
+
       // Bị khóa tài khoản -> văng ra màn đăng nhập ngay lập tức.
       socket.on('admin:forceLogout', (payload: any) => {
         if (!payload?.adminId || payload.adminId === currentUser.id) {
