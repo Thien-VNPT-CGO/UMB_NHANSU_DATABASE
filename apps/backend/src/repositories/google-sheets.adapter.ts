@@ -72,6 +72,8 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       'employees',
       'evVehicles', 'evRoutes', 'evRouteStops', 'evShifts', 'evShiftCheckins',
       'evChargingTickets', 'evGpsPoints', 'evDriverPayroll', 'evRouteChangeRequests',
+      // Cờ cấu hình đọc trực tiếp trong service (VD: chế độ Test vận chuyển).
+      'systemSettings',
     ];
     for (const key of arrayKeys) {
       Object.defineProperty(this, key, {
