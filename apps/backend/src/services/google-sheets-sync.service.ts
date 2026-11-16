@@ -732,6 +732,8 @@ export class GoogleSheetsSyncService {
   private driveOAuthDead = false;
   /** Mốc phát hiện OAuth chết — sau 30 phút thử lại (token có thể được cấp lại). */
   private driveOAuthDeadAt = 0;
+  /** Cache CSV của tab quá lớn (key: spreadsheetId|tab) — dùng lại cho lượt backup kế tiếp. */
+  private backupCsvTabCache = new Map<string, { at: number; csv: Buffer }>();
   private isConfigured = false;
   private authError: string | null = null;
   private lastPulledAt: number = 0;
@@ -2052,6 +2054,10 @@ export class GoogleSheetsSyncService {
       // Drive API hỏng (token OAuth bị thu hồi / SA không có quota My Drive)
       // thì đẩy ZIP qua webhook Apps Script — không cần token nào cả.
       if (!uploadedId) {
+        console.log(
+          `[BackupSheets] ${zipName}: Drive API không upload được`
+          + ` (${String(uploadError?.message || 'chưa thử')}) → webhook Apps Script, ZIP ${(zipBuf.length / 1024 / 1024).toFixed(2)} MB`,
+        );
         const webhook = await uploadBufferViaDriveWebhook({
           folderId: rootId,
           segments: opts.segments || [],
@@ -2136,6 +2142,10 @@ export class GoogleSheetsSyncService {
    * Dự phòng cho bảng quá lớn (Drive API trả 403 "This file is too large to be
    * exported"): đọc từng tab bằng Sheets API rồi đóng gói CSV (UTF-8 BOM để
    * Excel mở đúng tiếng Việt).
+   *
+   * Cache 30 phút theo (spreadsheetId, tab): lượt backup NGÀY và TUẦN chạy liền
+   * nhau dùng chung 1 lần đọc — hạn mức đọc Sheets của Google chỉ 60 lượt/phút
+   * nên đọc lại 2 bảng log lớn mỗi lượt sẽ đụng trần ngay.
    */
   private async exportSpreadsheetTabsCsvFallback(
     src: { title: string; spreadsheetId: string },
@@ -2146,17 +2156,34 @@ export class GoogleSheetsSyncService {
     const list = (tabs.length ? tabs : [src.title]).filter(Boolean);
     const out: ZipEntry[] = [];
     for (const tab of list) {
-      const rows = await this.readTabRowsForBackup(src.spreadsheetId, tab);
-      if (rows.length === 0) continue;
-      const csv = rows.map(row => csvRowOf(row)).join('\r\n');
+      const cacheKey = `${src.spreadsheetId}|${tab}`;
+      const cached = this.backupCsvTabCache.get(cacheKey);
+      let csvBuf: Buffer | null = null;
+      if (cached && Date.now() - cached.at < 30 * 60_000) {
+        csvBuf = cached.csv;
+      } else {
+        const rows = await this.readTabRowsForBackup(src.spreadsheetId, tab);
+        if (rows.length === 0) continue;
+        const csv = rows.map(row => csvRowOf(row)).join('\r\n');
+        csvBuf = Buffer.from('\uFEFF' + csv, 'utf8');
+        this.backupCsvTabCache.set(cacheKey, { at: Date.now(), csv: csvBuf });
+      }
       const safeTab = String(tab).replace(/[\\/:*?"<>|]/g, '-').trim() || 'Sheet1';
       out.push({
         name: `${src.title}_${periodKey}__${safeTab}.csv`,
-        data: Buffer.from('\uFEFF' + csv, 'utf8'),
+        data: csvBuf,
+        compress: true,
       });
     }
     if (out.length === 0) throw new Error('CSV_FALLBACK_EMPTY');
     return out;
+  }
+
+  /** Lỗi do chạm hạn mức đọc Sheets (429 / "Quota exceeded"). */
+  private isSheetsQuotaError(err: any): boolean {
+    const status = Number(err?.code ?? err?.response?.status ?? err?.response?.data?.error?.code);
+    const msg = String(err?.response?.data?.error?.message || err?.message || '');
+    return status === 429 || /quota exceeded|rate limit/i.test(msg);
   }
 
   /** Đọc toàn bộ 1 tab theo lô 20k dòng (bảng log có thể >50k dòng). */
@@ -2165,8 +2192,28 @@ export class GoogleSheetsSyncService {
     const chunk = 20_000;
     let columnCount = 30;
     let rowCount = 0;
+
+    /** Gọi API có giãn cách + chờ khi chạm hạn mức đọc (60 lượt/phút/user). */
+    const guarded = async (label: string, fn: () => Promise<any>, ms: number) => {
+      let lastErr: any = null;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          return await this.sheetsCall(label, fn, ms);
+        } catch (err: any) {
+          lastErr = err;
+          if (!this.isSheetsQuotaError(err) || attempt === 3) break;
+          const wait = 20_000 * (attempt + 1);
+          console.warn(
+            `[BackupSheets] ${tab}: chạm hạn mức đọc Sheets — chờ ${Math.round(wait / 1000)}s rồi đọc lại`,
+          );
+          await new Promise(resolve => setTimeout(resolve, wait));
+        }
+      }
+      throw lastErr;
+    };
+
     try {
-      const meta: any = await this.sheetsCall(`backup.meta.${tab}`, () =>
+      const meta: any = await guarded(`backup.meta.${tab}`, () =>
         this.sheetsClient!.spreadsheets.get({
           spreadsheetId,
           fields: 'sheets.properties(title,gridProperties(rowCount,columnCount))',
@@ -2186,7 +2233,8 @@ export class GoogleSheetsSyncService {
     while (start <= hardLimit) {
       const end = Math.min(start + chunk - 1, hardLimit);
       const range = `'${quotedTab}'!A${start}:${lastCol}${end}`;
-      const res: any = await this.sheetsCall(`backup.csv.${tab}.${start}`, () =>
+      if (start > 1) await new Promise(resolve => setTimeout(resolve, 1_200));
+      const res: any = await guarded(`backup.csv.${tab}.${start}`, () =>
         this.sheetsClient!.spreadsheets.values.get({
           spreadsheetId,
           range,
