@@ -929,6 +929,13 @@ export class GoogleSheetsSyncService {
    */
   private initFailedAt = 0;
   private static readonly INIT_FAIL_BACKOFF_MS = 120_000;
+  /**
+   * TTL cache kết quả khởi tạo cấu trúc. Header gần như không bao giờ đổi, mà
+   * mỗi lượt kiểm tra tốn ~1 request metadata/file (≈25 request ≈ 40% hạn mức
+   * 60 đọc/phút). Lượt SẠCH (không file nào lỗi) giữ cache 6 giờ; lượt có lỗi
+   * chỉ 10 phút để còn tự sửa tab thiếu.
+   */
+  private initOkTtlMs = 600_000;
 
   /** Minimum interval between write requests to stay under 60 writes/minute quota. */
   private static readonly WRITE_RATE_LIMIT_MS = 1100;
@@ -2016,7 +2023,7 @@ export class GoogleSheetsSyncService {
     }
 
     // Cache 10 phút: header hầu như không đổi, khỏi tốn ~N API call mỗi lần full-sync.
-    if (this.lastInitResult && Date.now() - this.initOkAt < 600000) {
+    if (this.lastInitResult && Date.now() - this.initOkAt < this.initOkTtlMs) {
       return { ...this.lastInitResult, createdSheets: [...this.lastInitResult.createdSheets], existingSheets: [...this.lastInitResult.existingSheets] };
     }
     // Vừa thất bại toàn bộ (thường vì quota đọc) -> nghỉ ngắn, tránh bắn tiếp
@@ -2167,6 +2174,8 @@ export class GoogleSheetsSyncService {
       const message = `Đã khởi tạo thành công cấu trúc ${SHEETS_DEFINITIONS.length} sheet tabs trên ${groups.size} file Google Sheets riêng!`
         + (failures.length ? ` (lỗi ${failures.length} file: ${failures.join('; ')})` : '');
       this.initOkAt = Date.now();
+      // Chạy sạch (không file nào lỗi) -> giữ cache lâu, đỡ đốt quota đọc.
+      this.initOkTtlMs = failures.length ? 600_000 : 6 * 60 * 60_000;
       this.lastInitResult = {
         success: true,
         createdSheets,
@@ -5013,6 +5022,7 @@ export class GoogleSheetsSyncService {
     this.initOkAt = 0;
     this.lastInitResult = null;
     this.initFailedAt = 0;
+    this.initOkTtlMs = 600_000;
   }
 
   /**
