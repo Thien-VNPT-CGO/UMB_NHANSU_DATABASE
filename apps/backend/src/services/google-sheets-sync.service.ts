@@ -40,7 +40,7 @@ import { uniformCell, parseUniform } from '../utils/uniform.js';
 import { blacklistCell, parseBlacklist } from '../utils/blacklist.js';
 import { readAttendancePhotoDisk } from './photo-disk.store.js';
 import { createDriveOAuthClient, describeDriveAuth, describeGoogleApiError, type GoogleDriveAuthMode } from './google-drive-auth.js';
-import { uploadBufferViaDriveWebhook, downloadBufferViaDriveWebhook } from './drive-upload-webhook.js';
+import { uploadBufferViaDriveWebhook, downloadBufferViaDriveWebhook, getDriveUploadWebhookUrl } from './drive-upload-webhook.js';
 import {
   DRIVE_EMPLOYEE_PROFILES_FOLDER_NAME,
   DRIVE_SUBFOLDERS,
@@ -66,6 +66,29 @@ function adjSafeSeg(value: unknown, fallback = 'KHONG_XAC_DINH'): string {
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
+}
+
+/** 1 → A, 26 → Z, 27 → AA (tối đa 702 = ZZ, đủ cho mọi bảng nghiệp vụ). */
+function columnLetterOf(index: number): string {
+  const n = Math.max(1, Math.floor(index));
+  let rest = n;
+  let out = '';
+  while (rest > 0) {
+    const rem = (rest - 1) % 26;
+    out = String.fromCharCode(65 + rem) + out;
+    rest = Math.floor((rest - 1) / 26);
+  }
+  return out || 'A';
+}
+
+/** 1 dòng → 1 dòng CSV (escape theo RFC 4180). */
+function csvRowOf(cells: any[]): string {
+  return (cells || [])
+    .map(cell => {
+      const s = cell === null || cell === undefined ? '' : String(cell);
+      return /["\r\n,;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    })
+    .join(',');
 }
 
 /**
@@ -699,6 +722,16 @@ export class GoogleSheetsSyncService {
   private driveFolderId: string;
   private driveAuthMode: GoogleDriveAuthMode = 'none';
   private driveAuthAccount = '';
+  /** Drive client dựng bằng Service Account — đường dự phòng khi OAuth hỏng. */
+  private saDriveClient: any = null;
+  private saDriveClientTried = false;
+  /**
+   * OAuth đã bị Google thu hồi (invalid_client). Khi đã biết chết thì bỏ qua
+   * hẳn driveClient để khỏi lặp 401 cho từng bảng/thao tác trong lượt backup.
+   */
+  private driveOAuthDead = false;
+  /** Mốc phát hiện OAuth chết — sau 30 phút thử lại (token có thể được cấp lại). */
+  private driveOAuthDeadAt = 0;
   private isConfigured = false;
   private authError: string | null = null;
   private lastPulledAt: number = 0;
@@ -1696,7 +1729,7 @@ export class GoogleSheetsSyncService {
     return {
       ok: true,
       name: res.name,
-      fileId: res.fileId,
+      fileId: res.fileId || '',
       createdTime: new Date().toISOString(),
       deletedOld: res.deletedOld ?? 0,
     };
@@ -1835,11 +1868,11 @@ export class GoogleSheetsSyncService {
     keep?: number;
   }): Promise<{
     ok: boolean;
-    folderId?: string;
-    folderUrl?: string;
+    folderId?: string | null;
+    folderUrl?: string | null;
     name?: string;
-    fileId?: string;
-    url?: string;
+    fileId?: string | null;
+    url?: string | null;
     total?: number;
     exported?: number;
     existing?: boolean;
@@ -1860,13 +1893,31 @@ export class GoogleSheetsSyncService {
     if (sources.length === 0) return { ok: false, reason: 'BACKUP_NO_SOURCES' };
 
     try {
-      const folderId = await this.ensureDriveFolderPath(opts.segments || [], rootId);
-      if (!folderId) return { ok: false, reason: 'BACKUP_FOLDER_UNAVAILABLE' };
-      const folderUrl = `https://drive.google.com/drive/folders/${folderId}`;
+      // Token OAuth có thể đã được cấp lại (vd. đổi client secret) → thử lại
+      // sau 30 phút thay vì bỏ OAuth vĩnh viễn tới lần restart.
+      if (this.driveOAuthDead && Date.now() - this.driveOAuthDeadAt > 30 * 60_000) {
+        this.driveOAuthDead = false;
+      }
+      // Folder kỳ: ưu tiên Drive API (OAuth). Nếu OAuth hỏng (token bị thu hồi)
+      // vẫn chạy tiếp được bằng webhook Apps Script (chạy dưới quyền chủ thư
+      // mục) — webhook tự tạo cây thư mục con theo `segments`.
+      const folderId = this.driveOAuthDead
+        ? ''
+        : await this.ensureDriveFolderPath(opts.segments || [], rootId).catch(() => '');
+      const webhookFallback = !folderId && !!getDriveUploadWebhookUrl();
+      if (!folderId && !webhookFallback) return { ok: false, reason: 'BACKUP_FOLDER_UNAVAILABLE' };
+      if (!folderId) {
+        console.warn(
+          '[BackupSheets] Không tạo được folder kỳ bằng Drive API — dùng webhook Apps Script'
+          + ` (${(opts.segments || []).join('/') || periodKey})`,
+        );
+      }
+      const folderUrl = folderId ? `https://drive.google.com/drive/folders/${folderId}` : null;
       const zipName = `UMB_NHANSU_${periodKey}.zip`;
 
       // Kỳ đã có ZIP → dùng lại (idempotent, không upload trùng).
       try {
+        if (!folderId) throw new Error('NO_FOLDER_ID');
         const dup: any = await this.driveClient.files.list({
           q: `name = '${zipName.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`,
           fields: 'files(id,name,webViewLink,size)',
@@ -1898,17 +1949,54 @@ export class GoogleSheetsSyncService {
       const entries: ZipEntry[] = [];
       const errors: Array<{ title: string; error: string }> = [];
 
+      /**
+       * Export XLSX bằng Drive API. Thử OAuth trước (tài khoản sở hữu Drive),
+       * rồi tới Service Account — SA export được cùng bộ file và không phụ
+       * thuộc refresh token nên backup vẫn chạy khi OAuth hết hiệu lực.
+       */
+      const saClient = await this.getServiceAccountDriveClient();
+      const exportClients: any[] = [];
+      if (!this.driveOAuthDead && this.driveClient) exportClients.push(this.driveClient);
+      if (saClient) exportClients.push(saClient);
+
       for (const src of sources) {
-        try {
-          const resp: any = await this.driveClient.files.export(
-            { fileId: src.spreadsheetId, mimeType: XLSX_MIME },
-            { responseType: 'arraybuffer' } as any,
-          );
-          const buf = Buffer.isBuffer(resp?.data) ? resp.data : Buffer.from(resp?.data || []);
-          if (buf.length === 0) throw new Error('EXPORT_EMPTY');
+        let buf: Buffer | null = null;
+        let lastErr: any = null;
+        for (const client of exportClients.filter(Boolean)) {
+          try {
+            const resp: any = await client.files.export(
+              { fileId: src.spreadsheetId, mimeType: XLSX_MIME },
+              { responseType: 'arraybuffer' } as any,
+            );
+            const got = Buffer.isBuffer(resp?.data) ? resp.data : Buffer.from(resp?.data || []);
+            if (got.length === 0) throw new Error('EXPORT_EMPTY');
+            buf = got;
+            break;
+          } catch (err: any) {
+            lastErr = err;
+            if (this.isDriveOAuthInvalidError(err)) this.driveOAuthDead = true;
+          }
+        }
+        if (buf) {
           entries.push({ name: `${src.title}_${periodKey}.xlsx`, data: buf });
-        } catch (err: any) {
-          errors.push({ title: src.title, error: String(err?.message || err) });
+          continue;
+        }
+
+        // Drive API từ chối export (vd. 403 "This file is too large to be
+        // exported" với bảng log khổng lồ) → đọc từng tab qua Sheets API và
+        // đóng gói CSV. Dữ liệu vẫn đủ để khôi phục, ZIP không bị thiếu bảng.
+        try {
+          const csvEntries = await this.exportSpreadsheetTabsCsvFallback(src, periodKey);
+          entries.push(...csvEntries);
+          console.warn(
+            `[BackupSheets] ${src.title}: Drive export lỗi (${String(lastErr?.message || lastErr).slice(0, 80)})`
+            + ` → đã export ${csvEntries.length} tab sang CSV`,
+          );
+        } catch (csvErr: any) {
+          errors.push({
+            title: src.title,
+            error: `${String(lastErr?.message || lastErr)} | CSV: ${String(csvErr?.message || csvErr)}`,
+          });
         }
       }
 
@@ -1934,21 +2022,55 @@ export class GoogleSheetsSyncService {
       }
 
       const zipBuf = buildZipStore(entries);
-      const uploaded: any = await this.driveClient.files.create({
-        requestBody: {
-          name: zipName,
-          parents: [folderId],
+      let uploadedId = '';
+      let uploadedLink = '';
+      let uploadError: any = null;
+
+      if (folderId && this.driveClient && !this.driveOAuthDead) {
+        try {
+          const uploaded: any = await this.driveClient.files.create({
+            requestBody: {
+              name: zipName,
+              parents: [folderId],
+              mimeType: 'application/zip',
+            },
+            media: {
+              mimeType: 'application/zip',
+              body: Readable.from(zipBuf),
+            },
+            fields: 'id,name,webViewLink,size',
+            supportsAllDrives: true,
+          } as any);
+          uploadedId = String(uploaded?.data?.id || '');
+          uploadedLink = String(uploaded?.data?.webViewLink || '');
+          if (!uploadedId) uploadError = new Error('DRIVE_UPLOAD_RETURNED_NO_ID');
+        } catch (err: any) {
+          uploadError = err;
+        }
+      }
+
+      // Drive API hỏng (token OAuth bị thu hồi / SA không có quota My Drive)
+      // thì đẩy ZIP qua webhook Apps Script — không cần token nào cả.
+      if (!uploadedId) {
+        const webhook = await uploadBufferViaDriveWebhook({
+          folderId: rootId,
+          segments: opts.segments || [],
+          fileName: zipName,
           mimeType: 'application/zip',
-        },
-        media: {
-          mimeType: 'application/zip',
-          body: Readable.from(zipBuf),
-        },
-        fields: 'id,name,webViewLink,size',
-        supportsAllDrives: true,
-      } as any);
-      const fileId = String(uploaded?.data?.id || '');
-      if (!fileId) throw new Error('DRIVE_UPLOAD_RETURNED_NO_ID');
+          buffer: zipBuf,
+        });
+        if (webhook?.fileId) {
+          uploadedId = webhook.fileId;
+          uploadedLink = webhook.webViewLink || '';
+          console.log(`[BackupSheets] ${zipName}: upload qua webhook Apps Script OK`);
+        }
+      }
+
+      if (!uploadedId) {
+        throw new Error(
+          `DRIVE_UPLOAD_FAILED: ${String(uploadError?.message || uploadError || 'webhook không khả dụng')}`,
+        );
+      }
 
       console.log(
         `[BackupSheets] Đã tạo ${zipName}: ${entries.length} bảng,`
@@ -1957,11 +2079,11 @@ export class GoogleSheetsSyncService {
 
       return {
         ok: true,
-        folderId,
+        folderId: folderId || null,
         folderUrl,
         name: zipName,
-        fileId,
-        url: uploaded?.data?.webViewLink || folderUrl,
+        fileId: uploadedId,
+        url: uploadedLink || folderUrl,
         total: sources.length,
         exported: entries.length,
         existing: false,
@@ -1973,6 +2095,111 @@ export class GoogleSheetsSyncService {
       console.warn(`[BackupSheets] Lỗi tạo ZIP backup (${periodKey}):`, err?.message || err);
       return { ok: false, reason: 'DRIVE_ERROR', error: String(err?.message || err) };
     }
+  }
+
+  /**
+   * Drive client dựng bằng Service Account (nếu có). Dùng làm đường dự phòng
+   * khi OAuth mất hiệu lực: SA export được đúng bộ 25 file nhưng không ghi
+   * được vào My Drive (0 quota) — phần upload sẽ đi qua webhook.
+   */
+  private async getServiceAccountDriveClient(): Promise<any | null> {
+    if (this.saDriveClientTried) return this.saDriveClient;
+    this.saDriveClientTried = true;
+    if (!this.authClient) return null;
+    try {
+      this.saDriveClient = google.drive({ version: 'v3', auth: this.authClient });
+    } catch (err: any) {
+      console.warn('[BackupSheets] Không tạo được Drive client bằng Service Account:', err?.message || err);
+      this.saDriveClient = null;
+    }
+    return this.saDriveClient;
+  }
+
+  /** Lỗi "OAuth client secret/token bị Google từ chối" — không phải lỗi dữ liệu. */
+  private isDriveOAuthInvalidError(err: any): boolean {
+    const status = Number(err?.response?.status ?? err?.code);
+    const msg = String(
+      err?.response?.data?.error_description
+      || err?.response?.data?.error?.message
+      || err?.message
+      || '',
+    );
+    const invalid = status === 401 || /invalid_client/i.test(msg);
+    if (invalid && !this.driveOAuthDead) {
+      this.driveOAuthDead = true;
+      this.driveOAuthDeadAt = Date.now();
+    }
+    return invalid;
+  }
+
+  /**
+   * Dự phòng cho bảng quá lớn (Drive API trả 403 "This file is too large to be
+   * exported"): đọc từng tab bằng Sheets API rồi đóng gói CSV (UTF-8 BOM để
+   * Excel mở đúng tiếng Việt).
+   */
+  private async exportSpreadsheetTabsCsvFallback(
+    src: { title: string; spreadsheetId: string },
+    periodKey: string,
+  ): Promise<ZipEntry[]> {
+    if (!this.sheetsClient) throw new Error('SHEETS_NOT_CONFIGURED');
+    const tabs = await this.listSpreadsheetTabs(src.spreadsheetId).catch(() => [] as string[]);
+    const list = (tabs.length ? tabs : [src.title]).filter(Boolean);
+    const out: ZipEntry[] = [];
+    for (const tab of list) {
+      const rows = await this.readTabRowsForBackup(src.spreadsheetId, tab);
+      if (rows.length === 0) continue;
+      const csv = rows.map(row => csvRowOf(row)).join('\r\n');
+      const safeTab = String(tab).replace(/[\\/:*?"<>|]/g, '-').trim() || 'Sheet1';
+      out.push({
+        name: `${src.title}_${periodKey}__${safeTab}.csv`,
+        data: Buffer.from('\uFEFF' + csv, 'utf8'),
+      });
+    }
+    if (out.length === 0) throw new Error('CSV_FALLBACK_EMPTY');
+    return out;
+  }
+
+  /** Đọc toàn bộ 1 tab theo lô 20k dòng (bảng log có thể >50k dòng). */
+  private async readTabRowsForBackup(spreadsheetId: string, tab: string): Promise<any[][]> {
+    const rows: any[][] = [];
+    const chunk = 20_000;
+    let columnCount = 30;
+    let rowCount = 0;
+    try {
+      const meta: any = await this.sheetsCall(`backup.meta.${tab}`, () =>
+        this.sheetsClient!.spreadsheets.get({
+          spreadsheetId,
+          fields: 'sheets.properties(title,gridProperties(rowCount,columnCount))',
+        }), 30_000);
+      for (const s of meta?.data?.sheets || []) {
+        if (String(s?.properties?.title || '') === tab) {
+          columnCount = Number(s?.properties?.gridProperties?.columnCount || columnCount);
+          rowCount = Number(s?.properties?.gridProperties?.rowCount || 0);
+        }
+      }
+    } catch { /* dùng giá trị mặc định */ }
+
+    const lastCol = columnLetterOf(Math.max(1, Math.min(columnCount, 702)));
+    const hardLimit = rowCount > 0 ? Math.min(rowCount, 500_000) : 500_000;
+    const quotedTab = String(tab).replace(/'/g, "''");
+    let start = 1;
+    while (start <= hardLimit) {
+      const end = Math.min(start + chunk - 1, hardLimit);
+      const range = `'${quotedTab}'!A${start}:${lastCol}${end}`;
+      const res: any = await this.sheetsCall(`backup.csv.${tab}.${start}`, () =>
+        this.sheetsClient!.spreadsheets.values.get({
+          spreadsheetId,
+          range,
+          valueRenderOption: 'FORMATTED_VALUE',
+          dateTimeRenderOption: 'FORMATTED_STRING',
+        } as any), 60_000);
+      const vals = (res?.data?.values as any[][]) || [];
+      if (vals.length === 0) break;
+      rows.push(...vals);
+      if (vals.length < end - start + 1) break;
+      start = end + 1;
+    }
+    return rows;
   }
 
   /** Dọn các folder kỳ cũ hơn `keep` (chỉ folder đúng định dạng kỳ). */
