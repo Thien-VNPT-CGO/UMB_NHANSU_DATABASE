@@ -909,6 +909,8 @@ export function App() {
   const [myShifts, setMyShifts] = useState<any[]>([]);
   const myShiftsSigRef = useRef('');
   const [schedRangeShifts, setSchedRangeShifts] = useState<any[]>([]);
+  // Tab Đổi ca đang tải lịch tương lai (để không báo "không có lịch" trong lúc chờ).
+  const [swapShiftsLoading, setSwapShiftsLoading] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
 
   // Nguồn ca làm việc CHUẨN dùng chung cho Trang chủ, Điểm danh, Lịch tuần và
@@ -1783,23 +1785,38 @@ export function App() {
     }
   }, []);
 
+  // Tải TƯƠI lịch của chính mình cho tab Đổi ca: hôm nay → +60 ngày (không phụ
+  // thuộc tab Lịch đã mở hay chưa). Tránh ô chọn ca trống oan khi vừa đăng nhập,
+  // lần tải trước lỗi mạng, hoặc HR vừa xếp/phát hành lịch xong.
+  const loadMySwapShifts = async () => {
+    if (!employee?.employee_id) return;
+    setSwapShiftsLoading(true);
+    try {
+      const today = vnTodayStr();
+      const res = await apiRequest(`/me/schedule?fromDate=${today}&toDate=${vnDateAdd(60, today)}`);
+      if (!Array.isArray(res)) return;
+      const fresh = dedupeShifts(res);
+      // Chỉ thay phần TƯƠNG LAI; giữ ca quá khứ đang có cho Dữ liệu công.
+      setSchedRangeShifts((prev) => {
+        const keepPast = (prev || []).filter((s: any) => {
+          const d = toISODate(s?.date);
+          return !!d && d < today;
+        });
+        return dedupeShifts([...keepPast, ...fresh]);
+      });
+    } catch { /* mất mạng: giữ danh sách đang có, nhịp 45s sẽ tự thử lại */ }
+    finally { setSwapShiftsLoading(false); }
+  };
+
   // Bài TEST: tải khi mở tab + đếm ngược tự nộp khi hết giờ
   useEffect(() => {
     if (activeTab === 'test_exam' || activeTab === 'test_training') fetchMyTests();
     if (activeTab === 'swap_shift') fetchMySwaps();
-    // Mở tab đổi ca: tải mới lịch để trạng thái publish của HR luôn tươi —
-    // HR vừa publish tuần mới mà giữ lịch cũ (DRAFT) thì rào publish chặn oan.
+    // Mở tab đổi ca: tải mới lịch để luôn đầy đủ ca (kể cả ca HR vừa xếp còn
+    // nháp) — trước đây chỉ tải dải tuần sau nên dễ thiếu ca tuần này/tuần xa.
     if ((activeTab === 'swap_shift' || activeTab === 'swap_emergency') && employee?.employee_id) {
       loadEmployeeData(employee.employee_id);
-      // Tải dải lịch tuần sau để đảm bảo schedRangeShifts luôn đầy đủ ca
-      const wkNext = empWeekDaysOf(1);
-      apiRequest(`/me/schedule?fromDate=${wkNext[0]}&toDate=${wkNext[6]}`)
-        .then((res) => {
-          if (Array.isArray(res) && res.length > 0) {
-            setSchedRangeShifts((prev) => dedupeShifts([...(prev || []), ...res]));
-          }
-        })
-        .catch(() => {});
+      void loadMySwapShifts();
     }
     // Lịch kiểm tra đầu ra: tải lại khi mở trang chủ / lịch / thi (luôn tươi).
     if (activeTab === 'home' || activeTab === 'schedule' || activeTab === 'test_exam' || activeTab === 'test_training') {
@@ -2883,12 +2900,14 @@ export function App() {
     return !!d && d >= today;
   };
   const inSwapWeek = (dateStr?: string) => isUpcomingSwapDate(dateStr);
-  /** Ca hợp lệ để đổi/nhờ làm thay: đã phát hành (hoặc dữ liệu cũ để trống status)
-   *  và KHÔNG bị hủy/nháp — khớp đúng danh sách ca đang hiển thị trên Lịch tuần. */
+  /** Ca hợp lệ để đổi/nhờ làm thay: MỌI ca còn hiệu lực — kể cả ca HR vừa xếp
+   *  còn NHÁP (chưa phát hành). Đây đúng là tập ca đang hiển thị trên Lịch tuần
+   *  và đúng rào chắn của server (chỉ chặn ca CANCELLED). Trước đây cổng NV lọc
+   *  bỏ ca DRAFT nên NV "có lịch" mà ô chọn ca vẫn báo "không tìm thấy ca phù
+   *  hợp" — lệch hẳn với lịch tuần họ đang thấy. */
   const isSwapReadyShift = (s: any) => {
     if (!s) return false;
-    const st = shiftStatusOf(s);
-    return st !== 'CANCELLED' && st !== 'DRAFT';
+    return shiftStatusOf(s) !== 'CANCELLED';
   };
   /** Ca còn hiệu lực để đổi: ngày từ hôm nay trở đi; ca hôm nay đã qua giờ
    *  kết thúc thì không còn "sắp tới" nên loại khỏi danh sách. */
@@ -2900,11 +2919,27 @@ export function App() {
     return !Number.isFinite(endMs) || endMs >= vnNowMs();
   };
   const swapReadyShifts = (list?: any[]) => {
-    const src = Array.isArray(list) && list.length > 0 ? list : getAllEmployeeShifts();
+    // Chỉ fallback về lịch của CHÍNH MÌNH khi không truyền danh sách. Trước đây
+    // truyền mảng rỗng (VD B chưa có ca) cũng fallback → ô chọn ca của B hiện
+    // nhầm ca của A và báo sai "B chưa có ca".
+    const src = Array.isArray(list) ? list : getAllEmployeeShifts();
     return dedupeShifts(src).filter((s: any) => isUpcomingSwapShift(s) && isSwapReadyShift(s));
   };
   const swapDraftCount = (_list?: any[]) => 0;
-  const swapNotReadyMsg = (label: string) => `⛔ ${label} đang nháp hoặc đã bị hủy trên hệ thống — vui lòng chọn ca làm việc đã phát hành khác.`;
+  const swapNotReadyMsg = (label: string) => `⛔ ${label} đã bị hủy trên hệ thống — vui lòng chọn ca làm việc khác.`;
+  /** Nhãn option ca đổi: ghi rõ ca nào đang chờ HR phát hành để NV hiểu trạng
+   *  thái, nhưng KHÔNG ẩn khỏi danh sách (vẫn đổi/nhờ làm thay được). */
+  const swapShiftLabel = (s: any) => `${formatShiftOption(s)}${isDraftShift(s) ? ' • Chờ HR phát hành' : ''}`;
+  /** Ô chọn ca trống: nói đúng lý do, tuyệt đối không báo oan "không có lịch"
+   *  khi NV thực ra chỉ hết ca hôm nay. */
+  const swapEmptyMsg = () => {
+    const today = vnTodayStr();
+    const all = dedupeShifts(getAllEmployeeShifts());
+    const hasTodayShift = all.some((s: any) => toISODate(s.date) === today);
+    return hasTodayShift
+      ? 'Ca hôm nay đã kết thúc — chưa có ca nào từ ngày mai trở đi'
+      : 'Chưa có lịch từ hôm nay trở đi — báo HR xếp lịch';
+  };
   /**
    * Ca hiển thị realtime ở trang chủ: đang diễn ra > sắp tới hôm nay > ca cuối hôm nay.
    * Không có ca live nhưng có ca NHÁP (HR đã xếp, chưa phát hành) -> trả phase DRAFT
@@ -7062,6 +7097,19 @@ export function App() {
                 Hỗ trợ 02 hình thức đổi ca chuẩn quy định của Ụm Bò Milk:
               </p>
 
+              {/* Ca HR đã xếp nhưng còn NHÁP vẫn đổi được — báo rõ để NV không
+                  tưởng "mất lịch" như trước. Ca chuyển cho người nhận được
+                  phát hành ngay khi đồng nghiệp xác nhận (server xử lý). */}
+              {(() => {
+                const drafts = swapReadyShifts(getAllEmployeeShifts()).filter((s: any) => isDraftShift(s)).length;
+                if (drafts === 0) return null;
+                return (
+                  <div style={{ backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '8px', padding: '8px 12px', fontSize: '12px', color: '#92400E', fontWeight: 600, marginBottom: '12px', lineHeight: 1.5 }}>
+                    ℹ️ {drafts} ca sắp tới đang <strong>chờ HR phát hành (nháp)</strong> — vẫn chọn đổi / nhờ làm thay được. Ca chuyển sang người nhận sẽ được phát hành ngay để tính công.
+                  </div>
+                );
+              })()}
+
               {/* 2 FORMS SWITCHER BUTTONS */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
                 <button
@@ -7118,21 +7166,17 @@ export function App() {
                       <option value="">-- Chọn ca làm của bạn (từ hôm nay trở đi) --</option>
                       {(() => {
                         const ready = swapReadyShifts(getAllEmployeeShifts());
+                        if (ready.length === 0 && swapShiftsLoading) {
+                          return <option value="">⏳ Đang tải lịch làm việc của bạn...</option>;
+                        }
                         if (ready.length > 0) {
                           return ready.map((s: any, idx: number) => (
                             <option key={s.assignment_id || idx} value={s.assignment_id}>
-                              {formatShiftOption(s)}
+                              {swapShiftLabel(s)}
                             </option>
                           ));
                         }
-                        const hasAnyUpcoming = dedupeShifts(getAllEmployeeShifts()).some((s: any) => isUpcomingSwapShift(s));
-                        return (
-                          <option value="">
-                            {hasAnyUpcoming
-                              ? 'Chưa tìm thấy ca làm việc phù hợp từ hôm nay trở đi'
-                              : 'Chưa có lịch từ hôm nay trở đi — báo HR xếp lịch'}
-                          </option>
-                        );
+                        return <option value="">{swapEmptyMsg()}</option>;
                       })()}
                     </select>
                   </div>
@@ -7171,11 +7215,11 @@ export function App() {
                         <option value="">⏳ Đang tải lịch của B...</option>
                       )}
                       {!targetShiftsLoading && swapData.targetEmployeeId && swapReadyShifts(targetShifts).length === 0 && (
-                        <option value="">B chưa có ca publish nào từ hôm nay trở đi — báo HR publish lịch cho B</option>
+                        <option value="">B chưa có ca nào từ hôm nay trở đi — báo HR xếp lịch cho B</option>
                       )}
                       {swapReadyShifts(targetShifts).map((s: any, idx: number) => (
                         <option key={s.assignment_id || idx} value={s.assignment_id}>
-                          {formatShiftOption(s)}
+                          {swapShiftLabel(s)}
                         </option>
                       ))}
                     </select>
@@ -7222,21 +7266,17 @@ export function App() {
                       <option value="">-- Chọn ca của bạn (từ hôm nay trở đi) --</option>
                       {(() => {
                         const ready = swapReadyShifts(getAllEmployeeShifts());
+                        if (ready.length === 0 && swapShiftsLoading) {
+                          return <option value="">⏳ Đang tải lịch làm việc của bạn...</option>;
+                        }
                         if (ready.length > 0) {
                           return ready.map((s: any, idx: number) => (
                             <option key={s.assignment_id || idx} value={s.assignment_id}>
-                              {formatShiftOption(s)}
+                              {swapShiftLabel(s)}
                             </option>
                           ));
                         }
-                        const hasAnyUpcoming = dedupeShifts(getAllEmployeeShifts()).some((s: any) => isUpcomingSwapShift(s));
-                        return (
-                          <option value="">
-                            {hasAnyUpcoming
-                              ? 'Chưa tìm thấy ca làm việc phù hợp từ hôm nay trở đi'
-                              : 'Chưa có lịch từ hôm nay trở đi — báo HR xếp lịch'}
-                          </option>
-                        );
+                        return <option value="">{swapEmptyMsg()}</option>;
                       })()}
                     </select>
                   </div>
