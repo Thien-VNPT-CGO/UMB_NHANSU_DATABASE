@@ -734,6 +734,8 @@ export class GoogleSheetsSyncService {
   private driveOAuthDeadAt = 0;
   /** Cache CSV của tab quá lớn (key: spreadsheetId|tab) — dùng lại cho lượt backup kế tiếp. */
   private backupCsvTabCache = new Map<string, { at: number; csv: Buffer }>();
+  /** Cache danh sách tab + số dòng (key: spreadsheetId) — tránh đọc metadata lặp lại. */
+  private backupGridCache = new Map<string, { at: number; grids: Array<{ title: string; rowCount: number }> }>();
   private isConfigured = false;
   private authError: string | null = null;
   private lastPulledAt: number = 0;
@@ -2146,23 +2148,52 @@ export class GoogleSheetsSyncService {
    * Cache 30 phút theo (spreadsheetId, tab): lượt backup NGÀY và TUẦN chạy liền
    * nhau dùng chung 1 lần đọc — hạn mức đọc Sheets của Google chỉ 60 lượt/phút
    * nên đọc lại 2 bảng log lớn mỗi lượt sẽ đụng trần ngay.
+   *
+   * Giới hạn `BACKUP_LOG_MAX_ROWS_PER_SHEET` (mặc định 200.000 dòng/bảng): 2
+   * bảng nhật ký (THONGBAO_NV/GUI) chỉ tăng, mỗi ngày vài nghìn dòng. Nếu nhét
+   * toàn bộ lịch sử vào MỌI kỳ backup thì ZIP phình vô hạn và webhook Apps Script
+   * sẽ trả HTTP 400 như trước. Vượt hạn mức → chỉ lấy các dòng MỚI NHẤT và ghi
+   * chú rõ trong ZIP (dữ liệu cũ vẫn nằm ở các bản backup trước + Sheet gốc).
    */
   private async exportSpreadsheetTabsCsvFallback(
     src: { title: string; spreadsheetId: string },
     periodKey: string,
   ): Promise<ZipEntry[]> {
     if (!this.sheetsClient) throw new Error('SHEETS_NOT_CONFIGURED');
-    const tabs = await this.listSpreadsheetTabs(src.spreadsheetId).catch(() => [] as string[]);
-    const list = (tabs.length ? tabs : [src.title]).filter(Boolean);
+    const maxRows = Math.max(20_000, Number(process.env.BACKUP_LOG_MAX_ROWS_PER_SHEET) || 200_000);
+
+    const grids = await this.backupTabGrids(src.spreadsheetId, src.title);
+    const totalRows = grids.reduce((sum, g) => sum + Math.max(0, g.rowCount), 0);
+    const truncate = totalRows > maxRows;
+
+    // Cắt bớt thì ưu tiên các tab CUỐI (dữ liệu mới nhất được ghi vào cuối).
+    const plan: Array<{ title: string; fromRow: number }> = [];
+    let budget = truncate ? maxRows : Number.POSITIVE_INFINITY;
+    for (let i = grids.length - 1; i >= 0; i -= 1) {
+      const g = grids[i];
+      if (budget <= 0) break;
+      const take = Math.min(g.rowCount > 0 ? g.rowCount : budget, budget);
+      const fromRow = g.rowCount > 0 ? Math.max(1, g.rowCount - take + 1) : 1;
+      plan.push({ title: g.title, fromRow });
+      budget -= take;
+    }
+    plan.reverse();
+
     const out: ZipEntry[] = [];
-    for (const tab of list) {
-      const cacheKey = `${src.spreadsheetId}|${tab}`;
+    for (const item of plan) {
+      const tab = item.title;
+      const cacheKey = `${src.spreadsheetId}|${tab}|${item.fromRow}`;
       const cached = this.backupCsvTabCache.get(cacheKey);
       let csvBuf: Buffer | null = null;
       if (cached && Date.now() - cached.at < 30 * 60_000) {
         csvBuf = cached.csv;
       } else {
-        const rows = await this.readTabRowsForBackup(src.spreadsheetId, tab);
+        let rows = await this.readTabRowsForBackup(src.spreadsheetId, tab, item.fromRow);
+        if (rows.length === 0 && item.fromRow > 1) {
+          // Lưới Sheet có thể có dòng trống ở cuối (grid > dữ liệu thật) — đọc
+          // lại từ đầu để không mất dữ liệu của bảng.
+          rows = await this.readTabRowsForBackup(src.spreadsheetId, tab, 1);
+        }
         if (rows.length === 0) continue;
         const csv = rows.map(row => csvRowOf(row)).join('\r\n');
         csvBuf = Buffer.from('\uFEFF' + csv, 'utf8');
@@ -2176,7 +2207,59 @@ export class GoogleSheetsSyncService {
       });
     }
     if (out.length === 0) throw new Error('CSV_FALLBACK_EMPTY');
+
+    if (truncate) {
+      const note = [
+        `BẢNG: ${src.title} — export CSV thay cho XLSX (file gốc quá lớn để Google export).`,
+        `Tổng số dòng hiện có: ${totalRows}.`,
+        `Số dòng đưa vào ZIP: các dòng MỚI NHẤT (giới hạn ${maxRows} dòng, cấu hình BACKUP_LOG_MAX_ROWS_PER_SHEET).`,
+        '',
+        'Lý do: đây là bảng nhật ký chỉ tăng; nếu đóng gói toàn bộ lịch sử vào mọi kỳ backup thì',
+        'file ZIP phình vô hạn và không upload được. Dữ liệu cũ vẫn còn trong:',
+        '  - Google Sheet gốc (nguồn dữ liệu thật), và',
+        '  - các file ZIP backup của những kỳ trước.',
+        '',
+        `Thời điểm tạo: ${new Date().toISOString()}`,
+      ].join('\r\n');
+      out.push({
+        name: `${src.title}_${periodKey}__GHI_CHU.txt`,
+        data: Buffer.from(note, 'utf8'),
+        compress: true,
+      });
+      console.warn(
+        `[BackupSheets] ${src.title}: ${totalRows} dòng > giới hạn ${maxRows}`
+        + ' — chỉ đóng gói các dòng mới nhất (có ghi chú trong ZIP)',
+      );
+    }
+
     return out;
+  }
+
+  /** Danh sách tab + số dòng của 1 spreadsheet (cache 10 phút). */
+  private async backupTabGrids(
+    spreadsheetId: string,
+    fallbackTitle: string,
+  ): Promise<Array<{ title: string; rowCount: number }>> {
+    const cached = this.backupGridCache.get(spreadsheetId);
+    if (cached && Date.now() - cached.at < 10 * 60_000) return cached.grids;
+    try {
+      const meta: any = await this.sheetsCall(`backup.grids.${spreadsheetId.slice(0, 8)}`, () =>
+        this.sheetsClient!.spreadsheets.get({
+          spreadsheetId,
+          fields: 'sheets.properties(title,gridProperties(rowCount,columnCount))',
+        }), 30_000);
+      const grids = (meta?.data?.sheets || [])
+        .map((s: any) => ({
+          title: String(s?.properties?.title || ''),
+          rowCount: Number(s?.properties?.gridProperties?.rowCount || 0),
+        }))
+        .filter((g: any) => g.title);
+      if (grids.length > 0) {
+        this.backupGridCache.set(spreadsheetId, { at: Date.now(), grids });
+        return grids;
+      }
+    } catch { /* rơi về tab mặc định */ }
+    return [{ title: fallbackTitle, rowCount: 0 }];
   }
 
   /** Lỗi do chạm hạn mức đọc Sheets (429 / "Quota exceeded"). */
@@ -2186,8 +2269,8 @@ export class GoogleSheetsSyncService {
     return status === 429 || /quota exceeded|rate limit/i.test(msg);
   }
 
-  /** Đọc toàn bộ 1 tab theo lô 20k dòng (bảng log có thể >50k dòng). */
-  private async readTabRowsForBackup(spreadsheetId: string, tab: string): Promise<any[][]> {
+  /** Đọc 1 tab theo lô 20k dòng, bắt đầu từ `fromRow` (bảng log có thể >150k dòng). */
+  private async readTabRowsForBackup(spreadsheetId: string, tab: string, fromRow = 1): Promise<any[][]> {
     const rows: any[][] = [];
     const chunk = 20_000;
     let columnCount = 30;
@@ -2229,7 +2312,7 @@ export class GoogleSheetsSyncService {
     const lastCol = columnLetterOf(Math.max(1, Math.min(columnCount, 702)));
     const hardLimit = rowCount > 0 ? Math.min(rowCount, 500_000) : 500_000;
     const quotedTab = String(tab).replace(/'/g, "''");
-    let start = 1;
+    let start = Math.max(1, Math.floor(fromRow) || 1);
     while (start <= hardLimit) {
       const end = Math.min(start + chunk - 1, hardLimit);
       const range = `'${quotedTab}'!A${start}:${lastCol}${end}`;

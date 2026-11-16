@@ -53,6 +53,31 @@ function decodeZipBase64(bodyJson: any): Buffer {
   return Buffer.from(String(bodyJson.base64 || ''), 'base64');
 }
 
+/** Liệt kê entry trong ZIP (đọc local file header, tự giải nén DEFLATE). */
+function readZipEntries(zip: Buffer): Array<{ name: string; text: string }> {
+  const out: Array<{ name: string; text: string }> = [];
+  let off = 0;
+  while (off + 30 <= zip.length && zip.readUInt32LE(off) === 0x04034b50) {
+    const method = zip.readUInt16LE(off + 8);
+    const packedSize = zip.readUInt32LE(off + 18);
+    const nameLen = zip.readUInt16LE(off + 26);
+    const extraLen = zip.readUInt16LE(off + 28);
+    const name = zip.subarray(off + 30, off + 30 + nameLen).toString('utf8');
+    const dataStart = off + 30 + nameLen + extraLen;
+    const data = zip.subarray(dataStart, dataStart + packedSize);
+    const raw = method === 8 ? require('node:zlib').inflateRawSync(data) : data;
+    out.push({ name, text: raw.toString('utf8') });
+    off = dataStart + packedSize;
+  }
+  return out;
+}
+
+function entryText(zip: Buffer, suffix: string): string {
+  const hit = readZipEntries(zip).find(e => e.name.endsWith(suffix));
+  assert.ok(hit, `không thấy entry "${suffix}" trong ZIP: ${readZipEntries(zip).map(e => e.name).join(', ')}`);
+  return hit!.text;
+}
+
 async function withEnv(vars: Record<string, string | undefined>, fn: () => Promise<void>) {
   const saved: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(vars)) {
@@ -118,14 +143,9 @@ test('bảng quá lớn (403) vẫn vào ZIP dạng CSV; OAuth hỏng thì uploa
       assert.equal(capturedBody.mimeType, 'application/zip');
 
       const zip = decodeZipBase64(capturedBody);
-      // ZIP dùng phương thức STORE -> tên entry và nội dung CSV đọc được trực tiếp.
-      const text = zip.toString('utf8');
-      assert.ok(
-        text.includes('THONGBAO_NV_2026-11-15__THONGBAO.csv'),
-        'CSV của bảng quá lớn phải có trong ZIP',
-      );
-      assert.ok(text.includes('\uFEFF'), 'CSV phải có BOM UTF-8 để Excel đọc đúng tiếng Việt');
-      assert.ok(text.includes('"Có dấu phẩy, và ""ngoặc kép"""'), 'CSV phải escape dấu phẩy + ngoặc kép');
+      const csv = entryText(zip, 'THONGBAO_NV_2026-11-15__THONGBAO.csv');
+      assert.ok(csv.startsWith('\uFEFF'), 'CSV phải có BOM UTF-8 để Excel đọc đúng tiếng Việt');
+      assert.ok(csv.includes('"Có dấu phẩy, và ""ngoặc kép"""'), 'CSV phải escape dấu phẩy + ngoặc kép');
     });
   } finally {
     globalThis.fetch = realFetch;
@@ -202,4 +222,64 @@ test('không tạo được folder kỳ và không có webhook -> BACKUP_FOLDER_
     assert.equal(res.ok, false);
     assert.equal(res.reason, 'BACKUP_FOLDER_UNAVAILABLE');
   });
+});
+
+test('bảng log vượt giới hạn dòng -> chỉ lấy các dòng mới nhất + ghi chú trong ZIP', async () => {
+  let capturedBody: any = null;
+  let requestedRange = '';
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: any, init: any) => {
+    capturedBody = JSON.parse(String(init?.body || '{}'));
+    return new Response(JSON.stringify({ ok: true, fileId: 'ZIP_TRUNC_1' }), { status: 200 });
+  }) as any;
+
+  try {
+    await withEnv({
+      GOOGLE_DRIVE_UPLOAD_WEBHOOK_URL: 'https://hook.example/upload',
+      BACKUP_LOG_MAX_ROWS_PER_SHEET: '20000',
+    }, async () => {
+      const svc = makeService() as any;
+      svc.getServiceAccountDriveClient = async () => null;
+      svc.ensureDriveFolderPath = async () => 'FOLDER_DAY_1';
+      svc.driveClient = {
+        files: {
+          list: async () => ({ data: { files: [] } }),
+          export: async () => { throw driveError('This file is too large to be exported.', 403); },
+          create: async () => { throw driveError('invalid_client', 401); },
+        },
+      };
+      svc.sheetsClient = {
+        spreadsheets: {
+          get: async () => ({
+            data: {
+              sheets: [{ properties: { title: 'THONGBAO_NV', gridProperties: { rowCount: 50_000, columnCount: 5 } } }],
+            },
+          }),
+          values: {
+            get: async (params: any) => {
+              requestedRange = String(params.range || '');
+              return { data: { values: [['TB', 'mới nhất']] } };
+            },
+          },
+        },
+      };
+
+      const res = await svc.backupSpreadsheetSetZipTo({
+        rootId: 'ROOT_DAY',
+        segments: ['2026-11-15'],
+        periodKey: '2026-11-15',
+        sources: [{ title: 'THONGBAO_NV', spreadsheetId: 'SID_NV' }],
+        keep: 30,
+      });
+
+      assert.equal(res.ok, true, JSON.stringify(res));
+      // 50.000 dòng > 20.000 -> đọc từ dòng 30.001 (các dòng mới nhất).
+      assert.ok(requestedRange.includes('A30001:'), `phải đọc phần đuôi, nhận: ${requestedRange}`);
+
+      const zipText = entryText(decodeZipBase64(capturedBody), 'THONGBAO_NV_2026-11-15__GHI_CHU.txt');
+      assert.ok(zipText.includes('50000') || zipText.includes('50.000'), 'ghi chú phải nêu tổng số dòng');
+    });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
