@@ -857,7 +857,7 @@ export class SchedulesService {
    *   - Lịch tuần hiện ca làm việc;
    *   - Điểm danh báo "CA CHƯA PHÁT HÀNH / không có ca";
    *   - Dữ liệu công gắn "⏳ Chờ duyệt (chưa tính công)";
-   *   - Không đổi ca được (assertShiftsPublished).
+   *   - (Đổi ca vẫn được vì cổng NV hiển thị và cho đổi mọi ca chưa hủy.)
    *
    * Bỏ qua tài khoản LOCKED (HR khóa NV thì ca vẫn nháp) và ca CANCELLED.
    * Chạy trong 1 lần push Sheet duy nhất (publishShiftAssignments) khi có thay đổi.
@@ -2111,7 +2111,8 @@ export class SchedulesService {
     if (data.targetAssignmentId && !tgtSh) throw new Error('SWAP_SHIFT_NOT_FOUND: Ca của đồng nghiệp không còn tồn tại.');
     if (reqSh && (reqSh as any).status === 'CANCELLED') throw new Error('SWAP_SHIFT_CANCELLED: Ca của bạn đã bị hủy, không thể đổi.');
     if (tgtSh && (tgtSh as any).status === 'CANCELLED') throw new Error('SWAP_SHIFT_CANCELLED: Ca của đồng nghiệp đã bị hủy, không thể đổi.');
-    // Lịch phải được HR publish (NV đã thấy) thì mới đổi — ca nháp chặn cả 2 chiều.
+    // Chỉ chặn ca đã HỦY — ca HR vừa xếp còn nháp vẫn đổi được vì NV đã thấy
+    // trên Lịch tuần (đồng bộ 100% với lịch hiển thị ở cổng NV).
     assertShiftsPublished([reqSh, tgtSh]);
     assertSwapDatesAllowed(
       [reqSh ? (reqSh as any).date : '', tgtSh ? (tgtSh as any).date : ''].filter(Boolean)
@@ -2224,7 +2225,8 @@ export class SchedulesService {
     const shift = await this.repo.getShiftById(data.requesterAssignmentId).catch(() => null);
     if (!shift) throw new Error('SWAP_SHIFT_NOT_FOUND: Ca nhường không còn tồn tại.');
     if ((shift as any).status === 'CANCELLED') throw new Error('SWAP_SHIFT_CANCELLED: Ca nhường đã bị hủy.');
-    // Chỉ nhường ca đã publish (NV đã thấy) từ tuần hiện tại trở đi.
+    // Chỉ chặn ca đã HỦY — ca nháp HR vừa xếp vẫn nhường được (NV đã thấy trên
+    // Lịch tuần), từ tuần hiện tại trở đi.
     assertShiftsPublished([shift]);
     const day = String((shift as any).date || '').slice(0, 10);
     const branchId = String((shift as any).branch_id || '');
