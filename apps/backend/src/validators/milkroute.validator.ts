@@ -199,6 +199,11 @@ export const evEndShiftBody = z.object({
   accuracy: z.number().min(0).max(500),
 });
 
+/** Admin bật/tắt chế độ Test cho toàn bộ phân hệ vận chuyển. */
+export const evTestModeBody = z.object({
+  enabled: z.boolean(),
+});
+
 // EV Charging Ticket
 export const evChargingTicketCreateBody = z.object({
   shift_id: idSchema,

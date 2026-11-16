@@ -163,9 +163,11 @@ export function DriverMap({ d }: { d: DriverData }) {
           <div style={{ fontSize: 15.5, fontWeight: 900, color: DC.ink }}>{next.name}</div>
           {next.address && <div style={{ fontSize: 11.5, color: DC.muted, fontWeight: 600, marginTop: 3 }}>{next.address}</div>}
           <div style={{ fontSize: 11.5, color: DC.muted, fontWeight: 700, marginTop: 5 }}>
-            {d.distToNext == null
-              ? 'Chưa có GPS để tính khoảng cách'
-              : `Còn cách ${Math.round(d.distToNext)}m • cho phép ≤${Math.round(checkinAllowedMeters(next, d.coords?.accuracy))}m (bán kính ${Math.round(checkinRadius(next))}m + dung sai GPS ${Math.round(checkinTolerance(d.coords?.accuracy))}m)`}
+            {d.testMode
+              ? 'Chế độ Test: xác nhận được mọi điểm, không giới hạn khoảng cách.'
+              : d.distToNext == null
+                ? 'Chưa có GPS để tính khoảng cách'
+                : `Còn cách ${Math.round(d.distToNext)}m • cho phép ≤${Math.round(checkinAllowedMeters(next, d.coords?.accuracy))}m (bán kính ${Math.round(checkinRadius(next))}m + dung sai GPS ${Math.round(checkinTolerance(d.coords?.accuracy))}m)`}
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 11 }}>
             <BigButton tone="ghost" style={{ flex: 1, padding: '11px', fontSize: 12.5 }} onClick={() => openDirections(Number(next.latitude), Number(next.longitude), next.name)}>
@@ -173,10 +175,10 @@ export function DriverMap({ d }: { d: DriverData }) {
             </BigButton>
             <BigButton
               style={{ flex: 1, padding: '11px', fontSize: 12.5 }}
-              disabled={!d.isRunning || !isCheckinDistanceOk(next, d.distToNext, d.coords?.accuracy) || !d.coords || d.coords.accuracy > CHECKIN_ACCURACY_MAX_M || d.busy === `ci_${next.stop_id}`}
+              disabled={!d.isRunning || d.busy === `ci_${next.stop_id}` || (!d.testMode && (!isCheckinDistanceOk(next, d.distToNext, d.coords?.accuracy) || !d.coords || d.coords.accuracy > CHECKIN_ACCURACY_MAX_M))}
               onClick={() => void d.checkin(next)}
             >
-              <CheckCircle2 size={15} /> Xác nhận
+              <CheckCircle2 size={15} /> {d.testMode ? 'Xác nhận (Test)' : 'Xác nhận'}
             </BigButton>
           </div>
         </Card>

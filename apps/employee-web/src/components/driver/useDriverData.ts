@@ -32,6 +32,8 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   const [gpsErr, setGpsErr] = useState('');
   const [gpsSent, setGpsSent] = useState(0);
   const [nowMs, setNowMs] = useState(Date.now());
+  /** Admin đang bật chế độ Test → nới các kiểm tra trên app tài xế. */
+  const [testMode, setTestMode] = useState(false);
 
   const watchIdRef = useRef<number | null>(null);
   const firstLoadRef = useRef(true);
@@ -72,6 +74,10 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
 
       const pay: any = await apiRequest('/ev/me/payroll', NO_CACHE).catch(() => []);
       setPayroll(Array.isArray(pay) ? pay : pay ? [pay] : []);
+
+      // Cờ Test (Admin bật/tắt) — tải kèm mỗi vòng làm mới để app đổi theo.
+      const tm: any = await apiRequest('/ev/me/test-mode', NO_CACHE).catch(() => null);
+      if (tm && typeof tm.enabled === 'boolean') setTestMode(tm.enabled);
 
       setErr('');
     } catch (e: any) {
@@ -205,7 +211,8 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
 
   const startShift = async () => {
     // Bắt đầu/kết thúc ca dùng sai số rộng hơn điểm giao (GPS trong cabin).
-    const c = needCoords('bắt đầu ca', 120);
+    // Chế độ Test: không chặn sai số (server cũng bỏ kiểm tra geofence/sai số).
+    const c = needCoords('bắt đầu ca', testMode ? 100000 : 120);
     if (!c || !current) return;
     setBusy('start');
     try {
@@ -222,9 +229,12 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   };
 
   const endShift = async () => {
-    const c = needCoords('kết thúc ca', 120);
+    const c = needCoords('kết thúc ca', testMode ? 100000 : 120);
     if (!c || !current) return;
-    if (!window.confirm('Kết thúc ca vận chuyển? Bạn phải ở điểm Xưởng (điểm cuối) mới đóng ca được.')) return;
+    const okEnd = window.confirm(testMode
+      ? 'Kết thúc ca vận chuyển? (Đang bật chế độ Test — kết thúc ở đâu cũng được.)'
+      : 'Kết thúc ca vận chuyển? Bạn phải ở điểm Xưởng (điểm cuối) mới đóng ca được.');
+    if (!okEnd) return;
     setBusy('end');
     try {
       const r: any = await apiRequest('/ev/me/shifts/end', {
@@ -245,13 +255,16 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   const checkin = async (stop: any) => {
     // Sai số GPS trong cửa hàng/khu phố thường lớn: chỉ chặn khi GPS hỏng hẳn,
     // còn lại dùng dung sai như backend để tài xế đứng tại chi nhánh bấm được.
-    const c = needCoords('bấm điểm', CHECKIN_ACCURACY_MAX_M);
+    // Chế độ Test: chỉ cần có toạ độ, không kiểm tra sai số/khoảng cách.
+    const c = needCoords('bấm điểm', testMode ? 100000 : CHECKIN_ACCURACY_MAX_M);
     if (!c || !current) return;
-    const d = haversine(c.lat, c.lng, Number(stop.latitude), Number(stop.longitude));
-    const allowed = checkinAllowedMeters(stop, c.accuracy);
-    if (d > allowed) {
-      showToast(`⛔ Bạn đang cách "${stop.name}" ${Math.round(d)}m (cho phép ≤${Math.round(allowed)}m — đã gồm dung sai GPS).`);
-      return;
+    if (!testMode) {
+      const d = haversine(c.lat, c.lng, Number(stop.latitude), Number(stop.longitude));
+      const allowed = checkinAllowedMeters(stop, c.accuracy);
+      if (d > allowed) {
+        showToast(`⛔ Bạn đang cách "${stop.name}" ${Math.round(d)}m (cho phép ≤${Math.round(allowed)}m — đã gồm dung sai GPS).`);
+        return;
+      }
     }
     setBusy(`ci_${stop.stop_id}`);
     try {
@@ -359,7 +372,7 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
 
   return {
     loading, err, profile, current, todayShifts, weekShifts, detail, tickets, payroll, history,
-    busy, coords, gpsErr, gpsSent, nowMs,
+    busy, coords, gpsErr, gpsSent, nowMs, testMode,
     status, isRunning, canTrack, stops, nextStop, slaLeftSec, distToNext, startStop, startRadius, distToStart,
     checkedCount, mandatoryLeft, chargingTicket,
     reload: load, loadHistory,

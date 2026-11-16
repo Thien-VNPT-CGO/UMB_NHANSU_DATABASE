@@ -46,25 +46,27 @@ function HeroStat({ label, value, alert }: { label: string; value: string; alert
 export function DriverToday({ d }: { d: DriverData }) {
   const {
     profile, current, todayShifts, weekShifts, detail, status, isRunning, stops, nextStop,
-    slaLeftSec, distToNext, checkedCount, mandatoryLeft, busy, coords,
+    slaLeftSec, distToNext, checkedCount, mandatoryLeft, busy, coords, testMode,
   } = d;
   const st = STATUS_LABEL[status] || STATUS_LABEL.SCHEDULED;
   const firstName = String(profile?.driver?.full_name || '').trim().split(/\s+/).pop() || 'tài xế';
   const pct = stops.length ? Math.round((checkedCount / stops.length) * 100) : 0;
   // Cho phép bấm khi trong bán kính điểm dừng + dung sai GPS (backend dùng
   // cùng quy tắc). Chỉ chặn khi GPS hỏng hẳn — không chặn ở 30m như trước.
-  const gpsOk = !!coords && coords.accuracy <= CHECKIN_ACCURACY_MAX_M;
+  // Chế độ Test (Admin bật): bỏ mọi ràng buộc vị trí/thứ tự.
+  const gpsOk = testMode || (!!coords && coords.accuracy <= CHECKIN_ACCURACY_MAX_M);
   const gpsWeak = !!coords && coords.accuracy > CHECKIN_ACCURACY_GOOD_M;
   const nextAllowed = nextStop ? checkinAllowedMeters(nextStop, coords?.accuracy) : null;
-  const nextWithin = isCheckinDistanceOk(nextStop, distToNext, coords?.accuracy);
+  const nextWithin = testMode || isCheckinDistanceOk(nextStop, distToNext, coords?.accuracy);
   const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
   const tomorrow = addDaysIso(today, 1);
   // Luôn hiển thị đủ 7 ngày (kể cả Thứ 7 & Chủ nhật) dù ngày đó chưa có ca.
   const calendarDays = Array.from({ length: 7 }, (_, i) => addDaysIso(today, i));
   const shiftIsToday = String(current?.shift_date || '').slice(0, 10) === today;
   // Bắt đầu ca: đủ điều kiện khi GPS đã có, sai số ≤120m và trong bán kính Xưởng.
-  const startReady = !!coords && coords.accuracy <= 120
-    && (d.distToStart == null || d.distToStart <= d.startRadius);
+  // Chế độ Test: bắt đầu ở đâu, sai số bao nhiêu cũng được.
+  const startReady = testMode || (!!coords && coords.accuracy <= 120
+    && (d.distToStart == null || d.distToStart <= d.startRadius));
 
   // ------------------------------------------------------------------
   // Xem trước lộ trình của ca trong lịch 7 ngày (đặc biệt ngày mai).
@@ -112,6 +114,20 @@ export function DriverToday({ d }: { d: DriverData }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <ScreenTitle title={`Xin chào, ${firstName}`} sub={fmtDay(today)} />
+
+      {testMode && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px',
+          borderRadius: 12, border: '1.5px dashed #F59E0B', backgroundColor: '#FFFBEB',
+          fontSize: 11.5, fontWeight: 700, color: '#92400E', lineHeight: 1.55,
+        }}>
+          <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <div>CHẾ ĐỘ TEST đang bật — bạn điểm danh được ở bất kỳ chi nhánh/điểm dừng nào, không cần đúng thứ tự.</div>
+            <div style={{ fontWeight: 600 }}>Ca chạy trong thời gian này không tính công và không bị phạt.</div>
+          </div>
+        </div>
+      )}
 
       {/* ---------------- Ca hiện tại ---------------- */}
       <div style={{
@@ -192,9 +208,11 @@ export function DriverToday({ d }: { d: DriverData }) {
           fontSize: 11.5, fontWeight: 700, color: startReady ? DC.success : DC.warn,
         }}>
           <MapPin size={14} />
-          {!coords
-            ? (d.gpsErr || 'Đang chờ GPS… bật định vị rồi thử lại.')
-            : `Cách điểm xuất phát ${Math.round(d.distToStart ?? 0)}m • sai số ±${coords.accuracy}m (cho phép ≤${d.startRadius}m, sai số ≤120m)`}
+          {testMode
+            ? 'Chế độ Test: bấm BẮT ĐẦU CA ở bất kỳ vị trí nào.'
+            : !coords
+              ? (d.gpsErr || 'Đang chờ GPS… bật định vị rồi thử lại.')
+              : `Cách điểm xuất phát ${Math.round(d.distToStart ?? 0)}m • sai số ±${coords.accuracy}m (cho phép ≤${d.startRadius}m, sai số ≤120m)`}
         </div>
       )}
       {current && current.status === 'SCHEDULED' && !shiftIsToday && (
@@ -247,16 +265,18 @@ export function DriverToday({ d }: { d: DriverData }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
             <Navigation size={14} color={DC.brand} />
             <div style={{ fontSize: 10.5, fontWeight: 800, color: DC.brand, letterSpacing: 0.4 }}>ĐIỂM KẾ TIẾP</div>
-            {nextWithin && <Pill text="TRONG BÁN KÍNH" fg={DC.success} bg={DC.successSoft} style={{ marginLeft: 'auto' }} />}
+            {nextWithin && <Pill text={testMode ? 'CHẾ ĐỘ TEST' : 'TRONG BÁN KÍNH'} fg={testMode ? DC.warn : DC.success} bg={testMode ? DC.warnSoft : DC.successSoft} style={{ marginLeft: 'auto' }} />}
           </div>
           <div style={{ fontSize: 16, fontWeight: 900, color: DC.ink }}>{nextStop.name}</div>
           {nextStop.address && (
             <div style={{ fontSize: 11.5, color: DC.muted, fontWeight: 600, marginTop: 3, lineHeight: 1.5 }}>{nextStop.address}</div>
           )}
           <div style={{ fontSize: 10.5, color: DC.muted, fontWeight: 700, marginTop: 5 }}>
-            {distToNext == null
-              ? 'Chưa có GPS để tính khoảng cách'
-              : `Còn cách ${Math.round(distToNext)}m • cho phép ≤${Math.round(nextAllowed || 0)}m (bán kính ${Math.round(checkinRadius(nextStop))}m + dung sai GPS ${Math.round(checkinTolerance(coords?.accuracy))}m)`}
+            {testMode
+              ? 'Chế độ Test: xác nhận được mọi điểm, không giới hạn khoảng cách.'
+              : distToNext == null
+                ? 'Chưa có GPS để tính khoảng cách'
+                : `Còn cách ${Math.round(distToNext)}m • cho phép ≤${Math.round(nextAllowed || 0)}m (bán kính ${Math.round(checkinRadius(nextStop))}m + dung sai GPS ${Math.round(checkinTolerance(coords?.accuracy))}m)`}
           </div>
           <div style={{ display: 'flex', gap: 7, marginTop: 10 }}>
             <BigButton
@@ -268,11 +288,15 @@ export function DriverToday({ d }: { d: DriverData }) {
             </BigButton>
             <BigButton
               style={{ flex: 1.15, padding: '11px 10px', fontSize: 12.5 }}
-              disabled={!nextWithin || !gpsOk || busy === `ci_${nextStop.stop_id}`}
+              disabled={(!nextWithin || !gpsOk) && !testMode || busy === `ci_${nextStop.stop_id}`}
               onClick={() => void d.checkin(nextStop)}
             >
               <CheckCircle2 size={15} />
-              {busy === `ci_${nextStop.stop_id}` ? 'ĐANG GỬI...' : nextWithin ? 'XÁC NHẬN' : `${distToNext == null ? '—' : Math.round(distToNext)}m`}
+              {busy === `ci_${nextStop.stop_id}`
+                ? 'ĐANG GỬI...'
+                : nextWithin
+                  ? 'XÁC NHẬN'
+                  : `${distToNext == null ? '—' : Math.round(distToNext)}m`}
             </BigButton>
           </div>
         </Card>
@@ -296,8 +320,8 @@ export function DriverToday({ d }: { d: DriverData }) {
               const dist = coords && Number(s.latitude) && Number(s.longitude)
                 ? haversine(coords.lat, coords.lng, Number(s.latitude), Number(s.longitude))
                 : null;
-              const inRange = isCheckinDistanceOk(s, dist, coords?.accuracy);
-              const canCheck = isRunning && !done && inRange && gpsOk;
+              const inRange = testMode || isCheckinDistanceOk(s, dist, coords?.accuracy);
+              const canCheck = isRunning && !done && (testMode || (inRange && gpsOk));
               return (
                 <div key={s.stop_id} style={{ display: 'flex', gap: 10, paddingBottom: idx === stops.length - 1 ? 0 : 14 }}>
                   {/* timeline */}
@@ -347,7 +371,7 @@ export function DriverToday({ d }: { d: DriverData }) {
                           color: canCheck ? '#FFF' : DC.muted, opacity: canCheck ? 1 : 0.8,
                         }}
                       >
-                        {busy === `ci_${s.stop_id}` ? '...' : isNext ? 'XÁC NHẬN ĐIỂM' : 'Bấm điểm'}
+                        {busy === `ci_${s.stop_id}` ? '...' : testMode ? 'XÁC NHẬN (TEST)' : isNext ? 'XÁC NHẬN ĐIỂM' : 'Bấm điểm'}
                       </button>
                     )}
                   </div>
@@ -562,7 +586,10 @@ export function DriverToday({ d }: { d: DriverData }) {
           <AlertTriangle size={14} /> Quy tắc ca vận chuyển
         </div>
         <div style={{ fontSize: 11.5, color: '#92400E', lineHeight: 1.75, fontWeight: 600 }}>
-          • Bấm điểm khi đang ở trong bán kính chi nhánh (đã gồm dung sai GPS) — GPS yếu vẫn bấm được.<br />
+          {testMode
+            ? '• Đang bật CHẾ ĐỘ TEST: bấm được mọi điểm, không cần đúng thứ tự/khoảng cách; ca không tính công, không bị phạt.'
+            : '• Bấm điểm khi đang ở trong bán kính chi nhánh (đã gồm dung sai GPS) — GPS yếu vẫn bấm được.'}
+          <br />
           • Mở app là chia sẻ vị trí xe với quản lý (kể cả trước khi bắt đầu ca).<br />
           • Mỗi chặng có SLA riêng — trễ bị trừ điểm phạt vào lương.<br />
           • Quên bấm điểm bắt buộc = điểm bỏ lọt, tính phạt khi kết thúc ca.<br />

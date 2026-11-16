@@ -1,6 +1,7 @@
 import { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
 import { EVShift, EVRouteStop, EVRoute, EVVehicle } from '@ubm/shared';
 import { EVRouteService } from './ev-route.service.js';
+import { isEvTestModeEnabled, isEvTestShift, withEvTestShiftMark } from './ev-test-mode.js';
 
 const VN_OFFSET_MS = 7 * 3_600_000;
 
@@ -355,26 +356,32 @@ export class EVShiftService {
     const startStop = stops[0];
     if (!startStop) throw new Error('NO_START_STOP: Lộ trình không có điểm xuất phát');
 
+    // Chế độ TEST: bắt đầu ca ở đâu cũng được (không chặn geofence/sai số GPS).
+    const testMode = isEvTestModeEnabled(this.repo) || isEvTestShift(shift);
+
     // Validate geofence điểm xuất phát (Xưởng là khuôn viên rộng → nới tối thiểu 500m).
-    const distance = this.haversineDistance(
-      driverLocation.latitude,
-      driverLocation.longitude,
-      startStop.latitude,
-      startStop.longitude
-    );
-    const radius = Math.max(Number(startStop.geofence_radius_m || 100), SHIFT_START_RADIUS_MIN_M);
-    if (distance > radius) {
-      throw new Error(`OUTSIDE_GEOFENCE: Bạn đang cách ${Math.round(distance)}m so với điểm xuất phát (cho phép ≤${radius}m)`);
-    }
-    const accuracy = Number(driverLocation.accuracy || 0);
-    if (accuracy > SHIFT_START_ACCURACY_MAX_M) {
-      throw new Error(`GPS_ACCURACY_LOW: Độ chính xác GPS ±${Math.round(accuracy)}m quá thấp (yêu cầu ≤${SHIFT_START_ACCURACY_MAX_M}m) — ra chỗ thoáng chờ GPS cập nhật`);
+    if (!testMode) {
+      const distance = this.haversineDistance(
+        driverLocation.latitude,
+        driverLocation.longitude,
+        startStop.latitude,
+        startStop.longitude
+      );
+      const radius = Math.max(Number(startStop.geofence_radius_m || 100), SHIFT_START_RADIUS_MIN_M);
+      if (distance > radius) {
+        throw new Error(`OUTSIDE_GEOFENCE: Bạn đang cách ${Math.round(distance)}m so với điểm xuất phát (cho phép ≤${radius}m)`);
+      }
+      const accuracy = Number(driverLocation.accuracy || 0);
+      if (accuracy > SHIFT_START_ACCURACY_MAX_M) {
+        throw new Error(`GPS_ACCURACY_LOW: Độ chính xác GPS ±${Math.round(accuracy)}m quá thấp (yêu cầu ≤${SHIFT_START_ACCURACY_MAX_M}m) — ra chỗ thoáng chờ GPS cập nhật`);
+      }
     }
 
-    // Update shift
+    // Update shift (ca test được đánh dấu để kết thúc ca & bảng lương bỏ qua).
     const updated = await this.updateShift(shiftId, {
       status: 'IN_PROGRESS',
       actual_start_at: new Date().toISOString(),
+      ...(testMode && !isEvTestShift(shift) ? { notes: withEvTestShiftMark(shift.notes) } : {}),
     });
     return updated!;
   }
@@ -394,16 +401,20 @@ export class EVShiftService {
     const endStop = stops[stops.length - 1];
     if (!endStop) throw new Error('NO_END_STOP: Lộ trình không có điểm kết thúc');
 
-    // Validate geofence điểm kết thúc (Xưởng → nới tối thiểu 500m như lúc bắt đầu ca)
-    const distance = this.haversineDistance(
-      driverLocation.latitude,
-      driverLocation.longitude,
-      endStop.latitude,
-      endStop.longitude
-    );
-    const radius = Math.max(Number(endStop.geofence_radius_m || 100), SHIFT_START_RADIUS_MIN_M);
-    if (distance > radius) {
-      throw new Error(`OUTSIDE_GEOFENCE: Bạn đang cách ${Math.round(distance)}m so với điểm kết thúc (cho phép ≤${radius}m)`);
+    // Validate geofence điểm kết thúc (Xưởng → nới tối thiểu 500m như lúc bắt đầu ca).
+    // Chế độ TEST (hoặc ca đã đánh dấu test): kết thúc ở đâu cũng được.
+    const testMode = isEvTestModeEnabled(this.repo) || isEvTestShift(shift);
+    if (!testMode) {
+      const distance = this.haversineDistance(
+        driverLocation.latitude,
+        driverLocation.longitude,
+        endStop.latitude,
+        endStop.longitude
+      );
+      const radius = Math.max(Number(endStop.geofence_radius_m || 100), SHIFT_START_RADIUS_MIN_M);
+      if (distance > radius) {
+        throw new Error(`OUTSIDE_GEOFENCE: Bạn đang cách ${Math.round(distance)}m so với điểm kết thúc (cho phép ≤${radius}m)`);
+      }
     }
 
     // Update shift

@@ -2,6 +2,7 @@ import { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
 import { EVDriverPayroll, EVShift, EVShiftCheckin, EVPayrollConfig, DEFAULT_EV_PAYROLL_CONFIG, EVRouteStop } from '@ubm/shared';
 import { EVRouteService } from './ev-route.service.js';
 import { isShiftWorked } from './ev-shift-activity.js';
+import { isEvTestShift } from './ev-test-mode.js';
 
 export class EVPayrollService {
   constructor(
@@ -20,12 +21,15 @@ export class EVPayrollService {
     const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
     const endDate = new Date(year, month, 0).toISOString().slice(0, 10); // Last day of month
 
-    const shifts = this.repo.evShifts.filter(s =>
+    const allShifts = this.repo.evShifts.filter(s =>
       s.driver_id === driverId &&
       s.shift_date >= startDate &&
       s.shift_date <= endDate &&
       s.status !== 'CANCELLED'
     );
+    // Ca chạy ở chế độ TEST (Admin bật nút Test) KHÔNG tính công, không tính
+    // phạt — tránh ảnh hưởng lương tài xế khi chạy thử quy trình.
+    const shifts = allShifts.filter(s => !isEvTestShift(s));
 
     // Get checkins for these shifts
     const shiftIds = new Set(shifts.map(s => s.shift_id));
