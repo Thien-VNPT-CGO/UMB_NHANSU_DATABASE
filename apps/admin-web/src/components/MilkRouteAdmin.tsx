@@ -49,6 +49,70 @@ const vehicleDivIcon = (active: boolean) => L.divIcon({
   popupAnchor: [0, -12],
 });
 
+/**
+ * Vệt đường đi realtime trên Live Map.
+ * - Màu cố định theo xe để nhìn nhiều xe không bị lẫn.
+ * - Bỏ đoạn nhiễu < 8m (xe đứng yên mà GPS nhảy) khi tính quãng đường.
+ */
+interface TrailPoint {
+  lat: number;
+  lng: number;
+  at: number;
+}
+
+const TRAIL_COLORS = ['#0EA5E9', '#8B5CF6', '#F59E0B', '#EC4899', '#10B981', '#EF4444', '#14B8A6', '#6366F1'];
+
+const trailColorOf = (vehicleId: string) => {
+  let h = 0;
+  for (let i = 0; i < vehicleId.length; i++) h = (h * 31 + vehicleId.charCodeAt(i)) >>> 0;
+  return TRAIL_COLORS[h % TRAIL_COLORS.length];
+};
+
+const haversineMeters = (a: TrailPoint, b: TrailPoint) => {
+  const R = 6_371_000;
+  const toRad = (v: number) => (v * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+};
+
+const trailDistanceMeters = (points: TrailPoint[]) => {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const d = haversineMeters(points[i - 1], points[i]);
+    // Bỏ nhiễu GPS khi đứng yên, bỏ điểm nhảy vô lý (> 5km/15s).
+    if (d >= 8 && d < 5000) total += d;
+  }
+  return total;
+};
+
+const fmtDistance = (meters: number) => (
+  meters >= 1000 ? `${(meters / 1000).toFixed(2)} km` : `${Math.round(meters)} m`
+);
+
+const trailKeyOf = (lat: number, lng: number, at: number) => `${at}|${lat.toFixed(5)}|${lng.toFixed(5)}`;
+
+/** Gộp điểm GPS mới vào vệt cũ: khử trùng theo thời gian + toạ độ, sắp tăng dần. */
+const mergeTrail = (oldPoints: TrailPoint[] | undefined, rows: any[]): TrailPoint[] => {
+  const map = new Map<string, TrailPoint>();
+  for (const p of oldPoints || []) map.set(trailKeyOf(p.lat, p.lng, p.at), p);
+  for (const r of rows) {
+    const lat = Number(r?.latitude);
+    const lng = Number(r?.longitude);
+    let at = Date.parse(String(r?.recorded_at || r?.recordedAt || ''));
+    if (!Number.isFinite(at)) at = Date.now();
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    if (lat === 0 && lng === 0) continue;
+    const acc = Number(r?.accuracy_m ?? r?.accuracy);
+    if (Number.isFinite(acc) && acc > 300) continue;
+    map.set(trailKeyOf(lat, lng, at), { lat, lng, at });
+  }
+  const arr = Array.from(map.values()).sort((a, b) => a.at - b.at);
+  // Giữ vệt dài nhất ~5000 điểm (≈20 giờ GPS 15 giây) để không phình bộ nhớ.
+  return arr.length > 5000 ? arr.slice(-5000) : arr;
+};
+
 export interface MilkRouteAdminProps {
   currentUser: any;
   allEmployees?: any[];
@@ -221,8 +285,14 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
   const markersRef = useRef<Record<string, any>>({});
   const routeLayerRef = useRef<any>(null);
   const branchLayerRef = useRef<any>(null);
+  const trailLayerRef = useRef<any>(null);
   const branchesSigRef = useRef('');
   const fittedRef = useRef(false);
+  /** Ca đã nạp đủ lịch sử GPS (các vòng sau chỉ nạp 300 điểm mới nhất). */
+  const trailLoadedRef = useRef<Set<string>>(new Set());
+  /** Vệt đường đi theo CA: shiftId -> danh sách điểm GPS đã đi qua. */
+  const [trails, setTrails] = useState<Record<string, TrailPoint[]>>({});
+  const [showTrail, setShowTrail] = useState(true);
 
   const loadLive = useCallback(async () => {
     try {
@@ -305,6 +375,8 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
     mapRef.current = map;
     branchLayerRef.current = L.layerGroup().addTo(map);
     routeLayerRef.current = L.layerGroup().addTo(map);
+    // Vệt đường đi nằm trên tuyến kế hoạch, dưới marker xe.
+    trailLayerRef.current = L.layerGroup().addTo(map);
     // Chống "map co0" khi vừa mount (layout chưa chốt).
     const t = setTimeout(() => map.invalidateSize(), 250);
     return () => {
@@ -314,6 +386,7 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
       markersRef.current = {};
       routeLayerRef.current = null;
       branchLayerRef.current = null;
+      trailLayerRef.current = null;
       fittedRef.current = false;
     };
   }, []);
@@ -413,6 +486,110 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
     }
   }, [resolvedStops]);
 
+  // -------------------- Vệt đường đi realtime --------------------
+  // Ca đang chạy (kể cả đang sạc / về xưởng / tạm dừng) — mỗi ca có lịch sử GPS
+  // riêng để vẽ lại đúng quãng đường xe đã đi.
+  const activeShiftPairs = useMemo(() => {
+    const ACTIVE = ['IN_PROGRESS', 'CHARGING', 'RETURNING', 'PAUSED'];
+    const map = new Map<string, string>();
+    liveShifts.forEach((s: any) => {
+      if (s?.shiftId && ACTIVE.includes(String(s.status || ''))) {
+        map.set(String(s.shiftId), String(s.vehicleId || ''));
+      }
+    });
+    vehicles.forEach((v: any) => {
+      if (v?.shiftId && ACTIVE.includes(String(v.shiftStatus || ''))) {
+        map.set(String(v.shiftId), String(v.vehicleId || ''));
+      }
+    });
+    return Array.from(map.entries())
+      .filter(([shiftId, vehicleId]) => shiftId && vehicleId) as Array<[string, string]>;
+  }, [liveShifts, vehicles]);
+
+  /** shiftId -> vehicleId để tô màu vệt đường đúng xe. */
+  const vehicleOfShift = useMemo(() => {
+    const m: Record<string, string> = {};
+    activeShiftPairs.forEach(([shiftId, vehicleId]) => { m[shiftId] = vehicleId; });
+    return m;
+  }, [activeShiftPairs]);
+
+  /** Nạp lịch sử GPS của ca đang chạy; lần đầu 2000 điểm, sau đó 300 điểm mới. */
+  const syncTrails = useCallback(async (pairs: Array<[string, string]>) => {
+    for (const [shiftId] of pairs) {
+      const first = !trailLoadedRef.current.has(shiftId);
+      try {
+        const rows: any = await apiRequest(
+          `/ev/admin/live/shifts/${encodeURIComponent(shiftId)}/gps?limit=${first ? 2000 : 300}`,
+        );
+        if (!Array.isArray(rows)) continue;
+        trailLoadedRef.current.add(shiftId);
+        setTrails(prev => ({ ...prev, [shiftId]: mergeTrail(prev[shiftId], rows) }));
+      } catch { /* vòng sau thử lại */ }
+    }
+  }, []);
+
+  const activeShiftKey = activeShiftPairs.map(([s, v]) => `${s}:${v}`).join('|');
+  useEffect(() => {
+    if (!activeShiftPairs.length) return;
+    void syncTrails(activeShiftPairs);
+    const t = setInterval(() => void syncTrails(activeShiftPairs), 30000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeShiftKey, syncTrails]);
+
+  // Điểm GPS realtime do App.tsx chuyển tiếp từ socket (phòng admin:live).
+  useEffect(() => {
+    const onGpsUpdate = (event: Event) => {
+      const detail: any = (event as CustomEvent).detail;
+      const d = detail?.data || detail || {};
+      const shiftId = String(detail?.shiftId || '');
+      const lat = Number(d.latitude);
+      const lng = Number(d.longitude);
+      // Chỉ vẽ điểm thuộc ca (GPS chia sẻ trước khi vào ca không có lịch sử).
+      if (!shiftId || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      setTrails(prev => ({
+        ...prev,
+        [shiftId]: mergeTrail(prev[shiftId], [{
+          latitude: lat,
+          longitude: lng,
+          recorded_at: d.recordedAt || new Date().toISOString(),
+          accuracy_m: d.accuracy,
+        }]),
+      }));
+    };
+    window.addEventListener('ubm:ev-gps-update', onGpsUpdate as any);
+    return () => window.removeEventListener('ubm:ev-gps-update', onGpsUpdate as any);
+  }, []);
+
+  // Vẽ vệt đường đi (màu theo xe, xe đang chọn đậm hơn).
+  useEffect(() => {
+    const layer = trailLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (!showTrail) return;
+    Object.entries(trails).forEach(([shiftId, pts]) => {
+      if (!pts || pts.length < 2) return;
+      const vehicleId = vehicleOfShift[shiftId] || shiftId;
+      const color = trailColorOf(vehicleId);
+      const latlngs = pts.map(p => [p.lat, p.lng] as [number, number]);
+      const selected = String(vehicleId) === String(selectedId);
+      L.polyline(latlngs, { color, weight: selected ? 9 : 7, opacity: 0.15, lineJoin: 'round' }).addTo(layer);
+      L.polyline(latlngs, { color, weight: selected ? 5 : 3.5, opacity: selected ? 0.95 : 0.7, lineJoin: 'round' }).addTo(layer);
+      L.circleMarker(latlngs[0], { radius: 5, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 })
+        .bindTooltip('Điểm bắt đầu ghi GPS', { direction: 'top', offset: [0, -6] })
+        .addTo(layer);
+    });
+  }, [trails, showTrail, selectedId, vehicleOfShift]);
+
+  /** Tổng quãng đường đã đi theo từng ca (tính từ vệt GPS). */
+  const trailStats = useMemo(() => {
+    const out: Record<string, { meters: number; points: number }> = {};
+    Object.entries(trails).forEach(([shiftId, pts]) => {
+      out[shiftId] = { meters: trailDistanceMeters(pts), points: pts.length };
+    });
+    return out;
+  }, [trails]);
+
   // Đánh dấu xe realtime.
   useEffect(() => {
     const map = mapRef.current;
@@ -447,6 +624,7 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
           ${active ? '🟢 Đang chạy ca' : '🔵 Online • chưa vào ca'}<br/>
           🚀 Tốc độ: ${Math.round(Number(v.speed) || 0)} km/h<br/>
           🔋 Pin: ${Math.round(Number(v.battery) || 0)}%<br/>
+          🛣️ Đã đi: ${fmtDistance(Number(trailStats[String(v.shiftId)]?.meters) || 0)}<br/>
           📍 GPS: ${agoLabel(v.lastUpdate)}<br/>
           ${live ? `➡️ Điểm tiếp: ${live.nextStopName || '—'} (SLA còn ${fmtCountdown(Number(live.slaRemainingSeconds) || 0)})` : ''}
         </div>`);
@@ -466,7 +644,7 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
         map.fitBounds(L.latLngBounds(pts as any), { padding: [50, 50] });
       }
     }
-  }, [vehicles, liveShifts]);
+  }, [vehicles, liveShifts, trailStats]);
 
   // Poll 10s + giây chạy cho nhãn "x giây trước".
   useEffect(() => {
@@ -503,8 +681,16 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
           style={{ width: '100%', height: '480px', borderRadius: '8px', overflow: 'hidden', background: '#E2E8F0' }}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 4px 2px', fontSize: '11.5px', color: MUTED, fontWeight: 600, flexWrap: 'wrap' }}>
-          <span>🟢 xe đang chạy ca • 🔵 xe online (chưa vào ca) • 🏢 chi nhánh • ⭕ geofence điểm giao</span>
-          <button className="btn-secondary" style={{ marginLeft: 'auto', padding: '5px 11px', fontSize: '11.5px', fontWeight: 700 }} onClick={() => void loadLive()}>
+          <span>🟢 xe đang chạy ca • 🔵 xe online (chưa vào ca) • 🛣️ đường xe đã đi • 🏢 chi nhánh • ⭕ geofence điểm giao</span>
+          <button
+            className="btn-secondary"
+            style={{ marginLeft: 'auto', padding: '5px 11px', fontSize: '11.5px', fontWeight: 700 }}
+            onClick={() => setShowTrail(v => !v)}
+            title="Bật/tắt vệt đường đi realtime trên bản đồ"
+          >
+            <RouteIcon size={13} /> {showTrail ? 'Ẩn đường đi' : 'Hiện đường đi'}
+          </button>
+          <button className="btn-secondary" style={{ padding: '5px 11px', fontSize: '11.5px', fontWeight: 700 }} onClick={() => void loadLive()}>
             <RefreshCw size={13} /> Làm mới
           </button>
         </div>
@@ -565,6 +751,7 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
               <div style={{ display: 'flex', gap: '12px', marginTop: '6px', fontSize: '11.5px', color: MUTED, fontWeight: 700, flexWrap: 'wrap' }}>
                 <span>🚀 {Math.round(Number(v.speed) || 0)} km/h</span>
                 <span>🔋 {Math.round(Number(v.battery) || 0)}%</span>
+                <span>🛣️ {fmtDistance(Number(trailStats[String(v.shiftId)]?.meters) || 0)}</span>
                 <span>📍 {agoLabel(v.lastUpdate)}</span>
               </div>
               {live && (
@@ -587,9 +774,13 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
 // ============================================================
 // 2. XE & LỘ TRÌNH
 // ============================================================
-const FleetView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void; canManage: boolean }> = ({
-  allEmployees, showToast, canManage,
-}) => {
+const FleetView: React.FC<{
+  allEmployees: any[];
+  showToast: (m: string) => void;
+  canManage: boolean;
+  /** Kế toán / Giám đốc / Admin được chỉnh thời gian di chuyển giữa các điểm. */
+  canEditTiming: boolean;
+}> = ({ allEmployees, showToast, canManage, canEditTiming }) => {
   const [vehicles, setVehicles] = useState<any[]>([]);
   const [routes, setRoutes] = useState<any[]>([]);
   const [stops, setStops] = useState<any[]>([]);
@@ -597,6 +788,10 @@ const FleetView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void;
   const [busy, setBusy] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ license_plate: '', current_battery_pct: '100', status: 'ACTIVE', assigned_driver_id: '', notes: '' });
+  // Chỉnh nhanh thời gian lộ trình giữa các điểm (SLA chặng).
+  const [timingEdit, setTimingEdit] = useState(false);
+  const [timingDraft, setTimingDraft] = useState<Record<string, string>>({});
+  const [timingBusy, setTimingBusy] = useState(false);
 
   // Chỉ nhân sự khối Xưởng được chọn làm tài xế phụ trách xe.
   const workshopDrivers = useMemo(() => {
@@ -629,6 +824,9 @@ const FleetView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void;
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
+    // Đổi lộ trình → thoát chế độ chỉnh thời gian để tránh lưu nhầm sang lộ trình khác.
+    setTimingEdit(false);
+    setTimingDraft({});
     if (!routeId) { setStops([]); return; }
     // Màn cấu hình lộ trình: luôn xem điểm dừng GỐC (phiếu đổi lộ trình
     // chỉ áp dụng theo ngày/sản phẩm ở Live Map + app tài xế).
@@ -636,6 +834,63 @@ const FleetView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void;
       .then((d: any) => setStops(Array.isArray(d) ? d : []))
       .catch(() => setStops([]));
   }, [routeId]);
+
+  /** Số phút của chặng: lấy bản nháp khi đang chỉnh, ngược lại lấy dữ liệu đã lưu. */
+  const minutesOf = (stop: any): number => {
+    const raw = timingEdit ? (timingDraft[stop.stop_id] ?? stop.sla_minutes) : stop.sla_minutes;
+    const v = Number(raw);
+    return Number.isFinite(v) && v >= 0 ? Math.round(v) : 0;
+  };
+  const totalTiming = stops.reduce((sum, stop) => sum + minutesOf(stop), 0);
+
+  const beginTimingEdit = () => {
+    const draft: Record<string, string> = {};
+    stops.forEach((stop) => { draft[stop.stop_id] = String(minutesOf(stop)); });
+    setTimingDraft(draft);
+    setTimingEdit(true);
+  };
+
+  const cancelTimingEdit = () => {
+    setTimingEdit(false);
+    setTimingDraft({});
+  };
+
+  /**
+   * Lưu thời gian di chuyển giữa các điểm dừng (sla_minutes của từng chặng).
+   * Mỗi chặng = thời gian tối đa tính từ lúc check-in điểm trước; điểm đầu
+   * tính từ giờ xuất phát của ca. Kế toán / Giám đốc cấu hình linh hoạt theo
+   * thực tế giao thông mà không cần tạo phiếu đổi lộ trình.
+   */
+  const saveTiming = async () => {
+    const invalid = stops.some((stop) => {
+      const raw = String(timingDraft[stop.stop_id] ?? '').trim();
+      const v = Number(raw);
+      return raw === '' || !Number.isFinite(v) || v < 0;
+    });
+    if (invalid) return showToast('⚠️ Thời gian mỗi chặng phải là số phút ≥ 0!');
+
+    const changed = stops.filter((stop) => minutesOf(stop) !== Math.max(0, Math.round(Number(stop.sla_minutes) || 0)));
+    if (!changed.length) {
+      cancelTimingEdit();
+      return showToast('ℹ️ Không có thay đổi thời gian.');
+    }
+
+    setTimingBusy(true);
+    try {
+      for (const stop of changed) {
+        const minutes = minutesOf(stop);
+        await apiRequest(`/ev/admin/stops/${encodeURIComponent(stop.stop_id)}`, {
+          method: 'PUT',
+          body: JSON.stringify({ sla_minutes: minutes }),
+        });
+        setStops((list) => list.map((s) => (s.stop_id === stop.stop_id ? { ...s, sla_minutes: minutes } : s)));
+      }
+      showToast(`✅ Đã cập nhật thời gian ${changed.length} chặng.`);
+      cancelTimingEdit();
+    } catch (e: any) {
+      showToast(`⚠️ ${e?.message || 'Cập nhật thời gian thất bại.'}`);
+    } finally { setTimingBusy(false); }
+  };
 
   const createVehicle = async () => {
     if (!form.license_plate.trim()) return showToast('⚠️ Nhập biển số xe!');
@@ -820,14 +1075,33 @@ const FleetView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void;
             {routes.map((r: any) => <option key={r.route_id} value={r.route_id}>{r.name}</option>)}
             {!routes.length && <option value="">— Chưa có lộ trình —</option>}
           </select>
+          {canEditTiming && stops.length > 0 && (
+            <button
+              className={timingEdit ? 'btn-secondary' : 'btn-primary'}
+              disabled={timingBusy}
+              onClick={() => (timingEdit ? cancelTimingEdit() : beginTimingEdit())}
+              style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 800, whiteSpace: 'nowrap' }}
+            >
+              {timingEdit ? <><XCircle size={13} /> Hủy chỉnh</> : <><CalendarClock size={13} /> Sửa thời gian</>}
+            </button>
+          )}
         </div>
         {routes.find((r: any) => r.route_id === routeId)?.description && (
           <div style={{ fontSize: '12px', color: MUTED, fontWeight: 600, marginBottom: '10px', lineHeight: 1.6 }}>
             {routes.find((r: any) => r.route_id === routeId)?.description}
           </div>
         )}
+        {stops.length > 0 && (
+          <div style={{ marginBottom: '10px', padding: '8px 11px', backgroundColor: '#F0FDFA', border: '1px solid #99F6E4', borderRadius: '9px', fontSize: '11.5px', fontWeight: 700, color: '#0F766E', lineHeight: 1.7 }}>
+            ⏱️ <b>Thời gian lộ trình:</b> mỗi điểm là thời gian di chuyển tối đa tính từ lúc check-in điểm trước
+            (điểm đầu tính từ giờ xuất phát). {canEditTiming
+              ? 'Kế toán / Giám đốc bấm “Sửa thời gian” để điều chỉnh linh hoạt theo thực tế.'
+              : 'Liên hệ Kế toán / Giám đốc để điều chỉnh thời gian.'}
+            {' '}Nếu đang có phiếu đổi lộ trình hiệu lực, thời gian trên phiếu được ưu tiên.
+          </div>
+        )}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {stops.map((s: any) => (
+          {stops.map((s: any, idx: number) => (
             <div key={s.stop_id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 11px', border: `1px solid ${BORDER}`, borderRadius: '10px', backgroundColor: 'var(--bg)' }}>
               <span style={{ width: '24px', height: '24px', flexShrink: 0, borderRadius: '999px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 900, backgroundColor: '#0F766E', color: '#fff' }}>
                 {s.stop_order}
@@ -840,9 +1114,27 @@ const FleetView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void;
                 </div>
                 <div style={{ fontSize: '11px', color: MUTED, fontWeight: 600, marginTop: '2px' }}>
                   {s.address ? `${s.address} • ` : ''}
-                  SLA {s.sla_minutes} phút • geofence {s.geofence_radius_m}m • {Number(s.latitude).toFixed(5)}, {Number(s.longitude).toFixed(5)}
+                  geofence {s.geofence_radius_m}m • {Number(s.latitude).toFixed(5)}, {Number(s.longitude).toFixed(5)}
                 </div>
               </div>
+              {timingEdit ? (
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '10.5px', fontWeight: 700, color: MUTED, flexShrink: 0 }}
+                  title={idx === 0 ? 'Thời gian từ lúc xuất phát đến điểm này' : 'Thời gian di chuyển từ điểm trước đến điểm này'}>
+                  <span>{idx === 0 ? 'Từ xuất phát' : 'Từ điểm trước'}</span>
+                  <input
+                    type="number" min={0} step={1}
+                    value={timingDraft[s.stop_id] ?? String(minutesOf(s))}
+                    onChange={(e) => setTimingDraft((d) => ({ ...d, [s.stop_id]: e.target.value }))}
+                    style={{ width: '68px', padding: '4px 6px', fontSize: '12px', fontWeight: 800, textAlign: 'center', borderRadius: '7px', border: `1px solid #5EEAD4` }}
+                  />
+                  <span>phút</span>
+                </label>
+              ) : (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 9px', borderRadius: '999px', backgroundColor: '#F0FDFA', color: '#0F766E', fontSize: '11px', fontWeight: 800, whiteSpace: 'nowrap', flexShrink: 0 }}
+                  title={idx === 0 ? 'Thời gian từ lúc xuất phát đến điểm này' : 'Thời gian di chuyển từ điểm trước đến điểm này'}>
+                  <Gauge size={12} /> {minutesOf(s)} phút
+                </span>
+              )}
               {s.stop_type === 'START' || s.stop_type === 'END'
                 ? pill('#0369A1', '#F0F9FF', s.stop_type === 'START' ? 'XUẤT PHÁT' : 'KẾT THÚC')
                 : pill('#475569', '#F1F5F9', 'GIAO HÀNG')}
@@ -854,6 +1146,28 @@ const FleetView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void;
             </div>
           )}
         </div>
+        {stops.length > 0 && (
+          <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '10px 12px', backgroundColor: timingEdit ? '#F0FDFA' : BG, border: `1px solid ${timingEdit ? '#5EEAD4' : BORDER}`, borderRadius: '10px' }}>
+            <span style={{ fontSize: '12.5px', fontWeight: 800, color: 'var(--text)' }}>
+              ⏱️ Tổng thời gian dự kiến cả lộ trình: <span style={{ color: '#0F766E' }}>{totalTiming} phút</span>
+            </span>
+            <span style={{ fontSize: '11px', color: MUTED, fontWeight: 600 }}>
+              {timingEdit ? 'Thời gian mỗi chặng tính từ lúc check-in điểm trước.' : 'Thời gian được áp dụng cho SLA và cảnh báo trễ trên Live Map + app tài xế.'}
+            </span>
+            {timingEdit && (
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: '7px', flexWrap: 'wrap' }}>
+                <button className="btn-primary" disabled={timingBusy} onClick={saveTiming}
+                  style={{ padding: '6px 14px', fontSize: '12px', fontWeight: 800 }}>
+                  {timingBusy ? 'Đang lưu…' : 'Lưu thời gian'}
+                </button>
+                <button className="btn-secondary" disabled={timingBusy} onClick={cancelTimingEdit}
+                  style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 800 }}>
+                  Hủy
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </Card>
     </div>
   );
@@ -1947,8 +2261,8 @@ const RouteChangesView: React.FC<{
                     <input type="number" step="0.000001" value={s.longitude} onChange={(e) => patchStop(idx, { longitude: Number(e.target.value) })}
                       style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12px', borderRadius: '7px', border: `1px solid ${BORDER}`, width: '100%' }} />
                   </label>
-                  <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, width: '74px' }}>
-                    SLA (phút)
+                  <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, width: '86px' }} title="Thời gian di chuyển tối đa từ điểm trước đến điểm này">
+                    Từ điểm trước (phút)
                     <input type="number" min={0} value={s.sla_minutes} onChange={(e) => patchStop(idx, { sla_minutes: Number(e.target.value) })}
                       style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12px', borderRadius: '7px', border: `1px solid ${BORDER}`, width: '100%' }} />
                   </label>
@@ -2034,7 +2348,7 @@ const RouteChangesView: React.FC<{
                         <span style={{ fontWeight: 900, color: '#7C3AED', width: '18px' }}>{s.stop_order}</span>
                         <span style={{ fontWeight: 800, color: 'var(--text)', flex: 1 }}>{s.name}</span>
                         <span style={{ fontSize: '10.5px', color: MUTED, fontWeight: 700 }}>
-                          {s.stop_type}{s.is_mandatory === false ? ' • tùy chọn' : ''} • SLA {s.sla_minutes}p
+                          {s.stop_type}{s.is_mandatory === false ? ' • tùy chọn' : ''} • ⏱ {s.sla_minutes} phút từ điểm trước
                         </span>
                       </div>
                     ))}
@@ -2085,6 +2399,8 @@ const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, al
   // Phiếu sạc: bỏ bước HR — Giám đốc hoặc Kế toán duyệt trực tiếp.
   const canApproveCharging = ['ADMIN', 'DIRECTOR', 'FINANCE'].includes(role);
   const canManage = ['ADMIN', 'FLEET_MANAGER'].includes(role);
+  // Thời gian lộ trình (SLA từng chặng): Admin / Quản lý đội xe / Kế toán / Giám đốc.
+  const canEditTiming = ['ADMIN', 'FLEET_MANAGER', 'FINANCE', 'DIRECTOR'].includes(role);
   // Phiếu đổi lộ trình: Admin / Nhân sự / Kế toán / Giám đốc tạo là có hiệu lực
   // ngay, không cần bước ký duyệt.
   const canCreateRouteChange = ['ADMIN', 'HR', 'FINANCE', 'DIRECTOR'].includes(role);
@@ -2159,7 +2475,7 @@ const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, al
       </div>
 
       {tab === 'map' && <LiveMapView showToast={toast} />}
-      {tab === 'fleet' && <FleetView allEmployees={allEmployees} showToast={toast} canManage={canManage} />}
+      {tab === 'fleet' && <FleetView allEmployees={allEmployees} showToast={toast} canManage={canManage} canEditTiming={canEditTiming} />}
       {tab === 'route-changes' && (
         <RouteChangesView showToast={toast} canCreate={canCreateRouteChange} currentUser={currentUser} />
       )}

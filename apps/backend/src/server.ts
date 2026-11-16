@@ -259,6 +259,14 @@ io.on('connection', socket => {
     socket.join(`role:${user.role}`);
   }
 
+  // Live Map vận chuyển: vai trò quản trị nhận GPS realtime để vẽ vệt đường đi.
+  // Trước đây phòng admin:live chỉ có client tự gửi 'ev:auth' (không client nào
+  // gửi), nên bản đồ chỉ cập nhật theo vòng poll 10s.
+  const EV_ADMIN_ROLES = ['ADMIN', 'HR', 'DIRECTOR', 'FLEET_MANAGER', 'FINANCE'];
+  if (EV_ADMIN_ROLES.includes(String(user.role || '').toUpperCase())) {
+    socket.join('admin:live');
+  }
+
   socket.on('disconnect', () => {
     // disconnected
   });
