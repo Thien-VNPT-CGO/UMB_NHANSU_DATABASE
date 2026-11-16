@@ -754,6 +754,32 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   private fullSyncDirty = false;
   /** Hẹn chạy lại full-sync khi hàng đợi append đang tồn đọng (tránh tranh quota). */
   private fullSyncDeferTimer: ReturnType<typeof setTimeout> | null = null;
+  // Ghi HÀNG LOẠT sự kiện điểm danh (backup ảnh lên Drive, dời sự kiện khi đổi NV):
+  // mỗi lượt updateAttendanceEvent đẩy nguyên tab SU_KIEN_DIEM_DANH, lặp N lượt sẽ
+  // thành N lần rewrite (N² dữ liệu). Trong khối bulk chỉ đánh dấu dirty, kết thúc
+  // khối mới đẩy đúng 1 lần nên không đốt quota mà vẫn bền.
+  private bulkEventsDepth = 0;
+  private bulkEventsDirty = false;
+
+  /** Mở khối ghi nhiều sự kiện điểm danh (phải đóng bằng endBulkAttendanceEvents). */
+  public beginBulkAttendanceEvents(): void {
+    this.bulkEventsDepth++;
+  }
+
+  /** Đóng khối ghi nhiều sự kiện: đẩy tab SU_KIEN_DIEM_DANH đúng 1 lần. */
+  public async endBulkAttendanceEvents(): Promise<void> {
+    if (this.bulkEventsDepth > 0) this.bulkEventsDepth--;
+    if (this.bulkEventsDepth > 0 || !this.bulkEventsDirty) return;
+    this.bulkEventsDirty = false;
+    if (!this.isConfigured) return;
+    try {
+      await this.syncService.pushEventsTab(this.fallbackAdapter);
+      this.lastSheetsWriteAt = new Date().toISOString();
+    } catch (err: any) {
+      console.warn('[GoogleSheetsAdapter] Đẩy tab sự kiện sau ghi hàng loạt thất bại (full-sync nền sẽ thử lại):', err?.message || err);
+      this.scheduleFullSync('SU_KIEN_DIEM_DANH.bulk');
+    }
+  }
 
   /** Hoãn full-sync (gộp 1 hẹn duy nhất) — tránh xếp hàng nhiều lượt. */
   private deferFullSync(ms: number) {
@@ -1559,8 +1585,8 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         // Giữ giờ máy khách (kèm múi giờ +07:00) để lọc đúng ngày Việt Nam
         sheetDateTimeText((snapshot as any).client_time || ''),
         // Cờ trễ/sớm (phạt lương): Sheet phải lưu, pull mới khôi phục được
-        (snapshot as any).is_late ? 'YES' : '',
-        (snapshot as any).is_early ? 'YES' : '',
+        (snapshot as any).is_late === true ? 'YES' : ((snapshot as any).is_late === false ? 'NO' : ''),
+        (snapshot as any).is_early === true ? 'YES' : ((snapshot as any).is_early === false ? 'NO' : ''),
         Number((snapshot as any).minutes_deviation) || 0,
         // Phạt trễ ghi nhận ngay lúc check-in (ràng buộc chặt 10p:30k • 30p:50% • 60p:100%)
         (snapshot as any).fine_tier || 'NONE',
@@ -1578,9 +1604,33 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateAttendanceEvent(eventId: string, patch: any) {
     const res = await this.fallbackAdapter.updateAttendanceEvent(eventId, patch);
-    // Đẩy Sheet nền có debounce để không spam rewrite tab làm nghẽn quota/khóa queue
+    // Chỉ cập nhật ảnh/Drive object (job backup ảnh, retry upload lỗi): không đụng
+    // cờ trễ/phạt nên KHÔNG cần rewrite nguyên tab ngay — các job này tự đẩy tab
+    // 1 lần ở cuối, còn lưới an toàn full-sync vẫn chạy nền.
+    const touched = Object.keys(patch || {});
+    const onlyPhotoMeta = touched.length > 0 && touched.every(k => k === 'drive_object_id' || k === 'event_photo');
+    if (this.isConfigured && onlyPhotoMeta) {
+      this.scheduleFullSync('SU_KIEN_DIEM_DANH.photo');
+      return res;
+    }
+    // Ghi NGAY tab SU_KIEN_DIEM_DANH (await được): duyệt bù công/xóa phạt trễ chỉ
+    // sửa cờ trên sự kiện, nếu chỉ hẹn full-sync nền (tối thiểu 180s) thì lượt
+    // pull kế tiếp đọc dòng Sheet cũ (created_at bằng nhau -> bản Sheet thắng) sẽ
+    // hồi sinh mức phạt vừa xóa. Đẩy tab ngay để "duyệt xong là bền", không revert.
     if (this.isConfigured) {
-      this.scheduleFullSync('SU_KIEN_DIEM_DANH.update');
+      if (this.bulkEventsDepth > 0) {
+        // Trong khối ghi hàng loạt: chỉ đánh dấu, cuối khối đẩy 1 lần.
+        this.bulkEventsDirty = true;
+      } else {
+        try {
+          await this.syncService.pushEventsTab(this.fallbackAdapter);
+          this.lastSheetsWriteAt = new Date().toISOString();
+        } catch (err: any) {
+          console.warn('[GoogleSheetsAdapter] Đẩy tab sự kiện sau cập nhật thất bại (full-sync nền sẽ thử lại):', (err as any)?.message || err);
+          // Đẩy ngay rớt (mạng/quota): vẫn còn lưới an toàn full-sync nền.
+          this.scheduleFullSync('SU_KIEN_DIEM_DANH.update');
+        }
+      }
     }
     return res;
   }

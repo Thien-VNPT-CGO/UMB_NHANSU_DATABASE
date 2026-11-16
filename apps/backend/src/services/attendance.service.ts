@@ -1512,10 +1512,15 @@ export class AttendanceService {
           // Duyệt = xóa vi phạm: gỡ cờ trễ + phạt trên mọi lượt IN/OUT của ca ĐÚNG
           // NGÀY phiếu (không phải assignment cũ gắn nhầm) để NV không bị tính vi
           // phạm (lưới realtime + kỳ lương đều đọc từ đây).
+          let adjEmp = '';
+          let adjAssign = '';
+          let adjDay = '';
           try {
-            const adjEmp = (updated as any).employee_id;
+            adjEmp = String((updated as any).employee_id || '');
             const fixedShift = await this.resolveAdjustmentShift((updated as any).employee_id, (updated as any).assignment_id, (updated as any).reason).catch(() => null);
-            const adjAssign = (fixedShift as any)?.assignment_id || (updated as any).assignment_id;
+            adjAssign = String((fixedShift as any)?.assignment_id || (updated as any).assignment_id || '');
+            adjDay = String((fixedShift as any)?.date || '').slice(0, 10)
+              || AttendanceService.incidentDateOf((updated as any).reason);
             if (adjEmp && adjAssign) {
               const evts = await this.repo.getAttendanceEvents(adjEmp).catch(() => []);
               for (const e of evts || []) {
@@ -1532,6 +1537,21 @@ export class AttendanceService {
               }
             }
           } catch { /* best-effort */ }
+          // Tuần cũ đã archive: lượt điểm danh không còn ở bộ nhớ realtime. Duyệt
+          // bù công sau mốc archive vẫn phải gỡ phạt trong kho lưu trữ, nếu không
+          // kỳ lương đọc kho sẽ tự suy trễ từ giờ vào ca và phạt 100% lần nữa.
+          try {
+            const syncSvc: any = (this.repo as any)?.syncService;
+            if (syncSvc?.getArchivedAttendanceEvents && syncSvc?.clearArchivedEventFines && adjEmp && adjAssign && adjDay) {
+              const archived: any[] = await syncSvc.getArchivedAttendanceEvents(adjDay, adjDay, adjEmp) || [];
+              const ids = (archived || [])
+                .filter((e: any) => String((e as any)?.assignment_id || '') === adjAssign
+                  && ['CHECK_IN', 'CHECK_OUT'].includes(String((e as any)?.type || '').toUpperCase()))
+                .map((e: any) => String((e as any)?.event_id || ''))
+                .filter(Boolean);
+              if (ids.length > 0) violationCleared += await syncSvc.clearArchivedEventFines(ids).catch(() => 0) || 0;
+            }
+          } catch { /* best-effort */ }
         }
         if (this.io && (backfilled.length > 0 || violationCleared > 0)) {
           this.io.emit('data:updated', { entity: 'attendance', data: { action: 'adjustment-backfill', adjId }, timestamp: new Date().toISOString() });
@@ -1545,6 +1565,101 @@ export class AttendanceService {
         return { ...updated, _backfilled: backfilled, _violationCleared: violationCleared } as any;
       },
     });
+  }
+
+  /**
+   * Tự chữa "phiếu bù công đã duyệt mà ca vẫn còn phạt".
+   *
+   * Trước bản fix này, sau khi HR duyệt, bản ghi Sheet cũ (Trễ=YES, Phạt=100%)
+   * có thể được pull đè ngược lên bộ nhớ trước khi bản sửa kịp lên Sheet, khiến
+   * cờ trễ/phạt "sống lại" vĩnh viễn. Hàm này quét các phiếu ĐÃ DUYỆT gần đây rồi
+   * gỡ lại cờ trễ/phạt trên đúng ca (live + kho lưu trữ tuần cũ) và đẩy Sheet —
+   * idempotent, chỉ chạy 1 lần sau khi server đã pull xong dữ liệu.
+   */
+  async repairApprovedAdjustmentFines(opts?: { days?: number }): Promise<{ checked: number; cleared: number; archivedCleared: number }> {
+    const days = Math.max(1, Math.min(180, Number(opts?.days) || 45));
+    const since = Date.now() - days * 86_400_000;
+    const all = await this.repo.listAttendanceAdjustments().catch(() => [] as any[]);
+    const approved = (all || []).filter((a: any) => {
+      if (String(a?.status || '').toUpperCase() !== 'APPROVED') return false;
+      if (!AttendanceService.adjustmentKindOf(a?.reason)) return false;
+      const idMs = Number(String(a?.adjustment_id || '').match(/^ADJ_(\d{10,13})/)?.[1] || 0);
+      const t = idMs || Date.parse(String(a?.created_at || '')) || Date.now();
+      return t >= since;
+    });
+    if (approved.length === 0) return { checked: 0, cleared: 0, archivedCleared: 0 };
+
+    // Gộp theo nhân viên: mỗi NV chỉ đọc danh sách sự kiện 1 lần.
+    const byEmp = new Map<string, any[]>();
+    for (const a of approved) {
+      const emp = String(a?.employee_id || '');
+      if (!emp) continue;
+      if (!byEmp.has(emp)) byEmp.set(emp, []);
+      byEmp.get(emp)!.push(a);
+    }
+
+    let cleared = 0;
+    const archivedIds = new Set<string>();
+    try { (this.repo as any)?.beginBulkAttendanceEvents?.(); } catch { /* adapter không hỗ trợ */ }
+    try {
+      for (const [emp, adjs] of byEmp) {
+        const evts = await this.repo.getAttendanceEvents(emp).catch(() => [] as any[]);
+        for (const adj of adjs) {
+          const fixedShift = await this.resolveAdjustmentShift(emp, adj.assignment_id, adj.reason).catch(() => null);
+          const assign = String((fixedShift as any)?.assignment_id || adj.assignment_id || '');
+          if (!assign) continue;
+          for (const e of evts || []) {
+            if (String((e as any)?.assignment_id || '') !== assign) continue;
+            const type = String((e as any)?.type || '').toUpperCase();
+            if (type !== 'CHECK_IN' && type !== 'CHECK_OUT') continue;
+            const stillFined = (e as any)?.is_late === true
+              || Number((e as any)?.minutes_deviation) > 0
+              || Number((e as any)?.fine_amount) > 0
+              || (!!(e as any)?.fine_tier && (e as any)?.fine_tier !== 'NONE');
+            if (!stillFined) continue;
+            const patch: any = { is_late: false, minutes_deviation: 0, fine_tier: 'NONE', fine_amount: 0 };
+            const saved = await this.repo.updateAttendanceEvent(String((e as any)?.event_id || ''), patch).catch(() => null);
+            if (!saved) continue;
+            Object.assign(e as any, patch);
+            cleared++;
+          }
+          // Tuần đã archive: nhặt event_id để gỡ phạt trong kho (ghi 1 lượt sau).
+          const syncSvc: any = (this.repo as any)?.syncService;
+          const day = String((fixedShift as any)?.date || '').slice(0, 10) || AttendanceService.incidentDateOf(adj.reason);
+          if (syncSvc?.getArchivedAttendanceEvents && day) {
+            const archived: any[] = await syncSvc.getArchivedAttendanceEvents(day, day, emp).catch(() => []) || [];
+            for (const e of archived || []) {
+              if (String((e as any)?.assignment_id || '') !== assign) continue;
+              if (!['CHECK_IN', 'CHECK_OUT'].includes(String((e as any)?.type || '').toUpperCase())) continue;
+              const id = String((e as any)?.event_id || '');
+              if (id) archivedIds.add(id);
+            }
+          }
+        }
+      }
+    } finally {
+      try { await (this.repo as any)?.endBulkAttendanceEvents?.(); } catch { /* best-effort */ }
+    }
+
+    let archivedCleared = 0;
+    if (archivedIds.size > 0) {
+      const syncSvc: any = (this.repo as any)?.syncService;
+      archivedCleared = Number(await syncSvc?.clearArchivedEventFines?.([...archivedIds]).catch(() => 0)) || 0;
+    }
+
+    if (cleared > 0 || archivedCleared > 0) {
+      console.log(`[attendance] Tự chữa phạt oan sau khi duyệt bù công: live=${cleared}, lưu trữ=${archivedCleared}.`);
+      if (this.io) {
+        try {
+          this.io.emit('data:updated', {
+            entity: 'attendance',
+            data: { action: 'repair-approved-adjustments', cleared, archivedCleared },
+            timestamp: new Date().toISOString(),
+          });
+        } catch { /* non-fatal */ }
+      }
+    }
+    return { checked: approved.length, cleared, archivedCleared };
   }
 
   /**

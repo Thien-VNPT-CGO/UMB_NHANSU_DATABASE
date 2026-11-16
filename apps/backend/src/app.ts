@@ -6715,7 +6715,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/attendance/adjustments', authMiddleware, validate({ body: adjustmentCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.employeeId || req.body.employeeId;
-      const result = await attendanceService.requestAdjustment({
+      const queued: any = await attendanceService.requestAdjustment({
         ...req.body,
         employeeId,
         // Client gửi snake_case photo_base64, service nhận camelCase photoBase64.
@@ -6723,8 +6723,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         // Ngày sự cố NV chọn — chốt đúng ca, chống gắn nhầm ca ngày khác.
         incidentDate: req.body.incidentDate || req.body.incident_date,
       });
+      // Service trả {operationId, result} của hàng đợi ghi — bóc lớp wrapper để
+      // client/realtime nhận đúng adjustment_id (trước đây id bị undefined).
+      const result: any = queued?.result ?? queued;
       // Realtime 100%: HR/Store thấy phiếu + ảnh bằng chứng ngay, không đợi poll 15s.
-      broadcastUpdate('adjustments', { action: 'created', id: (result as any)?.adjustment_id, employeeId });
+      broadcastUpdate('adjustments', { action: 'created', id: result?.adjustment_id, employeeId });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });

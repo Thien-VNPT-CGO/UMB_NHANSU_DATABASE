@@ -289,11 +289,18 @@ export class SchedulesService {
         // Dời lượt điểm danh theo ca sang NV mới (giữ nguyên giờ giấc bằng chứng).
         let movedEvents = 0;
         if (hasAtt && newEmp !== String(sh.employee_id || '')) {
-          for (const ev of linked) {
-            try {
-              await this.repo.updateAttendanceEvent((ev as any).event_id, { employee_id: newEmp } as any);
-              movedEvents++;
-            } catch { /* giữ bản gốc khi rớt */ }
+          // Gộp 1 lượt đẩy tab SU_KIEN_DIEM_DANH cho cả cụm in/out (adapter
+          // Google Sheets: mỗi lượt update sẽ rewrite nguyên tab).
+          try { (this.repo as any)?.beginBulkAttendanceEvents?.(); } catch { /* adapter không hỗ trợ */ }
+          try {
+            for (const ev of linked) {
+              try {
+                await this.repo.updateAttendanceEvent((ev as any).event_id, { employee_id: newEmp } as any);
+                movedEvents++;
+              } catch { /* giữ bản gốc khi rớt */ }
+            }
+          } finally {
+            try { await (this.repo as any)?.endBulkAttendanceEvents?.(); } catch { /* best-effort */ }
           }
         }
         const updated = await this.repo.updateShiftAssignment(assignmentId, patch);

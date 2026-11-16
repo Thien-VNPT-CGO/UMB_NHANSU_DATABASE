@@ -312,7 +312,15 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'LUUTRU_CHAMCONG_TUAN',
-    headers: ['ID Sự Kiện', 'ID Ca', 'ID Nhân Viên', 'Loại (IN/OUT)', 'Thời Gian Máy Chủ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Khoảng Cách (m)', 'Trạng Thái GPS', 'Ảnh Drive Object', 'ID Yêu Cầu', 'Tuần Lưu Trữ'],
+    // Giữ đủ cột quyết định lương như tab realtime: tuần cũ archive đi mà mất
+    // cờ trễ/phạt thì kỳ lương tính sau đó tự suy lại từ giờ vào ca và phạt oan
+    // ca đã được duyệt bù công.
+    headers: [
+      'ID Sự Kiện', 'ID Ca', 'ID Nhân Viên', 'Loại (IN/OUT)', 'Thời Gian Máy Chủ',
+      'Vĩ Độ GPS', 'Kinh Độ GPS', 'Khoảng Cách (m)', 'Trạng Thái GPS', 'Ảnh Drive Object',
+      'ID Yêu Cầu', 'Hồng Đồng Phục (%)', 'Giờ Máy Khách',
+      'Trễ (YES/NO)', 'Sớm (YES/NO)', 'Lệch (phút)', 'Phạt (nấc)', 'Phạt (đ)',
+    ],
   },
   {
     title: 'DON_NGHI_PHEP',
@@ -5888,7 +5896,9 @@ export class GoogleSheetsSyncService {
       e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
       e.drive_object_id || '', e.request_id || '', e.uniform_pink_ratio ?? '',
       sheetDateTimeText(e.client_time || ''),
-      e.is_late ? 'YES' : '', e.is_early ? 'YES' : '', Number(e.minutes_deviation) || 0,
+      e.is_late === true ? 'YES' : (e.is_late === false ? 'NO' : ''),
+      e.is_early === true ? 'YES' : (e.is_early === false ? 'NO' : ''),
+      Number(e.minutes_deviation) || 0,
       e.fine_tier || 'NONE', Number(e.fine_amount) || 0,
     ]);
     // BETA partition: tab SU_KIEN_DIEM_DANH có thể đã chia part -> ghi qua các part
@@ -6929,6 +6939,12 @@ export class GoogleSheetsSyncService {
         e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
         e.drive_object_id || '', e.request_id || '', (e as any).uniform_pink_ratio ?? '',
         sheetDateTimeText(e.client_time || ''),
+        // Cờ trễ/sớm + mức phạt phải đi theo tuần cũ: mất ở đây thì kỳ lương
+        // tính lại từ giờ vào ca -> ca đã duyệt bù công vẫn bị phạt 100%.
+        e.is_late === true ? 'YES' : (e.is_late === false ? 'NO' : ''),
+        e.is_early === true ? 'YES' : (e.is_early === false ? 'NO' : ''),
+        Number(e.minutes_deviation) || 0,
+        e.fine_tier || 'NONE', Number(e.fine_amount) || 0,
       ]);
     if (rows.length > 0 && this.sheetsClient) {
       try {
@@ -6951,7 +6967,9 @@ export class GoogleSheetsSyncService {
           e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
           e.drive_object_id || '', e.request_id || '', (e as any).uniform_pink_ratio ?? '',
           sheetDateTimeText(e.client_time || ''),
-          e.is_late ? 'YES' : '', e.is_early ? 'YES' : '', Number(e.minutes_deviation) || 0,
+          e.is_late === true ? 'YES' : (e.is_late === false ? 'NO' : ''),
+          e.is_early === true ? 'YES' : (e.is_early === false ? 'NO' : ''),
+          Number(e.minutes_deviation) || 0,
           e.fine_tier || 'NONE', Number(e.fine_amount) || 0,
         ]);
         const def = SHEETS_DEFINITIONS.find(dd => dd.title === 'SU_KIEN_DIEM_DANH')!;
@@ -7010,6 +7028,13 @@ export class GoogleSheetsSyncService {
         drive_object_id: (r[9] || '').trim() || undefined,
         request_id: (r[10] || '').trim() || undefined,
         client_time: wall,
+        // Dòng archive cũ (≤13 cột) không có mấy cột này -> để undefined để nơi
+        // tính lương còn suy bù từ giờ vào ca; dòng mới giữ đúng cờ/phạt gốc.
+        is_late: r[13] === 'YES' ? true : (r[13] ? false : undefined),
+        is_early: r[14] === 'YES' ? true : (r[14] ? false : undefined),
+        minutes_deviation: numOrUndef(r[15]),
+        fine_tier: (r[16] || '').trim() || undefined,
+        fine_amount: numOrUndef(r[17]),
         archived: true,
       });
     }
@@ -7039,6 +7064,41 @@ export class GoogleSheetsSyncService {
       type: String(gone[3] || '').trim(),
     };
   };
+
+  /**
+   * Gỡ cờ trễ + mức phạt của các lượt điểm danh ĐÃ LƯU TRỮ (tuần cũ). Dùng khi
+   * phiếu bù công được duyệt SAU mốc archive tuần — kho lưu trữ chỉ đọc với
+   * luồng thường, nhưng "duyệt = xóa vi phạm" phải áp cho cả tuần đã archive,
+   * nếu không kỳ lương sẽ tính lại trễ từ giờ vào ca và phạt 100% lần nữa.
+   * Gộp 1 lượt đọc/ghi toàn kho (không rewrite N lần).
+   */
+  public async clearArchivedEventFines(eventIds: string[]): Promise<number> {
+    const ids = new Set((eventIds || []).map(id => String(id || '').trim()).filter(Boolean));
+    if (ids.size === 0 || !this.sheetsClient) return 0;
+    const rows = await this.readPartitionedRows('LUUTRU_CHAMCONG_TUAN').catch(() => [] as string[][]);
+    let fixed = 0;
+    const next = (rows || []).map(r => {
+      const id = String((r as any)?.[0] || '').trim();
+      if (!ids.has(id)) return r;
+      if (String((r as any)?.[13] || '').toUpperCase() === 'NO'
+        && !Number((r as any)?.[17])
+        && (!(r as any)?.[16] || String((r as any)[16]).toUpperCase() === 'NONE')) {
+        return r; // đã sạch, không cần ghi lại
+      }
+      const row = [...(r as any[])];
+      while (row.length < 18) row.push('');
+      row[13] = 'NO';        // Trễ = NO (đã được duyệt)
+      row[15] = '0';         // Lệch 0 phút
+      row[16] = 'NONE';      // Không phạt
+      row[17] = '0';
+      fixed++;
+      return row;
+    });
+    if (fixed === 0) return 0;
+    await this.rewritePartitionedTab('LUUTRU_CHAMCONG_TUAN', next as any[][]);
+    this.invalidateArchivedAttendanceCache();
+    return fixed;
+  }
 
   /** Tải bytes ảnh từ Google Drive (để xem trực tiếp / đóng gói ZIP tải về). */
   public async downloadDriveFile(fileId: string): Promise<{ buffer: Buffer; mimeType: string }> {

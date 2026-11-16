@@ -47,6 +47,27 @@ export function isStoredFineStillValid(storedTier: string | undefined, lateMin: 
 }
 
 /**
+ * Số phút trễ của 1 lượt check-in — DÙNG CHUNG cho mọi báo cáo/kỳ lương.
+ *
+ * Quy tắc:
+ * - `is_late === true`: lấy đúng số phút server đã ghi lúc check-in.
+ * - `is_late === false`: server/HR đã xác nhận ĐÚNG GIỜ (kể cả ca vừa được
+ *   duyệt bù công/xóa phạt) -> 0 phút. Trước đây nhánh false bị coi là "mất cờ"
+ *   rồi tính lại từ giờ vào ca nên duyệt bù công xong lương vẫn phạt trễ.
+ * - `undefined/null` (dòng Sheet cũ chưa có cột cờ): tính bù từ giờ vào ca.
+ */
+export function lateMinutesOfEvent(inEvt: any, shiftStartAt?: string): number {
+  const flag = inEvt?.is_late;
+  if (flag === true) return Math.max(0, Math.floor(Number(inEvt?.minutes_deviation) || 0));
+  if (flag === false) return 0;
+  if (!inEvt) return 0;
+  const st = new Date(String(shiftStartAt || '')).getTime();
+  const ct = new Date(String(inEvt?.client_time || '')).getTime();
+  if (!Number.isFinite(st) || !Number.isFinite(ct)) return 0;
+  return Math.max(0, Math.round((ct - st) / 60000));
+}
+
+/**
  * Chia sự kiện điểm danh trong ngày cho các ca: khớp cứng assignment_id trước,
  * phiếu sót (assignment rỗng / trỏ ca đã hủy-không tồn tại, VD sau khi HR xếp
  * lại lịch đổi mã ca) bù cho ca còn thiếu chân theo thứ tự (ưu tiên ca đã có
@@ -470,14 +491,7 @@ export class PayrollService {
               continue;
             }
             // Cờ trễ có thể mất sau vòng pull Sheet cũ -> tính bù từ giờ check-in so với giờ vào ca.
-            const lateMin = inEvt.is_late
-              ? Number(inEvt.minutes_deviation) || 0
-              : (() => {
-                  const st = new Date(s.start_at).getTime();
-                  const ct = new Date(inEvt.client_time).getTime();
-                  if (!Number.isFinite(st) || !Number.isFinite(ct)) return 0;
-                  return Math.max(0, Math.round((ct - st) / 60000));
-                })();
+            const lateMin = lateMinutesOfEvent(inEvt, s.start_at);
             // Ưu tiên mức phạt đã ghi nhận lúc check-in (ràng buộc chặt, không tính lại).
             const storedTier = (inEvt as any).fine_tier;
             const storedAmt = Number((inEvt as any).fine_amount) || 0;
@@ -1263,14 +1277,7 @@ export class PayrollService {
               absentShifts++;
               continue;
             }
-            const lateMin = inEvt.is_late
-              ? Number(inEvt.minutes_deviation) || 0
-              : (() => {
-                  const st = new Date(s.start_at).getTime();
-                  const ct = new Date(inEvt.client_time).getTime();
-                  if (!Number.isFinite(st) || !Number.isFinite(ct)) return 0;
-                  return Math.max(0, Math.round((ct - st) / 60000));
-                })();
+            const lateMin = lateMinutesOfEvent(inEvt, s.start_at);
             const storedTier = (inEvt as any).fine_tier;
             const storedAmt = Number((inEvt as any).fine_amount) || 0;
             const useStored = isStoredFineStillValid(storedTier, lateMin);
@@ -2467,14 +2474,7 @@ export class PayrollService {
         absent++;
         continue;
       }
-      const lateMin = (inEvt as any).is_late
-        ? Number((inEvt as any).minutes_deviation) || 0
-        : (() => {
-            const st = new Date((s as any).start_at).getTime();
-            const ct = new Date((inEvt as any).client_time).getTime();
-            if (!Number.isFinite(st) || !Number.isFinite(ct)) return 0;
-            return Math.max(0, Math.round((ct - st) / 60000));
-          })();
+      const lateMin = lateMinutesOfEvent(inEvt, (s as any).start_at);
       const storedTier = String((inEvt as any).fine_tier || '');
       const storedAmt = Number((inEvt as any).fine_amount) || 0;
       const useStored = isStoredFineStillValid(storedTier, lateMin);
@@ -2629,14 +2629,7 @@ export class PayrollService {
           absentShifts++;
           continue;
         }
-        const lateMin = inEvt.is_late
-          ? Number(inEvt.minutes_deviation) || 0
-          : (() => {
-              const st = new Date(s.start_at).getTime();
-              const ct = new Date(inEvt.client_time).getTime();
-              if (!Number.isFinite(st) || !Number.isFinite(ct)) return 0;
-              return Math.max(0, Math.round((ct - st) / 60000));
-            })();
+        const lateMin = lateMinutesOfEvent(inEvt, s.start_at);
         const storedTier = (inEvt as any).fine_tier;
         const storedAmt = Number((inEvt as any).fine_amount) || 0;
         const useStored = isStoredFineStillValid(storedTier, lateMin);
@@ -2848,14 +2841,7 @@ export class PayrollService {
         let fineTier = 'NONE';
         let fineAmt = 0;
         if (inEvt && hasOut) {
-          lateMin = (inEvt as any).is_late
-            ? Number((inEvt as any).minutes_deviation) || 0
-            : (() => {
-                const st = new Date((s as any).start_at).getTime();
-                const ct = new Date((inEvt as any).client_time).getTime();
-                if (!Number.isFinite(st) || !Number.isFinite(ct)) return 0;
-                return Math.max(0, Math.round((ct - st) / 60000));
-              })();
+          lateMin = lateMinutesOfEvent(inEvt, (s as any).start_at);
           const storedTier = String((inEvt as any).fine_tier || '');
           const storedAmt = Number((inEvt as any).fine_amount) || 0;
           const useStored = isStoredFineStillValid(storedTier, lateMin);

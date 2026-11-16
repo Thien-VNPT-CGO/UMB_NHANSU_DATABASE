@@ -383,6 +383,29 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
   // retry dồn dập càng làm pull kế tiếp khó thành công.
   let pullFailStreak = 0;
   let nextPullAllowedAt = 0;
+  // Chỉ tự chữa phạt oan 1 lần/phiên, sau khi đã pull xong dữ liệu (xem
+  // AttendanceService.repairApprovedAdjustmentFines).
+  let fineRepairDone = false;
+  const repairApprovedFinesOnce = () => {
+    if (fineRepairDone) return;
+    fineRepairDone = true;
+    (async () => {
+      // Bản vá dữ liệu chạy ĐÚNG 1 LẦN cho mỗi hệ thống (lưu mốc vào cấu hình):
+      // chỉ dọn phạt oan tồn đọng từ lỗi cũ, không đụng các mức phạt HR cố ý ghi
+      // nhận về sau. Lỗi giữa đường thì không lưu mốc -> lần khởi động sau chạy lại.
+      const settings: any = await adapter.getSystemSettings().catch(() => ({}));
+      if (settings?.attendanceFineRepairV1At) return;
+      const r = await services.attendanceService.repairApprovedAdjustmentFines();
+      await adapter.updateSystemSettings({
+        ...(settings || {}),
+        attendanceFineRepairV1At: new Date().toISOString(),
+        attendanceFineRepairV1Result: r,
+      }).catch(() => null);
+      if (r.cleared > 0 || r.archivedCleared > 0) {
+        console.log(`[attendance-repair] Đã gỡ phạt oan cho ${r.cleared} lượt live + ${r.archivedCleared} lượt lưu trữ (phiếu bù công đã duyệt).`);
+      }
+    })().catch((err: any) => console.warn('[attendance-repair] lỗi:', err?.message || err));
+  };
   const autoPullSheetsTick = async () => {
     if (postgresMode) return;
     if (Date.now() < nextPullAllowedAt) return;
@@ -396,6 +419,9 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
         if (pullRes?.success) {
           pullFailStreak = 0;
           nextPullAllowedAt = 0;
+          // Dữ liệu đã sẵn trong bộ nhớ -> gỡ phạt oan của ca có phiếu bù công
+          // đã duyệt (bản Sheet cũ từng đè ngược cờ trễ/phạt).
+          repairApprovedFinesOnce();
         } else if (pullRes) {
           pullFailStreak += 1;
           const waitMs = Math.min(60_000, 10_000 * 2 ** Math.min(pullFailStreak - 1, 3));
@@ -417,6 +443,8 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
   // trên Sheet đã có webhook onEdit pull riêng đúng tab.
   const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 15_000;
   setInterval(autoPullSheetsTick, syncIntervalMs);
+  // PostgreSQL: không có vòng pull Sheets nên tự chữa phạt oan ngay sau khởi động.
+  if (postgresMode) setTimeout(repairApprovedFinesOnce, 20_000);
 
   // ỨNG VIÊN có nhịp riêng, nhanh hơn vòng pull nền: chỉ đọc nguồn form (1
   // request) + master overlay (1 request). Nhờ vậy hồ sơ mới lên web trong ~10s
