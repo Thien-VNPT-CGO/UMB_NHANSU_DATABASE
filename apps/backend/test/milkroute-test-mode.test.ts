@@ -5,7 +5,7 @@ import { EVRouteService } from '../src/services/milkroute/ev-route.service.js';
 import { EVShiftService } from '../src/services/milkroute/ev-shift.service.js';
 import { EVCheckinService } from '../src/services/milkroute/ev-checkin.service.js';
 import { EVPayrollService } from '../src/services/milkroute/ev-payroll.service.js';
-import { EV_TEST_SHIFT_MARK } from '../src/services/milkroute/ev-test-mode.js';
+import { EV_TEST_SHIFT_MARK, isEvTestModeEnabled } from '../src/services/milkroute/ev-test-mode.js';
 import { DEFAULT_EV_PAYROLL_CONFIG } from '@ubm/shared';
 
 /**
@@ -92,6 +92,16 @@ async function setup(driverId = 'EMP_DRIVER_T1') {
 const setTestMode = (repo: MockSheetsAdapter, enabled: boolean) => {
   (repo as any).systemSettings.ev_test_mode = { enabled };
 };
+
+test('Đọc cờ Test qua cả repo trực tiếp và adapter Google Sheets (ủy quyền fallback)', () => {
+  // Mock / PostgreSQL: systemSettings nằm ngay trên repo.
+  assert.equal(isEvTestModeEnabled({ systemSettings: { ev_test_mode: { enabled: true } } }), true);
+  assert.equal(isEvTestModeEnabled({ systemSettings: { ev_test_mode: { enabled: false } } }), false);
+  assert.equal(isEvTestModeEnabled({ systemSettings: {} }), false);
+  // GoogleSheetsAdapter: dữ liệu nằm trong MockSheetsAdapter bên trong.
+  assert.equal(isEvTestModeEnabled({ getMockAdapter: () => ({ systemSettings: { ev_test_mode: { enabled: true } } }) }), true);
+  assert.equal(isEvTestModeEnabled({ getMockAdapter: () => ({ systemSettings: {} }) }), false);
+});
 
 test('Bật Test: bấm điểm ở xa 5km, sai số 2000m, sai thứ tự vẫn được và ca được đánh dấu', async () => {
   const { repo, shift, branch, checkins } = await setup();

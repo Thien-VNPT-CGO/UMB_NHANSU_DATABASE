@@ -16,7 +16,12 @@ export const EV_TEST_SHIFT_MARK = '[TEST_MODE]';
 
 /** Cờ Test đang bật? Chấp nhận cả dạng boolean cũ và object mới. */
 export function isEvTestModeEnabled(repo: any): boolean {
-  const raw = repo?.systemSettings?.[EV_TEST_MODE_KEY];
+  // Google Sheets adapter ủy quyền dữ liệu cho MockSheetsAdapter bên trong;
+  // PostgreSQL dùng trực tiếp repo. Đọc cả 2 đường để không phụ thuộc adapter.
+  const settings = repo?.systemSettings
+    ?? repo?.getMockAdapter?.()?.systemSettings
+    ?? {};
+  const raw = settings?.[EV_TEST_MODE_KEY];
   if (!raw) return false;
   if (raw === true) return true;
   if (typeof raw === 'object') return raw.enabled === true || raw.enabled === 'true';
