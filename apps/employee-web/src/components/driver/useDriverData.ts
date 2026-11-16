@@ -25,6 +25,8 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   const [weekShifts, setWeekShifts] = useState<any[]>([]);
   const [detail, setDetail] = useState<any>(null);
   const [tickets, setTickets] = useState<any[]>([]);
+  const [explanationCandidates, setExplanationCandidates] = useState<any[]>([]);
+  const [explanationTickets, setExplanationTickets] = useState<any[]>([]);
   const [payroll, setPayroll] = useState<any[]>([]);
   const [history, setHistory] = useState<any[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -72,6 +74,11 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
       const tks: any = await apiRequest('/ev/me/charging-tickets', NO_CACHE).catch(() => []);
       setTickets(Array.isArray(tks) ? tks : []);
 
+      const cands: any = await apiRequest('/ev/me/explanation-candidates', NO_CACHE).catch(() => []);
+      setExplanationCandidates(Array.isArray(cands) ? cands : []);
+      const exps: any = await apiRequest('/ev/me/explanation-tickets', NO_CACHE).catch(() => []);
+      setExplanationTickets(Array.isArray(exps) ? exps : []);
+
       const pay: any = await apiRequest('/ev/me/payroll', NO_CACHE).catch(() => []);
       setPayroll(Array.isArray(pay) ? pay : pay ? [pay] : []);
 
@@ -96,11 +103,12 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
 
   // Ca đang chạy hoặc còn phiếu chờ duyệt → tự làm mới (HR/GĐ duyệt xong thấy ngay).
   useEffect(() => {
-    const hasPending = tickets.some((t: any) => t.status === 'PENDING_HR' || t.status === 'PENDING_DIRECTOR');
+    const hasPending = tickets.some((t: any) => t.status === 'PENDING_HR' || t.status === 'PENDING_DIRECTOR')
+      || explanationTickets.some((t: any) => t.status === 'PENDING');
     const every = isRunning || hasPending ? 30_000 : 90_000;
     const timer = setInterval(() => { void load(true); }, every);
     return () => clearInterval(timer);
-  }, [tickets, isRunning, load]);
+  }, [tickets, explanationTickets, isRunning, load]);
 
   // Đồng hồ SLA 1s/lần khi ca đang chạy.
   useEffect(() => {
@@ -307,6 +315,37 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
     } finally { setBusy(null); }
   };
 
+  const createExplanation = async (input: {
+    reason: string;
+    items: Array<{ shift_id: string; stop_id: string }>;
+    photos: Array<{ data_url: string; mime_type?: string; name?: string }>;
+  }): Promise<boolean> => {
+    if (!input.items.length) { showToast('⚠️ Chọn ít nhất 1 điểm cần giải trình.'); return false; }
+    if (!input.reason.trim()) { showToast('⚠️ Nhập nội dung giải trình.'); return false; }
+    if (!input.photos.length) { showToast('⚠️ Tải lên ít nhất 1 ảnh bằng chứng.'); return false; }
+    setBusy('explanation');
+    try {
+      const t: any = await apiRequest('/ev/me/explanation-tickets', {
+        method: 'POST',
+        body: JSON.stringify({
+          reason: input.reason.trim(),
+          items: input.items,
+          photos: input.photos,
+        }),
+      });
+      showToast('📝 Đã gửi phiếu giải trình — chờ Kế toán/Giám đốc duyệt.');
+      setExplanationTickets((p) => [t, ...p]);
+      // Điểm vừa gửi không còn trong danh sách chờ giải trình.
+      const sent = new Set(input.items.map((i) => `${i.shift_id}::${i.stop_id}`));
+      setExplanationCandidates((p) => p.filter((c: any) => !sent.has(`${c.shift_id}::${c.stop_id}`)));
+      void load(true);
+      return true;
+    } catch (e: any) {
+      showToast(`⚠️ ${e?.message || 'Gửi phiếu giải trình thất bại.'}`);
+      return false;
+    } finally { setBusy(null); }
+  };
+
   const chargingAction = async (kind: 'start' | 'end', ticketId: string) => {
     if (kind === 'start') {
       const c = needCoords('bắt đầu sạc', 120);
@@ -372,11 +411,12 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
 
   return {
     loading, err, profile, current, todayShifts, weekShifts, detail, tickets, payroll, history,
+    explanationCandidates, explanationTickets,
     busy, coords, gpsErr, gpsSent, nowMs, testMode,
     status, isRunning, canTrack, stops, nextStop, slaLeftSec, distToNext, startStop, startRadius, distToStart,
     checkedCount, mandatoryLeft, chargingTicket,
     reload: load, loadHistory,
-    startShift, endShift, checkin, createTicket, chargingAction,
+    startShift, endShift, checkin, createTicket, createExplanation, chargingAction,
   };
 }
 

@@ -87,6 +87,7 @@ import { renderRsvpPage as rsvpPage, escapeHtml, type RsvpIconName } from './ser
 import { publicProposalSlots, PROPOSAL_WORK_WINDOWS } from './services/interview-slots.service.js';
 import { ShiftReRegService } from './services/shift-rereg.service.js';
 import { readAttendancePhotoDisk, readAdjustmentPhotoDisk, readAvatarPhotoDisk, hasAdjustmentPhotoDisk } from './services/photo-disk.store.js';
+import { readExplanationPhoto } from './services/milkroute/ev-explanation-photo.store.js';
 import { getDriveBackupScheduler, type BackupKind } from './services/backup-drive.service.js';
 import {
   dashboardSnapshotFromState,
@@ -242,6 +243,12 @@ import {
   evChargingEndBody,
   evChargingTicketIdParams,
   evChargingTicketsQuery,
+  evExplanationCreateBody,
+  evExplanationTicketIdParams,
+  evExplanationPhotoParams,
+  evExplanationApproveBody,
+  evExplanationRejectBody,
+  evExplanationTicketsQuery,
   evGpsBatchBody,
   evPayrollGenerateBody,
   evPayrollApproveBody,
@@ -1061,6 +1068,69 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // ---------------------------------------------------------------
+  // ADMIN — Phiếu giải trình điểm quên chấm (Kế toán/Giám đốc duyệt)
+  // ---------------------------------------------------------------
+  app.get('/ev/admin/explanation-tickets', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ query: evExplanationTicketsQuery }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const q = req.query as any;
+      const all = await ev.explanations.listAdminTickets({
+        status: q.status,
+        driverId: q.driver_id,
+        dateFrom: q.date_from,
+        dateTo: q.date_to,
+      });
+      const offset = Number(q.offset || 0);
+      const limit = Number(q.limit || 50);
+      res.json({ total: all.length, items: all.slice(offset, offset + limit) });
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/explanation-tickets/:id/approve', authMiddleware, requireRole(['ADMIN', 'FINANCE', 'DIRECTOR']), validate({ params: evExplanationTicketIdParams, body: evExplanationApproveBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const t = await ev.explanations.approve(
+        req.params.id,
+        req.user!.id,
+        (req.user as any)?.fullName,
+        req.body?.notes,
+      );
+      ev.realtime.broadcastExplanationStatus({
+        ticketId: t.ticket_id,
+        driverId: t.driver_id,
+        status: 'APPROVED',
+        ticketCode: t.ticket_code,
+        approvedBy: req.user!.id,
+      });
+      broadcastUpdate('evExplanationTicket', { action: 'approve', id: t.ticket_id });
+      // Điểm bỏ lọt vừa thành hoàn thành → ca + check-in của tài xế tải lại ngay.
+      for (const shiftId of Array.from(new Set((t.items || []).map(i => i.shift_id)))) {
+        broadcastUpdate('evShift', { action: 'explanation-approved', id: shiftId });
+      }
+      broadcastUpdate('evShiftCheckin', { action: 'explanation-approved', id: t.ticket_id });
+      res.json(t);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/explanation-tickets/:id/reject', authMiddleware, requireRole(['ADMIN', 'FINANCE', 'DIRECTOR']), validate({ params: evExplanationTicketIdParams, body: evExplanationRejectBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const t = await ev.explanations.reject(
+        req.params.id,
+        req.user!.id,
+        (req.user as any)?.fullName,
+        req.body?.reason,
+      );
+      ev.realtime.broadcastExplanationStatus({
+        ticketId: t.ticket_id,
+        driverId: t.driver_id,
+        status: 'REJECTED',
+        ticketCode: t.ticket_code,
+        rejectedReason: t.rejected_reason,
+      });
+      broadcastUpdate('evExplanationTicket', { action: 'reject', id: t.ticket_id });
+      res.json(t);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
   // ADMIN — Lương tài xế
   // ---------------------------------------------------------------
   app.get('/ev/admin/payroll', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ query: evPayrollQuery }), async (req: AuthenticatedRequest, res) => {
@@ -1434,6 +1504,64 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       ev.realtime.broadcastChargingStatus(t!.ticket_id, t!.shift_id, t!.driver_id, 'USED');
       broadcastUpdate('evChargingTicket', { action: 'end', id: t!.ticket_id });
       res.json(t);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
+  // DRIVER — Phiếu giải trình điểm quên chấm
+  // ---------------------------------------------------------------
+  app.get('/ev/me/explanation-candidates', authMiddleware, requireRole(evDriverRoles), async (req: AuthenticatedRequest, res) => {
+    try {
+      const driverId = evDriverId(req);
+      if (!driverId) return res.status(403).json({ error: 'DRIVER_NOT_FOUND' });
+      res.json(await ev.explanations.listCandidates(driverId));
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.get('/ev/me/explanation-tickets', authMiddleware, requireRole(evDriverRoles), async (req: AuthenticatedRequest, res) => {
+    try {
+      const driverId = evDriverId(req);
+      if (!driverId) return res.status(403).json({ error: 'DRIVER_NOT_FOUND' });
+      res.json(await ev.explanations.listDriverTickets(driverId));
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/me/explanation-tickets', authMiddleware, requireRole(evDriverRoles), validate({ body: evExplanationCreateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const driverId = evDriverId(req);
+      if (!driverId) return res.status(403).json({ error: 'DRIVER_NOT_FOUND' });
+      const t = await ev.explanations.createTicket(driverId, {
+        reason: req.body.reason,
+        items: req.body.items,
+        photos: req.body.photos,
+      });
+      ev.realtime.broadcastExplanationStatus({
+        ticketId: t.ticket_id,
+        driverId: t.driver_id,
+        status: 'PENDING',
+        ticketCode: t.ticket_code,
+      });
+      broadcastUpdate('evExplanationTicket', { action: 'create', id: t.ticket_id });
+      res.status(201).json(t);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // Ảnh bằng chứng phiếu giải trình: chỉ tài xế sở hữu hoặc admin được xem.
+  app.get('/ev/explanation-photos/:ticketId/:photoId', authMiddleware, validate({ params: evExplanationPhotoParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const t = ev.explanations.findTicket(req.params.ticketId);
+      if (!t) return res.status(404).json({ error: 'EXPLANATION_NOT_FOUND' });
+      const role = String(req.user?.role || '');
+      const isAdminEv = ['ADMIN', 'HR', 'FINANCE', 'DIRECTOR', 'FLEET_MANAGER'].includes(role);
+      const isOwner = !!req.user?.employeeId && String(req.user.employeeId) === String(t.driver_id);
+      if (!isAdminEv && !isOwner) return res.status(403).json({ error: 'FORBIDDEN' });
+      const photo = (t.photos || []).find(p => p.photo_id === req.params.photoId);
+      if (!photo) return res.status(404).json({ error: 'PHOTO_NOT_FOUND' });
+      const hit = readExplanationPhoto(t.ticket_id, photo.photo_id, photo.mime_type);
+      if (!hit) return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Ảnh chưa được lưu trên máy chủ.' });
+      res.setHeader('Content-Type', hit.mimeType || photo.mime_type || 'image/jpeg');
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      return res.send(hit.buffer);
     } catch (err: any) { evErr(res, err); }
   });
 

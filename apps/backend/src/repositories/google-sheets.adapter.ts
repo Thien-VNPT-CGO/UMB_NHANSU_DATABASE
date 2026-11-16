@@ -72,6 +72,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       'employees',
       'evVehicles', 'evRoutes', 'evRouteStops', 'evShifts', 'evShiftCheckins',
       'evChargingTickets', 'evGpsPoints', 'evDriverPayroll', 'evRouteChangeRequests',
+      'evExplanationTickets',
       // Cờ cấu hình đọc trực tiếp trong service (VD: chế độ Test vận chuyển).
       'systemSettings',
     ];
@@ -93,6 +94,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       'createEVGpsPoints', 'pruneEVGpsPoints',
       'createEVDriverPayroll', 'updateEVDriverPayroll', 'deleteEVDriverPayroll',
       'createEVRouteChangeRequest', 'updateEVRouteChangeRequest', 'deleteEVRouteChangeRequest',
+      'createEVExplanationTicket', 'updateEVExplanationTicket', 'deleteEVExplanationTicket',
     ];
     // GPS ghi rất dày và không nằm trong snapshot → khỏi lên lịch lưu mỗi lần.
     const skipSnapshot = new Set(['createEVGpsPoints', 'pruneEVGpsPoints']);

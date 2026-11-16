@@ -2497,6 +2497,8 @@ export function App() {
           // app tài xế tải lại ca + điểm dừng ngay.
           entity === 'ev' ||
           entity === 'evShift' ||
+          entity === 'evShiftCheckin' ||
+          entity === 'evExplanationTicket' ||
           entity === 'evChargingTicket' ||
           entity === 'evDriverPayroll' ||
           entity === 'evRouteChange' ||

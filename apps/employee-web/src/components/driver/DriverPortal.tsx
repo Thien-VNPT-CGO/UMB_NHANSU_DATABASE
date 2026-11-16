@@ -4,11 +4,11 @@
  *
  * Vì sao tách riêng: tài xế làm việc ngoài đường, thao tác 1 tay trên điện
  * thoại. Các tab HR (lịch hành chính, nghỉ phép, đổi ca, thi...) không dùng đến
- * nên được ẩn hoàn toàn; thay bằng 5 mục cố định dưới đáy màn hình.
+ * nên được ẩn hoàn toàn; thay bằng 6 mục cố định dưới đáy màn hình.
  */
 import { useState } from 'react';
 import {
-  BatteryCharging, BatteryMedium, LogOut, Map as MapIcon, RefreshCw, Truck, UserRound, Wallet, Sun,
+  BatteryCharging, BatteryMedium, ClipboardList, LogOut, Map as MapIcon, RefreshCw, Truck, UserRound, Wallet, Sun,
 } from 'lucide-react';
 import { useDriverData } from './useDriverData';
 import { CHECKIN_ACCURACY_GOOD_M, DC, Pill, STATUS_LABEL } from './driver-shared';
@@ -17,6 +17,7 @@ import { DriverMap } from './DriverMap';
 import { DriverCharging } from './DriverCharging';
 import { DriverIncome } from './DriverIncome';
 import { DriverProfile } from './DriverProfile';
+import { DriverExplanation } from './DriverExplanation';
 
 interface Props {
   employee: any;
@@ -28,19 +29,29 @@ interface Props {
   initialProfile?: any;
 }
 
-type DriverTab = 'today' | 'map' | 'charge' | 'income' | 'me';
+type DriverTab = 'today' | 'map' | 'charge' | 'income' | 'explain' | 'me';
 
 const TABS: Array<{ id: DriverTab; label: string; icon: any }> = [
   { id: 'today', label: 'Hôm nay', icon: Sun },
   { id: 'map', label: 'Bản đồ', icon: MapIcon },
   { id: 'charge', label: 'Sạc', icon: BatteryCharging },
   { id: 'income', label: 'Thu nhập', icon: Wallet },
+  { id: 'explain', label: 'Giải trình', icon: ClipboardList },
   { id: 'me', label: 'Tôi', icon: UserRound },
 ];
 
 export function DriverPortal({ employee, showToast, onLogout, refreshKey = 0, initialProfile = null }: Props) {
   const d = useDriverData(showToast, refreshKey, initialProfile);
   const [tab, setTab] = useState<DriverTab>('today');
+  /** Điểm cần chọn sẵn khi mở tab Giải trình từ nút "Giải trình" ở tab Hôm nay. */
+  const [explainFocus, setExplainFocus] = useState<{ shiftId: string; stopId: string } | null>(null);
+
+  const openExplanation = (shiftId: string, stopId: string) => {
+    setExplainFocus({ shiftId, stopId });
+    setTab('explain');
+  };
+  // Badge trên tab Giải trình: số điểm đang chờ giải trình.
+  const explanationCount = (d.explanationCandidates || []).length;
 
   const driver = d.profile?.driver || {};
   const vehicle = d.profile?.vehicle || null;
@@ -143,10 +154,18 @@ export function DriverPortal({ employee, showToast, onLogout, refreshKey = 0, in
 
         {!d.loading && d.profile && (
           <>
-            {tab === 'today' && <DriverToday d={d} />}
+            {tab === 'today' && <DriverToday d={d} onOpenExplanation={openExplanation} />}
             {tab === 'map' && <DriverMap d={d} />}
             {tab === 'charge' && <DriverCharging d={d} />}
             {tab === 'income' && <DriverIncome d={d} />}
+            {tab === 'explain' && (
+              <DriverExplanation
+                d={d}
+                showToast={showToast}
+                focus={explainFocus}
+                onFocusUsed={() => setExplainFocus(null)}
+              />
+            )}
             {tab === 'me' && <DriverProfile d={d} onLogout={onLogout} showToast={showToast} />}
           </>
         )}
@@ -163,6 +182,7 @@ export function DriverPortal({ employee, showToast, onLogout, refreshKey = 0, in
         <div style={{ maxWidth: 620, margin: '0 auto', display: 'flex' }}>
           {TABS.map(({ id, label, icon: Icon }) => {
             const active = tab === id;
+            const badge = id === 'explain' ? explanationCount : 0;
             return (
               <button
                 key={id}
@@ -170,7 +190,7 @@ export function DriverPortal({ employee, showToast, onLogout, refreshKey = 0, in
                 style={{
                   flex: 1, border: 'none', background: 'none', cursor: 'pointer',
                   padding: '9px 4px 8px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-                  color: active ? DC.brand : DC.muted,
+                  color: active ? DC.brand : DC.muted, position: 'relative',
                 }}
               >
                 <span style={{
@@ -181,6 +201,15 @@ export function DriverPortal({ employee, showToast, onLogout, refreshKey = 0, in
                 }}>
                   <Icon size={19} strokeWidth={active ? 2.6 : 2} />
                 </span>
+                {badge > 0 && (
+                  <span style={{
+                    position: 'absolute', top: 4, right: 'calc(50% - 24px)',
+                    minWidth: 16, height: 16, padding: '0 4px', borderRadius: 999,
+                    backgroundColor: DC.danger, color: '#FFFFFF', fontSize: 9, fontWeight: 900,
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    border: '1.5px solid #FFFFFF', boxSizing: 'border-box',
+                  }}>{badge > 9 ? '9+' : badge}</span>
+                )}
                 <span style={{ fontSize: 9.5, fontWeight: active ? 900 : 700, letterSpacing: 0.1 }}>{label}</span>
               </button>
             );

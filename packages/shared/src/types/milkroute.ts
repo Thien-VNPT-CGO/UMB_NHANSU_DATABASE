@@ -235,6 +235,73 @@ export interface EVChargingTicket {
   updated_at: string;
 }
 
+// ------------------------------------------------------------
+// PHIẾU GIẢI TRÌNH ĐIỂM QUÊN CHẤM
+// ------------------------------------------------------------
+
+export type EVExplanationStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+/**
+ * Một điểm dừng tài xế quên bấm xác nhận, được đưa vào phiếu giải trình.
+ * Một phiếu có thể gom nhiều điểm của nhiều ca/chi nhánh khác nhau.
+ */
+export interface EVExplanationItem {
+  shift_id: string;
+  shift_date: string;              // YYYY-MM-DD
+  route_id?: string;
+  route_name?: string;
+  stop_id: string;
+  stop_order: number;
+  stop_name: string;
+  address?: string;
+  /** Check-in "bỏ lọt" do hệ thống tạo khi kết thúc ca (nếu có). */
+  checkin_id?: string;
+}
+
+/** Ảnh bằng chứng — chỉ lưu metadata, file nằm trên đĩa/Drive. */
+export interface EVExplanationPhoto {
+  photo_id: string;
+  mime_type: string;
+  size_bytes?: number;
+  original_name?: string;
+  /** ID file trên Google Drive nếu đã upload (hiện ưu tiên lưu đĩa VPS). */
+  drive_file_id?: string;
+  created_at: string;
+}
+
+/**
+ * Phiếu giải trình điểm quên chấm.
+ * Tài xế tạo → chuyển thẳng Kế toán (FINANCE) / Giám đốc (DIRECTOR) duyệt.
+ * Khi APPROVED, các điểm trong phiếu được tính là đã hoàn thành.
+ */
+export interface EVExplanationTicket {
+  ticket_id: string;
+  ticket_code?: string;            // VD: EGT-20261116-0001
+  driver_id: string;
+  driver_name?: string;
+  reason: string;                  // Nội dung giải trình
+  items: EVExplanationItem[];
+  photos: EVExplanationPhoto[];
+  status: EVExplanationStatus;
+  approved_by?: string;
+  approved_by_name?: string;
+  approved_at?: string;
+  approval_notes?: string;
+  rejected_by?: string;
+  rejected_by_name?: string;
+  rejected_at?: string;
+  rejected_reason?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Điểm dừng đủ điều kiện giải trình (trả về cho app tài xế). */
+export interface EVExplanationCandidate extends EVExplanationItem {
+  checkin_id?: string;
+  checked_in_at?: string;
+}
+
 /** GPS Tracking Point */
 export interface EVGPSPoint {
   point_id: string;                // UUID
@@ -365,6 +432,7 @@ export type EVWSEventType =
   | 'ev:live:charging-station'
   | 'ev:live:route-changed'
   | 'ev:live:ticket:status'
+  | 'ev:live:explanation:status'
   | 'ev:live:payroll:updated';
 
 export interface EVWSPayload<T = any> {
@@ -506,6 +574,8 @@ export interface EVShiftDetail extends EVShift {
     isLate: boolean;
     lateMinutes: number;
     penaltyAmount: number;
+    /** Check-in bị đánh dấu bỏ lọt (quên bấm) — dùng để hiện nút Giải trình. */
+    isMissed?: boolean;
   }>;
 }
 

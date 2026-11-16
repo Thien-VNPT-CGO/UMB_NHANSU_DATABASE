@@ -43,7 +43,7 @@ function HeroStat({ label, value, alert }: { label: string; value: string; alert
   );
 }
 
-export function DriverToday({ d }: { d: DriverData }) {
+export function DriverToday({ d, onOpenExplanation }: { d: DriverData; onOpenExplanation?: (shiftId: string, stopId: string) => void }) {
   const {
     profile, current, todayShifts, weekShifts, detail, status, isRunning, stops, nextStop,
     slaLeftSec, distToNext, checkedCount, mandatoryLeft, busy, coords, testMode,
@@ -127,6 +127,32 @@ export function DriverToday({ d }: { d: DriverData }) {
             <div style={{ fontWeight: 600 }}>Ca chạy trong thời gian này không tính công và không bị phạt.</div>
           </div>
         </div>
+      )}
+
+      {/* ---------------- Nhắc giải trình điểm quên chấm ---------------- */}
+      {(d.explanationCandidates || []).length > 0 && (
+        <button
+          type="button"
+          onClick={() => onOpenExplanation?.('', '')}
+          style={{
+            display: 'flex', alignItems: 'flex-start', gap: 9, textAlign: 'left', cursor: 'pointer',
+            padding: '11px 12px', borderRadius: 12, fontFamily: 'inherit',
+            border: '1.5px solid #FDE68A', backgroundColor: '#FFFBEB',
+          }}
+        >
+          <AlertTriangle size={17} color={DC.warn} style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 900, color: '#92400E' }}>
+              {(d.explanationCandidates || []).length} điểm quên bấm xác nhận
+            </div>
+            <div style={{ fontSize: 10.5, fontWeight: 700, color: '#92400E', marginTop: 2, lineHeight: 1.55 }}>
+              Gửi phiếu giải trình kèm ảnh bằng chứng để Kế toán/Giám đốc duyệt — không bị trừ phạt.
+            </div>
+          </div>
+          <span style={{ fontSize: 11, fontWeight: 900, color: '#B45309', whiteSpace: 'nowrap', alignSelf: 'center' }}>
+            Giải trình ngay →
+          </span>
+        </button>
       )}
 
       {/* ---------------- Ca hiện tại ---------------- */}
@@ -329,20 +355,20 @@ export function DriverToday({ d }: { d: DriverData }) {
                     <div style={{
                       width: 22, height: 22, borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center',
                       fontSize: 10.5, fontWeight: 900,
-                      backgroundColor: done ? DC.success : isNext ? DC.brand : '#E2E8F0',
-                      color: done || isNext ? '#FFF' : DC.muted,
+                      backgroundColor: s.isMissed ? DC.danger : done ? DC.success : isNext ? DC.brand : '#E2E8F0',
+                      color: s.isMissed || done || isNext ? '#FFF' : DC.muted,
                     }}>
-                      {done ? <CheckCircle2 size={13} /> : s.stop_order}
+                      {s.isMissed ? <AlertTriangle size={12} /> : done ? <CheckCircle2 size={13} /> : s.stop_order}
                     </div>
                     {idx !== stops.length - 1 && (
-                      <div style={{ width: 2, flex: 1, minHeight: 20, backgroundColor: done ? '#A7F3D0' : DC.border, marginTop: 3 }} />
+                      <div style={{ width: 2, flex: 1, minHeight: 20, backgroundColor: s.isMissed ? '#FECACA' : done ? '#A7F3D0' : DC.border, marginTop: 3 }} />
                     )}
                   </div>
 
                   <div style={{
                     flex: 1, minWidth: 0, borderRadius: 12, padding: '9px 11px',
-                    border: `1px solid ${done ? '#A7F3D0' : isNext ? DC.brandLine : DC.border}`,
-                    backgroundColor: done ? '#F0FDF4' : isNext ? DC.brandSoft : '#FFFFFF',
+                    border: `1px solid ${s.isMissed ? '#FECACA' : done ? '#A7F3D0' : isNext ? DC.brandLine : DC.border}`,
+                    backgroundColor: s.isMissed ? DC.dangerSoft : done ? '#F0FDF4' : isNext ? DC.brandSoft : '#FFFFFF',
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                       <span style={{ fontSize: 13, fontWeight: 800, color: DC.ink }}>{s.name}</span>
@@ -353,11 +379,32 @@ export function DriverToday({ d }: { d: DriverData }) {
                       SLA {fmtMin(Number(s.sla_minutes || 0))} • bán kính {Math.round(checkinRadius(s))}m
                       {dist != null ? ` • cách ${Math.round(dist)}m` : ''}
                     </div>
-                    {done && (
+                    {done && !s.isMissed && (
                       <div style={{ fontSize: 10.5, color: DC.success, fontWeight: 700, marginTop: 3 }}>
                         ✅ {fmtTime(s.checkedInAt)}
                         {s.isLate ? ` • trễ ${s.lateMinutes} phút` : ''}
                         {Number(s.penaltyAmount) > 0 ? ` • phạt ${Number(s.penaltyAmount).toLocaleString('vi-VN')}đ` : ''}
+                      </div>
+                    )}
+                    {s.isMissed && (
+                      <div style={{ marginTop: 5 }}>
+                        <div style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                          fontSize: 10.5, fontWeight: 800, color: DC.danger,
+                        }}>
+                          <AlertTriangle size={11} /> Quên bấm xác nhận
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => onOpenExplanation?.(s.shift_id || current?.shift_id || '', s.stop_id)}
+                          style={{
+                            marginTop: 6, padding: '6px 11px', borderRadius: 9, fontSize: 11.5, fontWeight: 800,
+                            border: `1.5px solid ${DC.danger}`, cursor: 'pointer',
+                            backgroundColor: DC.dangerSoft, color: DC.danger,
+                          }}
+                        >
+                          Giải trình
+                        </button>
                       </div>
                     )}
                     {!done && isRunning && (

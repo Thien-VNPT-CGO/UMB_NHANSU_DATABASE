@@ -1857,6 +1857,20 @@ export function App() {
             window.dispatchEvent(new CustomEvent('ubm:ev-station-reload', { detail: payload?.data }));
             window.dispatchEvent(new CustomEvent('ubm:route-change-reload', { detail: payload?.data }));
           } catch { /* non-fatal */ }
+        } else if (
+          payload?.entity === 'evExplanationTicket' ||
+          payload?.entity === 'evChargingTicket' ||
+          payload?.entity === 'evShift' ||
+          payload?.entity === 'evShiftCheckin'
+        ) {
+          // Phiếu giải trình / phiếu sạc / ca đổi → chỉ tab vận chuyển liên quan
+          // tải lại (không full-reload 10 API của cả cổng admin).
+          try {
+            if (payload?.entity === 'evExplanationTicket') {
+              window.dispatchEvent(new CustomEvent('ubm:ev-explanation-reload', { detail: payload?.data }));
+            }
+            window.dispatchEvent(new CustomEvent('ubm:ev-live-reload', { detail: payload?.data }));
+          } catch { /* non-fatal */ }
         } else if (payload?.entity === 'config' || configChangedOnSheet) {
           loadAllData(currentUser, true);
         } else {

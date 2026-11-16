@@ -14,7 +14,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as LeafletModule from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { apiRequest } from '../services/api';
+import { apiRequest, getApiBase, getAuthToken } from '../services/api';
 import {
   Truck,
   MapPin,
@@ -32,6 +32,8 @@ import {
   Gauge,
   Navigation,
   FlaskConical,
+  ClipboardList,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 /** Leaflet là UMD/CJS: namespace import có thể là default hoặc named tùy bundler. */
@@ -120,7 +122,7 @@ export interface MilkRouteAdminProps {
   showToast?: (msg: string) => void;
 }
 
-type SubTab = 'map' | 'fleet' | 'route-changes' | 'shifts' | 'charging' | 'payroll';
+type SubTab = 'map' | 'fleet' | 'route-changes' | 'shifts' | 'charging' | 'explanation' | 'payroll';
 
 const MUTED = '#64748B';
 const BORDER = '#E2E8F0';
@@ -1775,6 +1777,309 @@ const ChargingView: React.FC<{ showToast: (m: string) => void; canApprove: boole
 };
 
 // ============================================================
+// 4b. PHIẾU GIẢI TRÌNH ĐIỂM QUÊN CHẤM
+// ============================================================
+
+const EXPLANATION_STATUS: Record<string, { text: string; fg: string; bg: string }> = {
+  PENDING: { text: 'Chờ Kế toán/GĐ duyệt', fg: '#1D4ED8', bg: '#EFF6FF' },
+  APPROVED: { text: 'Đã duyệt', fg: '#047857', bg: '#ECFDF5' },
+  REJECTED: { text: 'Từ chối', fg: '#B91C1C', bg: '#FEF2F2' },
+};
+
+/**
+ * Ảnh bằng chứng của phiếu giải trình: thẻ <img> không gửi được Authorization
+ * nên phải tải blob kèm token rồi tạo object URL.
+ */
+const ExplanationPhoto: React.FC<{
+  ticketId: string;
+  photoId: string;
+  mimeType?: string;
+  alt?: string;
+  size?: number;
+  onOpen?: (url: string, alt: string) => void;
+}> = ({ ticketId, photoId, mimeType, alt, size = 78, onOpen }) => {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    let objUrl: string | null = null;
+    setUrl(null);
+    setFailed(false);
+    (async () => {
+      try {
+        const token = getAuthToken();
+        const res = await fetch(
+          `${getApiBase()}/ev/explanation-photos/${encodeURIComponent(ticketId)}/${encodeURIComponent(photoId)}`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+        );
+        if (!res.ok) throw new Error('fetch failed');
+        const blob = await res.blob();
+        if (!alive) return;
+        objUrl = URL.createObjectURL(blob.type ? blob : new Blob([blob], { type: mimeType || 'image/jpeg' }));
+        setUrl(objUrl);
+      } catch {
+        if (alive) setFailed(true);
+      }
+    })();
+    return () => {
+      alive = false;
+      if (objUrl) URL.revokeObjectURL(objUrl);
+    };
+  }, [ticketId, photoId, mimeType]);
+
+  if (failed) {
+    return (
+      <div style={{
+        width: size, height: size, borderRadius: '9px', border: `1px solid ${BORDER}`,
+        backgroundColor: '#F8FAFC', display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', gap: '3px',
+        fontSize: '9px', fontWeight: 700, color: MUTED,
+      }}>
+        <ImageIcon size={15} /> Lỗi ảnh
+      </div>
+    );
+  }
+  if (!url) {
+    return (
+      <div style={{
+        width: size, height: size, borderRadius: '9px', border: `1px solid ${BORDER}`,
+        backgroundColor: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: '10px', fontWeight: 700, color: MUTED,
+      }}>…</div>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt={alt || 'Ảnh bằng chứng'}
+      onClick={() => onOpen?.(url, alt || 'Ảnh bằng chứng')}
+      style={{
+        width: size, height: size, objectFit: 'cover', borderRadius: '9px',
+        border: `1px solid ${BORDER}`, cursor: onOpen ? 'zoom-in' : 'default',
+      }}
+    />
+  );
+};
+
+const ExplanationView: React.FC<{
+  showToast: (m: string) => void;
+  canApprove: boolean;
+  allEmployees: any[];
+}> = ({ showToast, canApprove, allEmployees }) => {
+  const [filter, setFilter] = useState<string>(canApprove ? 'PENDING' : 'ALL');
+  const [items, setItems] = useState<any[]>([]);
+  const [busy, setBusy] = useState('');
+  const [preview, setPreview] = useState<{ url: string; alt: string } | null>(null);
+
+  useEffect(() => {
+    const allowed = ['PENDING', 'APPROVED', 'REJECTED', 'ALL'];
+    if (!allowed.includes(filter)) setFilter(canApprove ? 'PENDING' : 'ALL');
+  }, [canApprove, filter]);
+
+  const load = useCallback(async () => {
+    try {
+      const q = filter === 'ALL' ? '' : `?status=${encodeURIComponent(filter)}`;
+      const d: any = await apiRequest(`/ev/admin/explanation-tickets${q}`);
+      setItems(Array.isArray(d) ? d : (Array.isArray(d?.items) ? d.items : []));
+    } catch (e: any) {
+      showToast(`⚠️ ${e?.message || 'Không tải được phiếu giải trình.'}`);
+    }
+  }, [filter, showToast]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  // Realtime: backend bắn data:updated entity=evExplanationTicket → App phát
+  // sự kiện DOM để hàng đợi duyệt tự tải lại, không cần F5.
+  useEffect(() => {
+    const onReload = () => { void load(); };
+    window.addEventListener('ubm:ev-explanation-reload', onReload);
+    return () => window.removeEventListener('ubm:ev-explanation-reload', onReload);
+  }, [load]);
+
+  const act = async (t: any, action: 'approve' | 'reject') => {
+    let payload: any = {};
+    if (action === 'approve') {
+      const notes = window.prompt('Ghi chú duyệt (không bắt buộc):', '') ?? '';
+      if (notes === null) return;
+      payload = { notes: notes.trim() || undefined };
+    } else {
+      const reason = window.prompt('Lý do từ chối phiếu giải trình?');
+      if (!reason || !reason.trim()) return;
+      payload = { reason: reason.trim() };
+    }
+    setBusy(`${t.ticket_id}:${action}`);
+    try {
+      await apiRequest(`/ev/admin/explanation-tickets/${encodeURIComponent(t.ticket_id)}/${action}`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      showToast(
+        action === 'approve'
+          ? '✅ Đã duyệt — các điểm quên chấm được tính là hoàn thành.'
+          : '❌ Đã từ chối phiếu giải trình.',
+      );
+      await load();
+    } catch (e: any) {
+      showToast(`⚠️ ${e?.message || 'Xử lý phiếu thất bại.'}`);
+    } finally { setBusy(''); }
+  };
+
+  const driverLabel = (driverId: string) => {
+    const emp = allEmployees.find((e: any) => e.employee_id === driverId);
+    return emp ? `${emp.full_name} (${emp.employee_code || driverId})` : driverId;
+  };
+
+  const TABS: Array<{ id: string; label: string }> = [
+    { id: 'PENDING', label: 'Chờ duyệt' },
+    { id: 'APPROVED', label: 'Đã duyệt' },
+    { id: 'REJECTED', label: 'Từ chối' },
+    { id: 'ALL', label: 'Tất cả' },
+  ];
+
+  return (
+    <Card>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+        <ClipboardList size={17} color="#B45309" />
+        <span style={{ fontSize: '14px', fontWeight: 900, color: 'var(--text)' }}>
+          Phiếu giải trình điểm quên chấm — Kế toán/Giám đốc duyệt
+        </span>
+        <button className="btn-secondary" style={{ marginLeft: 'auto', padding: '6px 11px', fontSize: '12px', fontWeight: 700 }} onClick={() => void load()}>
+          <RefreshCw size={13} /> Làm mới
+        </button>
+      </div>
+
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
+        {TABS.map((t) => (
+          <button key={t.id} onClick={() => setFilter(t.id)}
+            style={{
+              padding: '7px 13px', borderRadius: '999px', fontSize: '12px', fontWeight: 800, cursor: 'pointer',
+              border: filter === t.id ? '1.5px solid #B45309' : `1px solid ${BORDER}`,
+              backgroundColor: filter === t.id ? '#FFFBEB' : 'var(--surface)',
+              color: filter === t.id ? '#B45309' : 'var(--text-muted)',
+            }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {items.map((t: any) => {
+          const st = EXPLANATION_STATUS[t.status] || EXPLANATION_STATUS.PENDING;
+          const canAct = t.status === 'PENDING' && canApprove;
+          return (
+            <div key={t.ticket_id} style={{
+              border: `1.5px solid ${canAct ? '#FDE68A' : BORDER}`, borderRadius: '10px',
+              padding: '12px 13px', backgroundColor: canAct ? '#FFFBEB' : 'var(--bg)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '13px', fontWeight: 900, color: 'var(--text)' }}>
+                  📝 {t.ticket_code || String(t.ticket_id).slice(0, 8)} • {driverLabel(t.driver_id)}
+                </span>
+                <span style={{ fontSize: '11.5px', fontWeight: 700, color: MUTED }}>
+                  gửi {fmtTime(t.created_at)} {fmtDay(String(t.created_at).slice(0, 10))}
+                </span>
+                <span style={{ marginLeft: 'auto' }}>{pill(st.fg, st.bg, st.text)}</span>
+              </div>
+
+              <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {(t.items || []).map((it: any, idx: number) => (
+                  <div key={`${it.shift_id}_${it.stop_id}_${idx}`} style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>
+                    • {fmtDay(it.shift_date)}{it.route_name ? ` • ${it.route_name}` : ''} — điểm {it.stop_order}: {it.stop_name}
+                    {it.address ? <span style={{ fontWeight: 600, color: MUTED }}> ({it.address})</span> : ''}
+                  </div>
+                ))}
+              </div>
+
+              <div style={{
+                marginTop: '8px', padding: '8px 10px', borderRadius: '8px',
+                backgroundColor: '#F8FAFC', border: `1px solid ${BORDER}`,
+                fontSize: '12px', fontWeight: 600, color: 'var(--text)', lineHeight: 1.7, whiteSpace: 'pre-wrap',
+              }}>
+                📝 {t.reason}
+              </div>
+
+              {Array.isArray(t.photos) && t.photos.length > 0 && (
+                <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', marginTop: '9px' }}>
+                  {t.photos.map((p: any) => (
+                    <ExplanationPhoto
+                      key={p.photo_id}
+                      ticketId={t.ticket_id}
+                      photoId={p.photo_id}
+                      mimeType={p.mime_type}
+                      alt={p.original_name || 'Ảnh bằng chứng'}
+                      onOpen={(url, alt) => setPreview({ url, alt })}
+                    />
+                  ))}
+                </div>
+              )}
+
+              <div style={{ fontSize: '11.5px', color: MUTED, fontWeight: 600, marginTop: '7px', lineHeight: 1.7 }}>
+                {t.approved_at && (
+                  <div style={{ color: '#047857', fontWeight: 700 }}>
+                    ✅ Duyệt {fmtTime(t.approved_at)}{t.approved_by_name ? ` bởi ${t.approved_by_name}` : ''}
+                    {t.approval_notes ? ` — ${t.approval_notes}` : ''}
+                  </div>
+                )}
+                {t.rejected_at && (
+                  <div style={{ color: '#B91C1C', fontWeight: 700 }}>
+                    ❌ Từ chối {fmtTime(t.rejected_at)}{t.rejected_by_name ? ` bởi ${t.rejected_by_name}` : ''}
+                    {t.rejected_reason ? ` — ${t.rejected_reason}` : ''}
+                  </div>
+                )}
+                {t.status === 'PENDING' && (
+                  <div>{Array.isArray(t.photos) ? t.photos.length : 0} ảnh bằng chứng • {Array.isArray(t.items) ? t.items.length : 0} điểm</div>
+                )}
+              </div>
+
+              {canAct && (
+                <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
+                  <button className="btn-primary" disabled={!!busy}
+                    onClick={() => void act(t, 'approve')}
+                    style={{ padding: '7px 15px', fontSize: '12.5px', fontWeight: 800, backgroundColor: '#047857' }}>
+                    <CheckCircle2 size={14} /> Duyệt — tính hoàn thành
+                  </button>
+                  <button className="btn-secondary" disabled={!!busy}
+                    onClick={() => void act(t, 'reject')}
+                    style={{ padding: '7px 15px', fontSize: '12.5px', fontWeight: 800, color: '#B91C1C' }}>
+                    <XCircle size={14} /> Từ chối
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {!items.length && (
+          <div style={{ fontSize: '12.5px', color: MUTED, fontWeight: 600, padding: '14px 4px', lineHeight: 1.7 }}>
+            Không có phiếu giải trình nào ở trạng thái này.
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: '14px', padding: '10px 12px', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '9px', fontSize: '11.5px', fontWeight: 600, color: '#1E40AF', lineHeight: 1.7 }}>
+        <b>Quy trình:</b> tài xế quên bấm xác nhận tại chi nhánh → gửi phiếu giải trình (nhiều điểm + nhiều ảnh)
+        → <b>Kế toán hoặc Giám đốc duyệt</b> → điểm được tính <b>hoàn thành</b>, bảng lương không còn trừ phạt.
+      </div>
+
+      {preview && (
+        <div
+          onClick={() => setPreview(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: 'rgba(15,23,42,0.86)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', cursor: 'zoom-out',
+          }}
+        >
+          <img
+            src={preview.url}
+            alt={preview.alt}
+            style={{ maxWidth: '94vw', maxHeight: '90vh', borderRadius: '10px', objectFit: 'contain' }}
+          />
+        </div>
+      )}
+    </Card>
+  );
+};
+
+// ============================================================
 // 5. LƯƠNG TÀI XẾ
 // ============================================================
 const PayrollView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void; canManage: boolean }> = ({
@@ -2399,6 +2704,9 @@ const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, al
   const isEvAdmin = ['ADMIN', 'HR', 'DIRECTOR', 'FLEET_MANAGER', 'FINANCE'].includes(role);
   // Phiếu sạc: bỏ bước HR — Giám đốc hoặc Kế toán duyệt trực tiếp.
   const canApproveCharging = ['ADMIN', 'DIRECTOR', 'FINANCE'].includes(role);
+  // Phiếu giải trình điểm quên chấm: duyệt 1 cấp bởi Kế toán / Giám đốc (Admin
+  // toàn quyền). HR & Quản lý đội xe chỉ xem.
+  const canApproveExplanation = ['ADMIN', 'DIRECTOR', 'FINANCE'].includes(role);
   const canManage = ['ADMIN', 'FLEET_MANAGER'].includes(role);
   // Thời gian lộ trình (SLA từng chặng): Admin / Quản lý đội xe / Kế toán / Giám đốc.
   const canEditTiming = ['ADMIN', 'FLEET_MANAGER', 'FINANCE', 'DIRECTOR'].includes(role);
@@ -2478,6 +2786,7 @@ const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, al
     { id: 'route-changes', label: 'Phiếu đổi lộ trình', icon: RouteIcon },
     { id: 'shifts', label: 'Ca vận chuyển', icon: CalendarClock },
     { id: 'charging', label: 'Phiếu sạc', icon: BatteryCharging },
+    { id: 'explanation', label: 'Giải trình', icon: ClipboardList },
     // Lương tài xế: chỉ FINANCE (Kế toán) — các vai trò khác không thấy tab này.
     ...(canPayroll ? [{ id: 'payroll' as SubTab, label: 'Lương tài xế', icon: Wallet }] : []),
   ];
@@ -2490,7 +2799,7 @@ const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, al
             <Truck size={21} color="#0F766E" /> Vận chuyển sữa — Quản lý tài xế & định vị GPS
           </h1>
           <p style={{ fontSize: '12.5px', color: 'var(--text-muted)', margin: '4px 0 0', fontWeight: 600 }}>
-            Live Map realtime • SLA + phạt tự động • phiếu sạc duyệt 1 cấp • phân ca tài xế • bảng lương theo kỳ
+            Live Map realtime • SLA + phạt tự động • phiếu sạc duyệt 1 cấp • giải trình điểm quên chấm • phân ca tài xế • bảng lương theo kỳ
           </p>
         </div>
         {/* Nút Test: chỉ ADMIN đổi được; vai trò khác chỉ thấy cảnh báo bên dưới. */}
@@ -2560,6 +2869,7 @@ const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, al
       )}
       {tab === 'shifts' && <ShiftsView allEmployees={allEmployees} showToast={toast} canManage={canManage} />}
       {tab === 'charging' && <ChargingView showToast={toast} canApprove={canApproveCharging} allEmployees={allEmployees} />}
+      {tab === 'explanation' && <ExplanationView showToast={toast} canApprove={canApproveExplanation} allEmployees={allEmployees} />}
       {tab === 'payroll' && canPayroll && <PayrollView allEmployees={allEmployees} showToast={toast} canManage={canPayroll} />}
     </div>
   );

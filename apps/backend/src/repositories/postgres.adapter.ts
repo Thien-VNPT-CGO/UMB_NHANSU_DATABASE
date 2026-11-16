@@ -107,6 +107,9 @@ const WRITE_METHODS = new Set<string>([
   'createEVRouteChangeRequest',
   'updateEVRouteChangeRequest',
   'deleteEVRouteChangeRequest',
+  'createEVExplanationTicket',
+  'updateEVExplanationTicket',
+  'deleteEVExplanationTicket',
 ]);
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

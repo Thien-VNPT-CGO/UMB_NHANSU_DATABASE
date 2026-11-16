@@ -460,6 +460,7 @@ export class EVShiftService {
         isLate: checkin?.is_late || false,
         lateMinutes: checkin?.late_minutes || 0,
         penaltyAmount: checkin?.penalty_amount || 0,
+        isMissed: checkin?.is_missed || false,
       };
     });
 
