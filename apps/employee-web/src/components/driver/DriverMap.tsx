@@ -6,7 +6,10 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as LeafletModule from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { CheckCircle2, LocateFixed, MapPin, Navigation } from 'lucide-react';
-import { BigButton, Card, DC, Pill, ScreenTitle, fmtMin, openDirections } from './driver-shared';
+import {
+  BigButton, Card, CHECKIN_ACCURACY_MAX_M, DC, Pill, ScreenTitle,
+  checkinAllowedMeters, checkinRadius, checkinTolerance, fmtMin, isCheckinDistanceOk, openDirections,
+} from './driver-shared';
 import type { DriverData } from './useDriverData';
 
 const L = ((LeafletModule as any).default ?? LeafletModule) as typeof LeafletModule;
@@ -160,7 +163,9 @@ export function DriverMap({ d }: { d: DriverData }) {
           <div style={{ fontSize: 15.5, fontWeight: 900, color: DC.ink }}>{next.name}</div>
           {next.address && <div style={{ fontSize: 11.5, color: DC.muted, fontWeight: 600, marginTop: 3 }}>{next.address}</div>}
           <div style={{ fontSize: 11.5, color: DC.muted, fontWeight: 700, marginTop: 5 }}>
-            {d.distToNext == null ? 'Chưa có GPS để tính khoảng cách' : `Còn cách ${Math.round(d.distToNext)}m • bán kính cho phép ${next.geofence_radius_m}m`}
+            {d.distToNext == null
+              ? 'Chưa có GPS để tính khoảng cách'
+              : `Còn cách ${Math.round(d.distToNext)}m • cho phép ≤${Math.round(checkinAllowedMeters(next, d.coords?.accuracy))}m (bán kính ${Math.round(checkinRadius(next))}m + dung sai GPS ${Math.round(checkinTolerance(d.coords?.accuracy))}m)`}
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 11 }}>
             <BigButton tone="ghost" style={{ flex: 1, padding: '11px', fontSize: 12.5 }} onClick={() => openDirections(Number(next.latitude), Number(next.longitude), next.name)}>
@@ -168,7 +173,7 @@ export function DriverMap({ d }: { d: DriverData }) {
             </BigButton>
             <BigButton
               style={{ flex: 1, padding: '11px', fontSize: 12.5 }}
-              disabled={!d.isRunning || d.distToNext == null || d.distToNext > Number(next.geofence_radius_m || 100) || !d.coords || d.coords.accuracy > 30 || d.busy === `ci_${next.stop_id}`}
+              disabled={!d.isRunning || !isCheckinDistanceOk(next, d.distToNext, d.coords?.accuracy) || !d.coords || d.coords.accuracy > CHECKIN_ACCURACY_MAX_M || d.busy === `ci_${next.stop_id}`}
               onClick={() => void d.checkin(next)}
             >
               <CheckCircle2 size={15} /> Xác nhận

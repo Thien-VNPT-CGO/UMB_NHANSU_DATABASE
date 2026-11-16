@@ -187,7 +187,9 @@ export const evCheckinBody = z.object({
   stop_id: idSchema,
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
-  accuracy: z.number().min(0).max(100),
+  // Ngưỡng nghiệp vụ (sai số GPS hỏng >1000m, dung sai theo sai số thiết bị)
+  // do service kiểm tra để trả thông báo tiếng Việt thay vì VALIDATION_ERROR.
+  accuracy: z.number().min(0).max(5000),
 });
 
 export const evEndShiftBody = z.object({

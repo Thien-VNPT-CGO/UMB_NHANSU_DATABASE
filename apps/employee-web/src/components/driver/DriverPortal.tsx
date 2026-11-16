@@ -11,7 +11,7 @@ import {
   BatteryCharging, BatteryMedium, LogOut, Map as MapIcon, RefreshCw, Truck, UserRound, Wallet, Sun,
 } from 'lucide-react';
 import { useDriverData } from './useDriverData';
-import { DC, Pill, STATUS_LABEL } from './driver-shared';
+import { CHECKIN_ACCURACY_GOOD_M, DC, Pill, STATUS_LABEL } from './driver-shared';
 import { DriverToday } from './DriverToday';
 import { DriverMap } from './DriverMap';
 import { DriverCharging } from './DriverCharging';
@@ -46,7 +46,7 @@ export function DriverPortal({ employee, showToast, onLogout, refreshKey = 0, in
   const vehicle = d.profile?.vehicle || null;
   const name = driver.full_name || employee?.full_name || 'Tài xế';
   const st = STATUS_LABEL[d.status] || null;
-  const gpsOk = !!d.coords && d.coords.accuracy <= 30;
+  const gpsOk = !!d.coords && d.coords.accuracy <= CHECKIN_ACCURACY_GOOD_M;
   const gpsColor = d.gpsErr ? DC.danger : gpsOk ? DC.success : '#F59E0B';
   const battery = Number(vehicle?.current_battery_pct ?? 0);
 

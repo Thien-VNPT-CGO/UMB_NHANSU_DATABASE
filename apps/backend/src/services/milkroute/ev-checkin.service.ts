@@ -2,6 +2,21 @@ import { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
 import { EVShift, EVRouteStop, EVShiftCheckin } from '@ubm/shared';
 import { EVRouteService } from './ev-route.service.js';
 
+/**
+ * Bấm xác nhận tại chi nhánh: GPS điện thoại trong cửa hàng / khu phố đông
+ * thường sai số 30–300m (trước đây chặn tuyệt đối ở 30m nên tài xế đứng ngay
+ * chi nhánh vẫn không bấm được). Nay:
+ *  - Chỉ từ chối khi sai số quá vô lý (>1000m — sóng GPS hỏng).
+ *  - Cho phép dung sai theo sai số thiết bị, tối đa 100m, cộng vào bán kính
+ *    điểm dừng (bán kính này đã được nới theo cấu hình chi nhánh).
+ *  - Check-in ngoài bán kính gốc nhưng trong phần dung sai vẫn được ghi nhận
+ *    với cờ is_within_geofence=false để HR đối soát.
+ */
+const CHECKIN_ACCURACY_MAX_M = 1000;
+const CHECKIN_GPS_TOLERANCE_MAX_M = 100;
+/** Ca vẫn đang chạy (kể cả đang sạc / tạm dừng) đều được bấm điểm. */
+const CHECKIN_ALLOWED_STATUSES = ['IN_PROGRESS', 'RETURNING', 'CHARGING', 'PAUSED'];
+
 export class EVCheckinService {
   constructor(
     private readonly repo: MockSheetsAdapter,
@@ -24,8 +39,9 @@ export class EVCheckinService {
   }): Promise<EVShiftCheckin> {
     const shift = this.repo.evShifts.find(s => s.shift_id === input.shiftId);
     if (!shift) throw new Error('SHIFT_NOT_FOUND');
-    // RETURNING: sau khi kết thúc sạc, tài xế vẫn phải check-in điểm kết thúc (về xưởng).
-    if (shift.status !== 'IN_PROGRESS' && shift.status !== 'RETURNING') {
+    // Ca đang chạy — kể cả đang sạc (CHARGING) hoặc tạm dừng (PAUSED), vì app
+    // tài xế vẫn hiện nút xác nhận ở các trạng thái này.
+    if (!CHECKIN_ALLOWED_STATUSES.includes(String(shift.status))) {
       throw new Error('SHIFT_NOT_IN_PROGRESS: Ca không ở trạng thái đang chạy');
     }
 
@@ -54,19 +70,24 @@ export class EVCheckinService {
       throw new Error(`WRONG_STOP_ORDER: Phải check-in theo thứ tự. Điểm tiếp theo là ${skippedMandatory.name}`);
     }
 
-    // Validate geofence
+    // Validate geofence: bán kính điểm dừng (đã nới theo chi nhánh) + dung sai GPS.
     const distance = this.haversineDistance(
       input.driverLocation.latitude,
       input.driverLocation.longitude,
       stop.latitude,
       stop.longitude
     );
-    const isWithinGeofence = distance <= stop.geofence_radius_m;
-    if (!isWithinGeofence) {
-      throw new Error(`OUTSIDE_GEOFENCE: Bạn đang cách ${Math.round(distance)}m so với ${stop.name} (cho phép ≤${stop.geofence_radius_m}m)`);
+    const radius = Math.max(Number(stop.geofence_radius_m) || 0, 100);
+    const accuracy = Number(input.driverLocation.accuracy) || 0;
+    if (accuracy > CHECKIN_ACCURACY_MAX_M) {
+      throw new Error(`GPS_ACCURACY_LOW: Sóng GPS quá yếu (sai số ±${Math.round(accuracy)}m). Ra chỗ thoáng chờ GPS cập nhật rồi thử lại.`);
     }
-    if (input.driverLocation.accuracy > 30) {
-      throw new Error(`GPS_ACCURACY_LOW: Độ chính xác GPS ${input.driverLocation.accuracy}m quá thấp (yêu cầu ≤30m)`);
+    const tolerance = Math.min(Math.max(accuracy, 0), CHECKIN_GPS_TOLERANCE_MAX_M);
+    const allowed = radius + tolerance;
+    const isWithinGeofence = distance <= radius;
+    if (distance > allowed) {
+      const toleranceNote = tolerance > 0 ? ` + dung sai GPS ${Math.round(tolerance)}m` : '';
+      throw new Error(`OUTSIDE_GEOFENCE: Bạn đang cách ${stop.name} ${Math.round(distance)}m (cho phép ≤${Math.round(radius)}m${toleranceNote})`);
     }
 
     // Calculate SLA
