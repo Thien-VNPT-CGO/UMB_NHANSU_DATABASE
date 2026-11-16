@@ -922,6 +922,13 @@ export class GoogleSheetsSyncService {
   private lastWriteAt: number = 0;
   private initOkAt = 0;
   private lastInitResult: { success: boolean; createdSheets: string[]; existingSheets: string[]; message: string } | null = null;
+  /**
+   * Chống "bão quota": khi init cấu trúc thất bại toàn bộ (thường do 429 đọc),
+   * KHÔNG chạy lại ngay lượt sau — mỗi lượt tốn ~1 request metadata/file (≈25
+   * request) và làm Google khoá lâu hơn. Nghỉ ngắn rồi thử lại.
+   */
+  private initFailedAt = 0;
+  private static readonly INIT_FAIL_BACKOFF_MS = 120_000;
 
   /** Minimum interval between write requests to stay under 60 writes/minute quota. */
   private static readonly WRITE_RATE_LIMIT_MS = 1100;
@@ -2012,6 +2019,16 @@ export class GoogleSheetsSyncService {
     if (this.lastInitResult && Date.now() - this.initOkAt < 600000) {
       return { ...this.lastInitResult, createdSheets: [...this.lastInitResult.createdSheets], existingSheets: [...this.lastInitResult.existingSheets] };
     }
+    // Vừa thất bại toàn bộ (thường vì quota đọc) -> nghỉ ngắn, tránh bắn tiếp
+    // 25 request metadata và làm Google khoá lâu hơn.
+    if (this.initFailedAt && Date.now() - this.initFailedAt < GoogleSheetsSyncService.INIT_FAIL_BACKOFF_MS) {
+      return {
+        success: false,
+        createdSheets: [],
+        existingSheets: [],
+        message: 'Tạm nghỉ khởi tạo cấu trúc sau lỗi quota đọc (thử lại sau 2 phút)',
+      };
+    }
 
     try {
       // Mỗi bảng nghiệp vụ nằm trong 1 file Google Sheets RIÊNG (bộ 25 sheet):
@@ -2130,11 +2147,13 @@ export class GoogleSheetsSyncService {
       }
 
       if (existingSheets.length === 0 && createdSheets.length === 0) {
+        this.initFailedAt = Date.now();
         const message = failures.length
           ? `Lỗi Google Sheets API: ${failures.join('; ')}`
           : this.authError || 'Không đọc được cấu trúc 25 file Google Sheets';
         return { success: false, createdSheets, existingSheets, message };
       }
+      this.initFailedAt = 0;
 
       console.log(`[GoogleSheetsSyncService] Đã tạo ${createdSheets.length} sheet mới trên ${groups.size} file riêng. Toàn bộ ${SHEETS_DEFINITIONS.length} tab sẵn sàng.`);
 
@@ -4782,7 +4801,18 @@ export class GoogleSheetsSyncService {
         for (let i = 0; i < tabs.length; i++) {
           out[tabs[i]] = (groups[i]?.values as string[][]) || [];
         }
-      } catch (e) {
+      } catch (e: any) {
+        // 429/quota: KHÔNG đọc lại từng tab. Mỗi lần thử lại là thêm 1 request
+        // đọc trong khi Google đang khoá theo phút, nên retry chỉ làm khoá lâu
+        // hơn và biến 1 lỗi thành N lỗi. Trả rỗng cho nhịp này, pull sau đọc bù.
+        const msg = String(e?.message || e || '');
+        const isQuota = Number(e?.code) === 429
+          || Number(e?.response?.status) === 429
+          || /Quota exceeded|rateLimitExceeded|RATE_LIMIT_EXCEEDED|429/i.test(msg);
+        if (isQuota) {
+          for (const t of tabs) out[t] = [];
+          return;
+        }
         // Fallback đọc từng tab nếu batch lỗi
         for (const t of tabs) {
           try {
@@ -4982,6 +5012,7 @@ export class GoogleSheetsSyncService {
   private invalidateInitCache() {
     this.initOkAt = 0;
     this.lastInitResult = null;
+    this.initFailedAt = 0;
   }
 
   /**
