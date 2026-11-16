@@ -1,6 +1,7 @@
 import { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
 import { EVShift, EVRouteStop, EVShiftCheckin } from '@ubm/shared';
 import { EVRouteService } from './ev-route.service.js';
+import { isEvTestModeEnabled, isEvTestShift, withEvTestShiftMark } from './ev-test-mode.js';
 
 /**
  * Bấm xác nhận tại chi nhánh: GPS điện thoại trong cửa hàng / khu phố đông
@@ -39,10 +40,15 @@ export class EVCheckinService {
   }): Promise<EVShiftCheckin> {
     const shift = this.repo.evShifts.find(s => s.shift_id === input.shiftId);
     if (!shift) throw new Error('SHIFT_NOT_FOUND');
-    // Ca đang chạy — kể cả đang sạc (CHARGING) hoặc tạm dừng (PAUSED), vì app
-    // tài xế vẫn hiện nút xác nhận ở các trạng thái này.
-    if (!CHECKIN_ALLOWED_STATUSES.includes(String(shift.status))) {
-      throw new Error('SHIFT_NOT_IN_PROGRESS: Ca không ở trạng thái đang chạy');
+    // Chế độ TEST (Admin bật) hoặc ca đã được đánh dấu test: bỏ mọi ràng buộc
+    // quy trình (trạng thái ca, thứ tự điểm, khoảng cách, sai số GPS).
+    const testMode = isEvTestModeEnabled(this.repo) || isEvTestShift(shift);
+    if (!testMode) {
+      // Ca đang chạy — kể cả đang sạc (CHARGING) hoặc tạm dừng (PAUSED), vì app
+      // tài xế vẫn hiện nút xác nhận ở các trạng thái này.
+      if (!CHECKIN_ALLOWED_STATUSES.includes(String(shift.status))) {
+        throw new Error('SHIFT_NOT_IN_PROGRESS: Ca không ở trạng thái đang chạy');
+      }
     }
 
     const stops = await this.stopsForShift(shift);
@@ -54,23 +60,26 @@ export class EVCheckinService {
     const existingCheckin = this.repo.evShiftCheckins.find(c => c.shift_id === input.shiftId && c.stop_id === input.stopId);
     if (existingCheckin) throw new Error('ALREADY_CHECKED_IN: Đã check-in tại điểm này');
 
-    // Validate stop order (must check in sequentially)
+    // Validate stop order (must check in sequentially) — chế độ Test bỏ qua.
     const completedStops = this.repo.evShiftCheckins.filter(c => c.shift_id === input.shiftId).map(c => c.stop_order);
     const maxCompletedOrder = completedStops.length > 0 ? Math.max(...completedStops) : 0;
 
-    if (stop.stop_order <= maxCompletedOrder) {
-      throw new Error('WRONG_STOP_ORDER: Điểm này đã đi qua, hãy chọn điểm kế tiếp');
-    }
-    // Cho phép BỎ QUA điểm tùy chọn (VD: trạm sạc ghim GPS động, toạ độ 0,0),
-    // nhưng tuyệt đối không được bỏ qua điểm bắt buộc.
-    const skippedMandatory = stops.find(
-      s => s.stop_order > maxCompletedOrder && s.stop_order < stop.stop_order && s.is_mandatory,
-    );
-    if (skippedMandatory) {
-      throw new Error(`WRONG_STOP_ORDER: Phải check-in theo thứ tự. Điểm tiếp theo là ${skippedMandatory.name}`);
+    if (!testMode) {
+      if (stop.stop_order <= maxCompletedOrder) {
+        throw new Error('WRONG_STOP_ORDER: Điểm này đã đi qua, hãy chọn điểm kế tiếp');
+      }
+      // Cho phép BỎ QUA điểm tùy chọn (VD: trạm sạc ghim GPS động, toạ độ 0,0),
+      // nhưng tuyệt đối không được bỏ qua điểm bắt buộc.
+      const skippedMandatory = stops.find(
+        s => s.stop_order > maxCompletedOrder && s.stop_order < stop.stop_order && s.is_mandatory,
+      );
+      if (skippedMandatory) {
+        throw new Error(`WRONG_STOP_ORDER: Phải check-in theo thứ tự. Điểm tiếp theo là ${skippedMandatory.name}`);
+      }
     }
 
     // Validate geofence: bán kính điểm dừng (đã nới theo chi nhánh) + dung sai GPS.
+    // Chế độ Test vẫn ghi khoảng cách thật để HR đối soát nhưng không chặn.
     const distance = this.haversineDistance(
       input.driverLocation.latitude,
       input.driverLocation.longitude,
@@ -79,15 +88,17 @@ export class EVCheckinService {
     );
     const radius = Math.max(Number(stop.geofence_radius_m) || 0, 100);
     const accuracy = Number(input.driverLocation.accuracy) || 0;
-    if (accuracy > CHECKIN_ACCURACY_MAX_M) {
-      throw new Error(`GPS_ACCURACY_LOW: Sóng GPS quá yếu (sai số ±${Math.round(accuracy)}m). Ra chỗ thoáng chờ GPS cập nhật rồi thử lại.`);
-    }
     const tolerance = Math.min(Math.max(accuracy, 0), CHECKIN_GPS_TOLERANCE_MAX_M);
     const allowed = radius + tolerance;
     const isWithinGeofence = distance <= radius;
-    if (distance > allowed) {
-      const toleranceNote = tolerance > 0 ? ` + dung sai GPS ${Math.round(tolerance)}m` : '';
-      throw new Error(`OUTSIDE_GEOFENCE: Bạn đang cách ${stop.name} ${Math.round(distance)}m (cho phép ≤${Math.round(radius)}m${toleranceNote})`);
+    if (!testMode) {
+      if (accuracy > CHECKIN_ACCURACY_MAX_M) {
+        throw new Error(`GPS_ACCURACY_LOW: Sóng GPS quá yếu (sai số ±${Math.round(accuracy)}m). Ra chỗ thoáng chờ GPS cập nhật rồi thử lại.`);
+      }
+      if (distance > allowed) {
+        const toleranceNote = tolerance > 0 ? ` + dung sai GPS ${Math.round(tolerance)}m` : '';
+        throw new Error(`OUTSIDE_GEOFENCE: Bạn đang cách ${stop.name} ${Math.round(distance)}m (cho phép ≤${Math.round(radius)}m${toleranceNote})`);
+      }
     }
 
     // Calculate SLA
@@ -129,7 +140,8 @@ export class EVCheckinService {
       }
     }
 
-    isLate = actualTravelMin > stop.sla_minutes;
+    // Chế độ Test: không tính trễ/phạt để không ảnh hưởng lương tài xế.
+    isLate = !testMode && actualTravelMin > stop.sla_minutes;
     lateMinutes = isLate ? actualTravelMin - stop.sla_minutes : 0;
 
     // Calculate penalty
@@ -157,8 +169,14 @@ export class EVCheckinService {
       late_minutes: lateMinutes,
       penalty_amount: penaltyAmount,
       is_missed: false,
+      notes: testMode ? 'TEST_MODE' : undefined,
       created_at: now,
     };
+
+    // Đánh dấu ca là ca test (một lần) để kết thúc ca & bảng lương biết bỏ qua.
+    if (testMode && !isEvTestShift(shift)) {
+      await this.repo.updateEVShift(input.shiftId, { notes: withEvTestShiftMark(shift.notes) });
+    }
 
     // Ghi qua repo để persist xuống ev_shift_checkins (checkin_id do repo cấp).
     const saved = await this.repo.createEVShiftCheckin(checkin as Partial<EVShiftCheckin>);
@@ -175,6 +193,8 @@ export class EVCheckinService {
   async detectMissedStops(shiftId: string): Promise<EVShiftCheckin[]> {
     const shift = this.repo.evShifts.find(s => s.shift_id === shiftId);
     if (!shift) return [];
+    // Ca test: không đánh dấu điểm bỏ lọt (tránh trừ lương oan).
+    if (isEvTestModeEnabled(this.repo) || isEvTestShift(shift)) return [];
 
     const stops = await this.stopsForShift(shift);
     const checkins = this.repo.evShiftCheckins.filter(c => c.shift_id === shiftId);

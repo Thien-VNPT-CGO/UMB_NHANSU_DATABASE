@@ -31,6 +31,7 @@ import {
   ChevronUp,
   Gauge,
   Navigation,
+  FlaskConical,
 } from 'lucide-react';
 
 /** Leaflet là UMD/CJS: namespace import có thể là default hoặc named tùy bundler. */
@@ -2409,6 +2410,12 @@ const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, al
 
   const [tab, setTab] = useState<SubTab>('map');
 
+  // Chế độ TEST phân hệ vận chuyển: Admin bật → tài xế điểm danh tự do
+  // (không cần đúng quy trình); tắt → quy trình bình thường trở lại.
+  const canToggleTest = role === 'ADMIN';
+  const [testMode, setTestMode] = useState(false);
+  const [testModeBusy, setTestModeBusy] = useState(false);
+
   // App.tsx tick 1 giây (đồng hồ lịch giao diện sự kiện) làm prop showToast đổi
   // identity. Nếu đưa thẳng xuống view con, `load` (useCallback phụ thuộc
   // showToast) bị tạo lại mỗi giây → `useEffect` gọi lại 3 API/giây khiến tab
@@ -2416,6 +2423,39 @@ const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, al
   const toastRef = useRef(showToast);
   toastRef.current = showToast;
   const toast = useCallback((m: string) => toastRef.current(m), []);
+
+  // Đọc trạng thái Test hiện tại khi mở phân hệ (mọi vai trò EV_ADMIN đều thấy
+  // cảnh báo; chỉ ADMIN có nút bật/tắt).
+  useEffect(() => {
+    let alive = true;
+    apiRequest('/ev/admin/test-mode')
+      .then((r: any) => { if (alive) setTestMode(!!r?.enabled); })
+      .catch(() => null);
+    return () => { alive = false; };
+  }, []);
+
+  const toggleTestMode = useCallback(async () => {
+    const next = !testMode;
+    const ok = window.confirm(next
+      ? 'BẬT chế độ TEST?\n\nTài xế sẽ điểm danh được ở bất kỳ chi nhánh/điểm dừng nào, không cần đúng thứ tự hay khoảng cách; ca chạy trong lúc test KHÔNG tính công và KHÔNG bị phạt.\n\nChỉ dùng để chạy thử — nhớ TẮT sau khi xong.'
+      : 'TẮT chế độ TEST và trở lại quy trình điểm danh bình thường?');
+    if (!ok) return;
+    setTestModeBusy(true);
+    try {
+      const r: any = await apiRequest('/ev/admin/test-mode', {
+        method: 'PUT',
+        body: JSON.stringify({ enabled: next }),
+      });
+      setTestMode(!!r?.enabled);
+      toast(next
+        ? 'Đã BẬT chế độ Test — tài xế điểm danh tự do tại mọi chi nhánh.'
+        : 'Đã TẮT chế độ Test — quy trình điểm danh hoạt động bình thường.');
+    } catch (e: any) {
+      toast(e?.message || 'Không đổi được chế độ Test');
+    } finally {
+      setTestModeBusy(false);
+    }
+  }, [testMode, toast]);
 
   // Đổi vai trò giữa chừng đang ở màn Lương -> đá về Live Map (tránh render màn bị ẩn).
   useEffect(() => {
@@ -2453,7 +2493,46 @@ const MilkRouteAdminViewBase: React.FC<MilkRouteAdminProps> = ({ currentUser, al
             Live Map realtime • SLA + phạt tự động • phiếu sạc duyệt 1 cấp • phân ca tài xế • bảng lương theo kỳ
           </p>
         </div>
+        {/* Nút Test: chỉ ADMIN đổi được; vai trò khác chỉ thấy cảnh báo bên dưới. */}
+        {canToggleTest && (
+          <button
+            onClick={() => void toggleTestMode()}
+            disabled={testModeBusy}
+            title={testMode
+              ? 'Đang BẬT: tài xế điểm danh tự do (không tính lương/phạt). Bấm để tắt.'
+              : 'Bật chế độ chạy thử: tài xế điểm danh được ở mọi chi nhánh.'}
+            style={{
+              marginLeft: 'auto',
+              display: 'inline-flex', alignItems: 'center', gap: '7px',
+              padding: '8px 15px', borderRadius: '10px', fontSize: '12.5px', fontWeight: 800,
+              cursor: testModeBusy ? 'wait' : 'pointer',
+              border: testMode ? '1.5px solid #B91C1C' : `1px solid ${BORDER}`,
+              backgroundColor: testMode ? '#FEF2F2' : 'var(--surface)',
+              color: testMode ? '#B91C1C' : '#475569',
+              opacity: testModeBusy ? 0.6 : 1,
+            }}
+          >
+            <FlaskConical size={15} /> {testModeBusy ? 'Đang lưu…' : testMode ? 'Tắt Test' : 'Test'}
+          </button>
+        )}
       </div>
+
+      {testMode && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: '9px',
+          padding: '11px 14px', borderRadius: '10px',
+          border: '1.5px dashed #F59E0B', backgroundColor: '#FFFBEB',
+          fontSize: '12.5px', fontWeight: 700, color: '#92400E', lineHeight: 1.5,
+        }}>
+          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: '1px' }} />
+          <div>
+            <div>ĐANG BẬT CHẾ ĐỘ TEST — tài xế điểm danh được ở mọi chi nhánh, không cần đúng thứ tự/khoảng cách.</div>
+            <div style={{ fontWeight: 600, marginTop: '2px' }}>
+              Các ca chạy trong thời gian này được đánh dấu “TEST_MODE” và <b>không tính công, không tính phạt</b>. Nhớ tắt sau khi chạy thử.
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', borderBottom: `1px solid ${BORDER}`, paddingBottom: '10px' }}>
         {TABS.map((t) => {

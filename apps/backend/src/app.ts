@@ -234,6 +234,7 @@ import {
   evStartShiftBody,
   evCheckinBody,
   evEndShiftBody,
+  evTestModeBody,
   evChargingTicketCreateBody,
   evChargingTicketApproveBody,
   evChargingTicketRejectBody,
@@ -275,6 +276,7 @@ import { getThemeScheduleState, normalizeThemeSchedule } from './utils/theme-sch
 import { lateFineFor } from './services/payroll.service.js';
 import { createMilkRouteModule } from './services/milkroute/index.js';
 import { normalizeEvDay } from './services/milkroute/ev-drive.service.js';
+import { EV_TEST_MODE_KEY, isEvTestModeEnabled } from './services/milkroute/ev-test-mode.js';
 
 // Thời điểm process khởi động — đo uptime thật (không hardcode).
 const SERVER_STARTED_AT = Date.now();
@@ -1112,6 +1114,40 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // ---------------------------------------------------------------
+  // TEST MODE — Admin bật/tắt chạy thử quy trình điểm danh tài xế
+  // Bật: tài xế điểm danh ở bất kỳ chi nhánh/điểm dừng nào, không cần đúng
+  // thứ tự & khoảng cách; ca test không bị tính công/phạt.
+  // Tắt: mọi ràng buộc quy trình hoạt động lại bình thường.
+  // ---------------------------------------------------------------
+  const readEvTestMode = async () => {
+    const settings: any = (await adapter.getSystemSettings().catch(() => null)) || {};
+    return isEvTestModeEnabled({ systemSettings: settings });
+  };
+
+  app.get('/ev/admin/test-mode', authMiddleware, requireRole(EV_ADMIN_ROLES), async (_req, res) => {
+    try {
+      res.json({ enabled: await readEvTestMode() });
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.put('/ev/admin/test-mode', authMiddleware, requireRole(['ADMIN']), validate({ body: evTestModeBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const enabled = req.body.enabled === true;
+      const settings: any = (await adapter.getSystemSettings()) || {};
+      const value = {
+        enabled,
+        updated_at: new Date().toISOString(),
+        updated_by: String(req.user?.employeeId || (req.user as any)?.sub || ''),
+      };
+      await adapter.updateSystemSettings({ ...settings, [EV_TEST_MODE_KEY]: value });
+      // Đẩy ngay lên CAU_HINH_HE_THONG để cờ không mất khi backend restart.
+      try { await (adapter as any).pushSystemSettingsNow?.(); } catch { /* dirty flag sẽ retry nền */ }
+      broadcastUpdate('config', { area: 'ev-test-mode', enabled });
+      res.json({ enabled, updated_at: value.updated_at });
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
   // ADMIN — Live map (GPS realtime)
   // ---------------------------------------------------------------
   app.get('/ev/admin/live/vehicles', authMiddleware, requireRole(EV_ADMIN_ROLES), async (_req, res) => {
@@ -1141,6 +1177,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // DRIVER — Ca của tôi
   // ---------------------------------------------------------------
   const evDriverRoles: Array<'EMPLOYEE' | 'DRIVER'> = ['EMPLOYEE', 'DRIVER'];
+
+  // App tài xế đọc cờ Test để nới các nút bấm trên giao diện (server vẫn là
+  // nơi quyết định cuối cùng — client chỉ phản ánh trạng thái).
+  app.get('/ev/me/test-mode', authMiddleware, requireRole(evDriverRoles), async (_req, res) => {
+    try {
+      res.json({ enabled: await readEvTestMode() });
+    } catch {
+      res.json({ enabled: false });
+    }
+  });
 
   app.get('/ev/me/shifts', authMiddleware, requireRole(evDriverRoles), async (req: AuthenticatedRequest, res) => {
     try {
