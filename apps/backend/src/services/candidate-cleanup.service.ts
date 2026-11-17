@@ -45,7 +45,14 @@ export interface CandidateCleanupTombstoneStore {
 const hasValue = (v: unknown): boolean => v !== undefined && v !== null && String(v).trim() !== '';
 
 /** Các cột chứng minh HR đã chăm sóc/lên lịch/chấm điểm hồ sơ — có 1 cột là
- *  KHÔNG được tự xoá, kể cả khi trạng thái còn NEW do dữ liệu cũ. */
+ *  KHÔNG được tự xoá, kể cả khi trạng thái còn NEW do dữ liệu cũ.
+ *
+ *  LƯU Ý: KHÔNG đưa `zalo_invite_note` / `zalo_invite_error` vào đây. Cột
+ *  "Zalo Thư Mời" trên Google Form thực tế chứa SỐ ĐIỆN THOẠI (hoặc câu trả lời
+ *  thô), nên `parseZaloInviteCell` biến nó thành `zalo_invite_note` cho gần như
+ *  mọi hồ sơ. Nếu chặn theo ghi chú này thì tính năng tự xoá không bao giờ chạy
+ *  (đã kiểm chứng trên production: 143 hồ sơ quá hạn NEW bị chặn oan).
+ *  Chỉ chặn khi HR THỰC SỰ đã gửi Zalo: có `zalo_invite_status` hoặc `zalo_invite_at`. */
 const SCHEDULE_OR_CARE_FIELDS = [
   'interview_date',
   'interview_time_slot',
@@ -59,9 +66,7 @@ const SCHEDULE_OR_CARE_FIELDS = [
   'interview_proposed_note',
   'interview_decline_reason',
   'zalo_invite_status',
-  'zalo_invite_note',
   'zalo_invite_at',
-  'zalo_invite_error',
   'zalo_uid',
   'vip_at',
   'vip_by',

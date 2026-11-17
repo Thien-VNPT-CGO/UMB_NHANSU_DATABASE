@@ -1169,6 +1169,7 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
   // ghi tombstone để pull form gốc không hồi sinh. Chạy mỗi 2 phút cho HR thấy
   // danh sách cập nhật gần như tức thời.
   let candidateCleanupRunning = false;
+  let lastCandidateCleanupSummaryAt = 0;
   const candidateCleanupTickSafe = () => {
     if (candidateCleanupRunning) return;
     candidateCleanupRunning = true;
@@ -1186,6 +1187,15 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
               timestamp: new Date().toISOString(),
             });
           } catch { /* non-fatal */ }
+        }
+        // Nhật ký nhịp 30 phút: thấy rõ đã quét bao nhiêu, bao nhiêu đủ điều kiện
+        // (trước đây không log gì khi danh sách rỗng nên khó phát hiện chặn oan).
+        if (r.eligible > 0 || Date.now() - lastCandidateCleanupSummaryAt >= 30 * 60_000) {
+          lastCandidateCleanupSummaryAt = Date.now();
+          console.log(
+            `[candidate-cleanup] Quét ${r.checked} hồ sơ — đủ điều kiện quá hạn: ${r.eligible}, `
+            + `đã xoá: ${r.deletedIds.length}, lỗi: ${r.failedIds.length}`,
+          );
         }
         if (r.failedIds.length > 0) {
           console.warn(`[candidate-cleanup] ${r.failedIds.length} hồ sơ xoá lỗi, tick sau thử lại: ${r.failedIds.join(', ')}`);

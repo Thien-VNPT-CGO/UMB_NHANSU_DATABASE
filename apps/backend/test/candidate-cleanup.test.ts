@@ -63,6 +63,26 @@ test('chỉ hồ sơ NEW quá 20 ngày, chưa có lịch/chăm sóc mới bị x
       `phải giữ hồ sơ có ${JSON.stringify(patch)}`,
     );
   }
+
+  // HỒI QUY production: cột "Zalo Thư Mời" trên form chứa SĐT nên bị map thành
+  // zalo_invite_note. Ghi chú này KHÔNG được chặn tự xoá (nếu chặn, 143 hồ sơ
+  // quá hạn NEW bị giữ oan và tính năng không bao giờ chạy).
+  assert.equal(
+    isCandidateEligibleForAutoDelete(
+      { ...base, created_at: daysAgoIso(30), zalo_invite_note: '0378445598' },
+      NOW,
+    ),
+    true,
+    'ghi chú Zalo (SĐT) không được chặn tự xoá',
+  );
+  assert.equal(
+    isCandidateEligibleForAutoDelete(
+      { ...base, created_at: daysAgoIso(30), zalo_invite_error: 'invalid phone' },
+      NOW,
+    ),
+    true,
+    'lỗi Zalo không được chặn tự xoá',
+  );
 });
 
 test('khoá tombstone ổn định giữa giờ VN và ISO + chặn hồ sơ đã xoá', () => {
