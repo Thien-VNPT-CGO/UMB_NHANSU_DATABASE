@@ -3762,7 +3762,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Mở modal chấm rubric cho 1 ứng viên (prefill điểm đã chấm nếu có).
   const openScoring = (candidate: any) => {
     // HR mở chấm điểm = đang xử lý buổi PV -> giữ lịch, tắt đếm ngược tự hủy.
-    markPvJoined(candidate);    const saved = parseScoreDetailClient((candidate as any)?.interview_score_detail);
+    markPvJoined(candidate);
+    const saved = parseScoreDetailClient((candidate as any)?.interview_score_detail);
     const rubric = (saved?.rubricId === 'office' ? 'office' : 'store') as 'store' | 'office';
     setScoringRubric((candidate as any)?.interview_rubric === 'office' ? 'office' : rubric);
     setScoringAnswers((saved?.answers && typeof saved.answers === 'object' ? saved.answers : {}) as Record<string, number[]>);
@@ -6653,6 +6654,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           const tabKey = pvTabOf(c);
                           return (
                             <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
+                              {/* Chấm điểm PV: mở bảng rubric CÓ/KHÔNG kinh nghiệm bất cứ lúc nào
+                                  (trước đây chỉ tự bật ở T-10 nên HR bỏ lỡ là không có cách mở lại). */}
+                              {(['WAIT_CONFIRM', 'WAIT_INTERVIEW', 'WAIT_PROBATION'].includes(tabKey))
+                                && String(c.status || '') !== 'BLACKLIST'
+                                && String(c.status || '') !== 'NO_SHOW'
+                                && !disabledForFail && (
+                                <button
+                                  style={{ ...btn2, backgroundColor: isScored ? '#0F766E' : '#4F46E5', color: '#FFF' }}
+                                  onClick={() => openScoring(c)}
+                                  title={isScored ? 'Xem / sửa điểm phỏng vấn đã chấm (rubric CÓ hoặc KHÔNG kinh nghiệm)' : 'Mở bảng chấm điểm phỏng vấn theo bộ tiêu chí CÓ / KHÔNG kinh nghiệm'}
+                                >
+                                  {isScored ? '📝 Xem/Sửa điểm' : '📝 Chấm điểm'}
+                                </button>
+                              )}
                               {tabKey !== 'NO_SHOW' && (
                               <button
                                 disabled={disabledForFail || candActionBusyId === `zalo-${c.submission_id}`}
@@ -7096,6 +7111,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     Để sau
                   </button>
                 </div>
+                <button
+                  onClick={() => { const alert = pvAlert; setPvAlert(null); if (alert) openScoring(alert); }}
+                  style={{ marginTop: '8px', padding: '11px', borderRadius: '10px', backgroundColor: '#4F46E5', color: '#FFF', fontSize: '13.5px', fontWeight: 800, border: 'none', cursor: 'pointer' }}
+                >
+                  📝 Chấm điểm phỏng vấn
+                </button>
               </div>
             </div>
           </div>

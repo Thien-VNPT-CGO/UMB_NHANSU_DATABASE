@@ -914,20 +914,67 @@ export class GoogleSheetsSyncService {
     return true;
   }
 
-  /** Tombstone lịch PV vừa hủy (tay/auto sau 5p không vào Meet): pull overlay
-   *  FROM_NHAN_VIEN trong ~120s sau hủy mà thấy dòng lịch cũ (push chưa kịp chạy)
-   *  thì ÉP XÓA lịch thay vì hồi sinh — trước đây hủy xong reload là lịch về lại. */
+  /** Tombstone lịch PV vừa hủy/chấm điểm/vắng (tay/auto/tick): pull overlay
+   *  FROM_NHAN_VIEN trong thời gian bảo vệ mà thấy dòng cũ trên master (push
+   *  chưa kịp chạy) thì ÉP XÓA lịch thay vì hồi sinh — trước đây hủy xong reload
+   *  là lịch về lại, chấm điểm xong ứng viên tự nhảy về tab "Chờ phỏng vấn". */
   private clearedInterviewIds = new Map<string, number>();
 
-  public markInterviewScheduleCleared(submissionId: string) {
-    if (submissionId) this.clearedInterviewIds.set(String(submissionId).trim(), Date.now());
+  /** Khóa trạng thái nghiệp vụ vừa set (SCORED/ACCEPTED/CONFIRMED/...) — trong
+   *  thời gian bảo vệ, pull master KHÔNG được ghi đè trạng thái/lịch trong bộ
+   *  nhớ. Tách riêng khỏi tombstone xóa lịch để lịch mới đặt vẫn được giữ. */
+  private candidateStatusLocks = new Map<string, { at: number; status?: string }>();
+
+  /** Số ms giữ khóa. Push master là await nhưng có thể xếp hàng quota
+   *  (1.1s/write) + pull nền 10s, nên 120s cũ quá ngắn và gây hồi sinh. */
+  private static readonly INTERVIEW_TOMBSTONE_TTL_MS = 15 * 60_000;
+
+  private static normStatus(v?: string): string | undefined {
+    const st = String(v || '').trim().toUpperCase();
+    return st || undefined;
+  }
+
+  /** Lịch PV vừa bị gỡ (hủy/chấm điểm/vắng/đen/từ chối): chặn master hồi sinh
+   *  lịch cũ VÀ khóa trạng thái cuối cùng. */
+  public markInterviewScheduleCleared(submissionId: string, finalStatus?: string) {
+    const k = String(submissionId || '').trim();
+    if (!k) return;
+    this.clearedInterviewIds.set(k, Date.now());
+    this.candidateStatusLocks.set(k, { at: Date.now(), status: GoogleSheetsSyncService.normStatus(finalStatus) });
+  }
+
+  /** Lịch mới vừa đặt/chốt lại: bỏ tombstone xóa lịch cũ (nếu còn) và khóa
+   *  trạng thái mới để pull không kéo về trạng thái/lịch cũ. */
+  public markInterviewScheduleRestored(submissionId: string, finalStatus?: string) {
+    const k = String(submissionId || '').trim();
+    if (!k) return;
+    this.clearedInterviewIds.delete(k);
+    this.candidateStatusLocks.set(k, { at: Date.now(), status: GoogleSheetsSyncService.normStatus(finalStatus) });
+  }
+
+  /** Khóa trạng thái không liên quan lịch (VD duyệt thử việc ACCEPTED). */
+  public markCandidateStatus(submissionId: string, finalStatus?: string) {
+    const k = String(submissionId || '').trim();
+    if (!k) return;
+    this.candidateStatusLocks.set(k, { at: Date.now(), status: GoogleSheetsSyncService.normStatus(finalStatus) });
+  }
+
+  private getCandidateStatusLock(submissionId: string): { at: number; status?: string } | null {
+    const k = String(submissionId || '').trim();
+    const rec = this.candidateStatusLocks.get(k);
+    if (!rec) return null;
+    if (Date.now() - rec.at > GoogleSheetsSyncService.INTERVIEW_TOMBSTONE_TTL_MS) {
+      this.candidateStatusLocks.delete(k);
+      return null;
+    }
+    return rec;
   }
 
   private isInterviewScheduleClearedRecently(submissionId: string): boolean {
     const k = String(submissionId || '').trim();
     const t = this.clearedInterviewIds.get(k);
     if (!t) return false;
-    if (Date.now() - t > 120000) {
+    if (Date.now() - t > GoogleSheetsSyncService.INTERVIEW_TOMBSTONE_TTL_MS) {
       this.clearedInterviewIds.delete(k);
       return false;
     }
@@ -4800,17 +4847,34 @@ export class GoogleSheetsSyncService {
                   || byPhoneName.get(`${c.phone_normalized || ''}|${String(c.full_name || '').trim().toLowerCase()}`)
                   || byId.get(c.submission_id);
                 if (!mr) continue;
-                // Lịch vừa bị hủy (tay/auto): ÉP XÓA thay vì hồi sinh dòng cũ trên Sheet.
-                if (this.isInterviewScheduleClearedRecently(c.submission_id)) {
-                  c.interview_date = undefined;
-                  c.interview_time_slot = undefined;
-                  c.interviewer_id = undefined;
-                  if ((c as any).status === 'INVITED_INTERVIEW') (c as any).status = 'NEW';
-                  continue;
-                }
+                // Lịch vừa bị hủy/chấm điểm/vắng (tay/auto/tick): GIỮ trạng thái + lịch
+                // mới nhất trong bộ nhớ, KHÔNG hồi sinh dòng cũ còn sót trên master.
                 const nz = (v: any) => (v !== undefined && String(v).trim() !== '' ? String(v).trim() : undefined);
+                const curStatus = String((c as any).status || '').toUpperCase();
+                const hasScore = (String((c as any).interview_score_detail || '').trim() !== ''
+                  && (c as any).interview_score_detail !== undefined && (c as any).interview_score_detail !== null)
+                  || ((c as any).interview_score !== undefined && (c as any).interview_score !== null && String((c as any).interview_score).trim() !== '');
+                const statusLock = this.getCandidateStatusLock(c.submission_id);
+                const scheduleCleared = this.isInterviewScheduleClearedRecently(c.submission_id);
                 const mStatus = nz(mr[15]);
-                if (mStatus && mStatus !== 'NEW') c.status = mStatus as any;
+                // Đang khóa trạng thái (vừa chấm điểm/duyệt/hủy/xếp lịch): bộ nhớ là
+                // nguồn đúng, KHÔNG lấy trạng thái từ master (có thể còn dòng cũ).
+                if (!statusLock && mStatus && mStatus !== 'NEW') {
+                  const mStatusU = String(mStatus).toUpperCase();
+                  // Master là bản sao push từ bộ nhớ. Nếu master còn trạng thái CHỜ cũ
+                  // (CONFIRMED/INVITED...) trong khi bộ nhớ đã chấm điểm/duyệt/vắng/đen
+                  // thì TUYỆT ĐỐI không hạ cấp — đây là nguyên nhân ứng viên tự nhảy về
+                  // tab "Chờ phỏng vấn" sau khi HR chấm điểm.
+                  const WAITING = ['NEW', 'INVITED_INTERVIEW', 'CONFIRMED', 'INTERVIEWED', 'RESCHEDULE_PROPOSED', 'DECLINED'];
+                  const downgradeFromScored = (curStatus === 'SCORED' || curStatus === 'ACCEPTED' || hasScore) && WAITING.includes(mStatusU);
+                  const downgradeAccepted = curStatus === 'ACCEPTED' && !['ACCEPTED', 'BLACKLIST', 'REJECTED'].includes(mStatusU);
+                  const downgradeBlacklist = curStatus === 'BLACKLIST' && mStatusU !== 'BLACKLIST';
+                  const downgradeProposal = ['RESCHEDULE_PROPOSED', 'DECLINED', 'NO_SHOW'].includes(curStatus)
+                    && ['INVITED_INTERVIEW', 'CONFIRMED'].includes(mStatusU);
+                  if (!downgradeFromScored && !downgradeAccepted && !downgradeBlacklist && !downgradeProposal) {
+                    c.status = mStatus as any;
+                  }
+                }
                 // Năm sinh: ưu tiên chuỗi gốc từ form; master chỉ bổ sung khi form
                 // không có (VD dữ liệu cũ chỉ còn 1 năm).
                 const mBirthRaw = nz(mr[3]);
@@ -4831,9 +4895,29 @@ export class GoogleSheetsSyncService {
                   const mCode = String(mBranch).match(/CN\d+/i)?.[0]?.toUpperCase();
                   if (mCode) c.preferred_branch_id = mCode as any;
                 }
-                c.interview_date = nz(mr[17]) || c.interview_date;
-                c.interview_time_slot = nz(mr[18]) || c.interview_time_slot;
-                c.interviewer_id = nz(mr[19]) || c.interviewer_id;
+                // Ứng viên đã phỏng vấn xong / vắng / bị loại / đen thì KHÔNG khôi phục
+                // lịch cũ từ master (master có thể còn dòng lịch trễ) — tránh đếm ngược
+                // Meet + tab "Chờ phỏng vấn" sống lại sau khi đã chấm điểm.
+                const effStatus = String((c as any).status || '').toUpperCase();
+                const finalNoSchedule = ['SCORED', 'ACCEPTED', 'REJECTED', 'NO_SHOW', 'BLACKLIST', 'INTERVIEWED', 'DECLINED', 'RESCHEDULE_PROPOSED'].includes(effStatus)
+                  || hasScore;
+                if (scheduleCleared) {
+                  // Lịch vừa bị gỡ: ép xóa, không hồi sinh dòng cũ.
+                  c.interview_date = undefined;
+                  c.interview_time_slot = undefined;
+                  c.interviewer_id = undefined;
+                } else if (statusLock) {
+                  // Lịch vừa đặt/chốt/xác nhận: giữ nguyên lịch trong bộ nhớ, không để
+                  // master cũ ghi đè ngày/giờ (kể cả lịch cũ của lần hẹn trước).
+                } else if (finalNoSchedule) {
+                  c.interview_date = undefined;
+                  c.interview_time_slot = undefined;
+                  c.interviewer_id = undefined;
+                } else {
+                  c.interview_date = nz(mr[17]) || c.interview_date;
+                  c.interview_time_slot = nz(mr[18]) || c.interview_time_slot;
+                  c.interviewer_id = nz(mr[19]) || c.interviewer_id;
+                }
                 // Cột "Zalo Thư Mời" có thể còn dữ liệu cũ HR nhập tay (SĐT/Zalo
                 // phụ). Chỉ nhận mã trạng thái hợp lệ; phần còn lại lưu thành
                 // ghi chú để push không ghi ngược SĐT vào cột trạng thái.

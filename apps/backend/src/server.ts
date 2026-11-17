@@ -1134,7 +1134,7 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
         await services.employeesService.markInterviewNoShow(sid, 'SYSTEM', 'Quá giờ hẹn 30 phút không xác nhận');
         try {
           const syncSvc = (adapter as any)?.syncService;
-          syncSvc?.markInterviewScheduleCleared?.(sid);
+          syncSvc?.markInterviewScheduleCleared?.(sid, 'NO_SHOW');
           await (adapter as any)?.pushCandidatesNow?.();
         } catch { /* tick sau thử lại */ }
       },

@@ -4135,6 +4135,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         timeSlot,
         req.user!.id
       );
+      // Lịch mới vừa đặt: giữ trạng thái/lịch này trước dòng master cũ (pull nền
+      // có thể còn CONFIRMED/NEW của lịch trước), đồng thời đẩy master ngay.
+      try {
+        const syncSvc = (adapter as any)?.syncService;
+        syncSvc?.markInterviewScheduleRestored?.(submissionId, 'INVITED_INTERVIEW');
+        await (adapter as any)?.pushCandidatesNow?.();
+      } catch { /* best-effort */ }
       broadcastUpdate('candidates', { action: 'schedule-interview', id: submissionId });
       res.json(result);
     } catch (err: any) {
@@ -4174,6 +4181,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.put('/applications/:id', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: candidateUpdateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await employeesService.updateCandidateFields(req.params.id, req.body || {}, req.user!.id);
+      // Khôi phục ứng viên bị LOẠI (REJECTED -> NEW): khóa trạng thái ngắn hạn để
+      // pull master cũ không kéo ứng viên về REJECTED trước khi push kịp ghi.
+      if (String((req.body as any)?.status || '').toUpperCase() === 'NEW') {
+        try {
+          const syncSvc = (adapter as any)?.syncService;
+          syncSvc?.markCandidateStatus?.(req.params.id, 'NEW');
+        } catch { /* best-effort */ }
+      }
       // Đẩy master FROM_NHAN_VIEN NGAY (await): ca/chi nhánh HR vừa chốt bền vững trên
       // Sheet trước khi trả response — pull nền sau đó phủ lại đúng giá trị mới thay vì
       // dựng lại từ form gốc (fix "báo thành công nhưng dữ liệu không đổi"). Pattern như
@@ -4221,7 +4236,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // để pull nền/pull tay sau đó không đọc lại dòng lịch cũ (pattern như dedupe).
       try {
         const syncSvc = (adapter as any)?.syncService;
-        syncSvc?.markInterviewScheduleCleared?.(req.params.id);
+        syncSvc?.markInterviewScheduleCleared?.(req.params.id, 'NEW');
         await (adapter as any)?.pushCandidatesNow?.();
       } catch { /* best-effort, tombstone đã chặn hồi sinh 120s */ }
       broadcastUpdate('candidates', { action: 'interview-cancelled', id: req.params.id });
@@ -4236,6 +4251,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const result = await employeesService.confirmInterview(req.params.id, req.user!.id, 'HR');
       try {
+        const syncSvc = (adapter as any)?.syncService;
+        syncSvc?.markInterviewScheduleRestored?.(req.params.id, 'CONFIRMED');
         await (adapter as any)?.pushCandidatesNow?.();
       } catch { /* best-effort */ }
       broadcastUpdate('candidates', { action: 'interview-confirmed', id: req.params.id });
@@ -4253,7 +4270,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const result = await employeesService.markInterviewNoShow(req.params.id, req.user!.id, reason || undefined);
       try {
         const syncSvc = (adapter as any)?.syncService;
-        syncSvc?.markInterviewScheduleCleared?.(req.params.id);
+        syncSvc?.markInterviewScheduleCleared?.(req.params.id, 'NO_SHOW');
         await (adapter as any)?.pushCandidatesNow?.();
       } catch { /* best-effort */ }
       broadcastUpdate('candidates', { action: 'interview-no-show', id: req.params.id });
@@ -4273,6 +4290,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         time: b.time ? String(b.time) : undefined,
       });
       try {
+        const syncSvc = (adapter as any)?.syncService;
+        syncSvc?.markInterviewScheduleRestored?.(req.params.id, 'INVITED_INTERVIEW');
         await (adapter as any)?.pushCandidatesNow?.();
       } catch { /* best-effort */ }
       broadcastUpdate('candidates', { action: 'interview-proposal-approved', id: req.params.id });
@@ -4290,7 +4309,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const result = await employeesService.blacklistCandidate(req.params.id, req.user!.id, reason || undefined);
       try {
         const syncSvc = (adapter as any)?.syncService;
-        syncSvc?.markInterviewScheduleCleared?.(req.params.id);
+        syncSvc?.markInterviewScheduleCleared?.(req.params.id, 'BLACKLIST');
         await (adapter as any)?.pushCandidatesNow?.();
       } catch { /* best-effort */ }
       broadcastUpdate('candidates', { action: 'candidate-blacklisted', id: req.params.id });
@@ -4320,6 +4339,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const result = await employeesService.restoreFromBlacklist(req.params.id, req.user!.id);
       try {
+        const syncSvc = (adapter as any)?.syncService;
+        syncSvc?.markInterviewScheduleRestored?.(req.params.id, 'NEW');
         await (adapter as any)?.pushCandidatesNow?.();
       } catch { /* best-effort */ }
       broadcastUpdate('candidates', { action: 'candidate-unblacklisted', id: req.params.id });
@@ -4337,7 +4358,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // master NGAY) để pull nền sau đó không đọc lại dòng lịch cũ.
       try {
         const syncSvc = (adapter as any)?.syncService;
-        syncSvc?.markInterviewScheduleCleared?.(req.params.id);
+        syncSvc?.markInterviewScheduleCleared?.(req.params.id, (result as any)?.autoRejected
+          ? 'REJECTED'
+          : String((result as any)?.candidate?.status || 'SCORED'));
         await (adapter as any)?.pushCandidatesNow?.();
       } catch { /* best-effort, tombstone đã chặn hồi sinh 120s */ }
       broadcastUpdate('candidates', { action: 'score', id: req.params.id });
@@ -4351,6 +4374,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/applications/:id/approve', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await employeesService.approveCandidate(req.params.id, req.user!.id);
+      // Chặn pull cũ hạ ACCEPTED về SCORED/Chờ phỏng vấn + đẩy master ngay.
+      try {
+        const syncSvc = (adapter as any)?.syncService;
+        syncSvc?.markCandidateStatus?.(req.params.id, 'ACCEPTED');
+        await (adapter as any)?.pushCandidatesNow?.();
+      } catch { /* best-effort */ }
       broadcastUpdate('candidates', { action: 'approve', id: req.params.id });
       broadcastUpdate('employees', { action: 'create', employee: (result as any).employee });
       broadcastUpdate('accounts', { action: 'create_emp_account' });
@@ -4458,6 +4487,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
       // Lưu lịch phỏng vấn trước khi gửi (idempotent theo submission).
       await employeesService.scheduleInterview(req.params.id, interviewDate, timeSlot, req.user!.id);
+      try {
+        const syncSvc = (adapter as any)?.syncService;
+        syncSvc?.markInterviewScheduleRestored?.(req.params.id, 'INVITED_INTERVIEW');
+      } catch { /* best-effort */ }
 
       // Link xác nhận cho ứng viên bấm (không cần đăng nhập, token 7 ngày).
       // PUBLIC_BASE_URL (domain thật) ưu tiên; thiếu thì dùng origin của request
@@ -9564,6 +9597,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         const updated: any = await employeesService.confirmInterview(sid, 'CANDIDATE', 'CANDIDATE');
         broadcastUpdate('candidates', { action: 'interview-confirmed', id: sid });
         try {
+          const syncSvc = (adapter as any)?.syncService;
+          syncSvc?.markInterviewScheduleRestored?.(sid, String(updated?.status || 'CONFIRMED'));
           await (adapter as any)?.pushCandidatesNow?.();
         } catch { /* best-effort */ }
         return res.json({ success: true, status: updated.status });
@@ -9579,7 +9614,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         broadcastUpdate('candidates', { action: proposed ? 'interview-reschedule-proposed' : 'interview-declined', id: sid });
         try {
           const syncSvc = (adapter as any)?.syncService;
-          syncSvc?.markInterviewScheduleCleared?.(sid);
+          syncSvc?.markInterviewScheduleCleared?.(sid, String(updated?.status || (proposed ? 'RESCHEDULE_PROPOSED' : 'DECLINED')));
           await (adapter as any)?.pushCandidatesNow?.();
         } catch { /* best-effort */ }
         await notifyHRDeclined(updated, sid);
@@ -9590,7 +9625,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         broadcastUpdate('candidates', { action: 'interview-reschedule-requested', id: sid });
         try {
           const syncSvc = (adapter as any)?.syncService;
-          syncSvc?.markInterviewScheduleCleared?.(sid);
+          syncSvc?.markInterviewScheduleCleared?.(sid, String(updated?.status || 'RESCHEDULE_PROPOSED'));
           await (adapter as any)?.pushCandidatesNow?.();
         } catch { /* best-effort */ }
         try {
