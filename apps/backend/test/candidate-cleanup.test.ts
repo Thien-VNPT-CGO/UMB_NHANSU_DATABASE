@@ -83,6 +83,26 @@ test('chỉ hồ sơ NEW quá 20 ngày, chưa có lịch/chăm sóc mới bị x
     true,
     'lỗi Zalo không được chặn tự xoá',
   );
+
+  // HỒI QUY production: cột "Zalo Thư Mời" từng ghi SĐT và bị nạp vào
+  // zalo_invite_status ("346635827") -> mọi hồ sơ bị coi là đã gửi Zalo.
+  // Chỉ mã trạng thái hợp lệ mới được chặn.
+  assert.equal(
+    isCandidateEligibleForAutoDelete(
+      { ...base, created_at: daysAgoIso(30), zalo_invite_status: '346635827' },
+      NOW,
+    ),
+    true,
+    'zalo_invite_status rác (SĐT) không được chặn tự xoá',
+  );
+  assert.equal(
+    isCandidateEligibleForAutoDelete(
+      { ...base, created_at: daysAgoIso(30), zalo_invite_status: '  sent ' },
+      NOW,
+    ),
+    false,
+    'mã SENT hợp lệ (kể cả khác hoa/thường) phải chặn tự xoá',
+  );
 });
 
 test('khoá tombstone ổn định giữa giờ VN và ISO + chặn hồ sơ đã xoá', () => {

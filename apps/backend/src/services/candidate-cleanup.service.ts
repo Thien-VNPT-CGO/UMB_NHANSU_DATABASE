@@ -20,6 +20,7 @@
  */
 
 import { canonicalPhone, normSheetDateTime } from './employees.service.js';
+import { ZALO_INVITE_STATUSES } from './candidate-form-map.js';
 
 export const CANDIDATE_AUTO_DELETE_DAYS = 20;
 export const CANDIDATE_AUTO_DELETE_SETTING_KEY = 'candidateAutoDeleteTombstones';
@@ -44,6 +45,19 @@ export interface CandidateCleanupTombstoneStore {
 
 const hasValue = (v: unknown): boolean => v !== undefined && v !== null && String(v).trim() !== '';
 
+const ZALO_STATUS_SET = new Set<string>(
+  (ZALO_INVITE_STATUSES as readonly string[]).map(s => s.toUpperCase()),
+);
+
+/** Chỉ coi là "HR đã gửi Zalo" khi giá trị là MÃ TRẠNG THÁI hợp lệ.
+ *  Dữ liệu cũ trên Sheet từng ghi SĐT/Zalo phụ vào cột "Zalo Thư Mời" và bị nạp
+ *  vào `zalo_invite_status` (vd "346635827"). Nếu tin tuyệt đối giá trị này thì
+ *  mọi hồ sơ đều bị chặn tự xoá vĩnh viễn — đúng lỗi đã gặp trên production. */
+function isRealZaloInviteStatus(v: unknown): boolean {
+  const s = String(v ?? '').trim().toUpperCase();
+  return !!s && ZALO_STATUS_SET.has(s);
+}
+
 /** Các cột chứng minh HR đã chăm sóc/lên lịch/chấm điểm hồ sơ — có 1 cột là
  *  KHÔNG được tự xoá, kể cả khi trạng thái còn NEW do dữ liệu cũ.
  *
@@ -52,7 +66,8 @@ const hasValue = (v: unknown): boolean => v !== undefined && v !== null && Strin
  *  thô), nên `parseZaloInviteCell` biến nó thành `zalo_invite_note` cho gần như
  *  mọi hồ sơ. Nếu chặn theo ghi chú này thì tính năng tự xoá không bao giờ chạy
  *  (đã kiểm chứng trên production: 143 hồ sơ quá hạn NEW bị chặn oan).
- *  Chỉ chặn khi HR THỰC SỰ đã gửi Zalo: có `zalo_invite_status` hoặc `zalo_invite_at`. */
+ *  `zalo_invite_status` được kiểm tra RIÊNG bằng `isRealZaloInviteStatus()` —
+ *  dữ liệu cũ từng ghi SĐT vào cột này */
 const SCHEDULE_OR_CARE_FIELDS = [
   'interview_date',
   'interview_time_slot',
@@ -65,7 +80,6 @@ const SCHEDULE_OR_CARE_FIELDS = [
   'interview_proposed_time_slot',
   'interview_proposed_note',
   'interview_decline_reason',
-  'zalo_invite_status',
   'zalo_invite_at',
   'zalo_uid',
   'vip_at',
@@ -110,6 +124,9 @@ export function isCandidateEligibleForAutoDelete(
   if (status && status !== 'NEW') return false;
   // HR đã đánh dấu ưu tiên -> không tự xoá.
   if (c?.vip === true) return false;
+  // Đã gửi Zalo THẬT (mã trạng thái hợp lệ) -> giữ lại. Giá trị rác kiểu SĐT
+  // (dữ liệu cũ) không được tính, nếu không sẽ chặn xoá vĩnh viễn.
+  if (isRealZaloInviteStatus(c?.zalo_invite_status)) return false;
   if (SCHEDULE_OR_CARE_FIELDS.some(f => hasValue(c?.[f]))) return false;
 
   const createdMs = parseCandidateRegisteredAtMs(c?.created_at);

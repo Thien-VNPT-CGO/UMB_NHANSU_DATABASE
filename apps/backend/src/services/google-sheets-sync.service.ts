@@ -34,6 +34,7 @@ import {
   normalizeFormFacebook,
   parseFormBirthYear,
   parseZaloInviteCell,
+  ZALO_INVITE_STATUSES,
 } from './candidate-form-map.js';
 import {
   candidateCleanupKey,
@@ -4849,7 +4850,15 @@ export class GoogleSheetsSyncService {
               interview_reminder_count: (prev as any).interview_reminder_count ?? undefined,
               interview_reminder_key: (prev as any).interview_reminder_key || undefined,
               interview_mode: (prev as any).interview_mode || undefined,
-              zalo_invite_status: zaloSrc.status || prev.zalo_invite_status || undefined,
+              // Trạng thái Zalo: chỉ nhận MÃ HỢP LỆ. Dữ liệu cũ từng ghi SĐT vào
+              // cột "Zalo Thư Mời" và bị nạp vào đây ("346635827"), khiến mọi hồ
+              // sơ bị coi là đã gửi Zalo và chặn tự xoá quá hạn vĩnh viễn.
+              zalo_invite_status: zaloSrc.status
+                || ((ZALO_INVITE_STATUSES as readonly string[]).includes(
+                  String(prev.zalo_invite_status || '').trim().toUpperCase(),
+                )
+                  ? String(prev.zalo_invite_status).trim().toUpperCase()
+                  : undefined),
               zalo_invite_note: zaloSrc.note || prev.zalo_invite_note || undefined,
               zalo_invite_at: getVal(colZaloAt) || prev.zalo_invite_at || undefined,
               zalo_uid: prev.zalo_uid || undefined,
