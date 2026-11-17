@@ -68,6 +68,20 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
+/**
+ * Tự động "làm đẹp" Sheets có được bật không (mặc định BẬT).
+ *
+ * `SHEETS_AUTO_BEAUTIFY=0|off|false|no` phải tắt Ở MỌI chỗ: trước đây cờ này chỉ
+ * chặn timer 24h trong server.ts, còn 2 chỗ auto-beautify trong sync service
+ * (sau khi tạo tab mới và sau mỗi lượt push đủ) vẫn chạy. Hệ quả trên production:
+ * mỗi lần restart container lại đọc/format toàn bộ tab của 25 file → ~75 lần
+ * vượt hạn mức đọc 60 lượt/phút, tranh quota với pull và backup.
+ */
+export function isAutoBeautifyEnabled(envValue: string | undefined = process.env.SHEETS_AUTO_BEAUTIFY): boolean {
+  const v = String(envValue ?? '1').trim().toLowerCase();
+  return v !== '0' && v !== 'off' && v !== 'false' && v !== 'no';
+}
+
 /** 1 → A, 26 → Z, 27 → AA (tối đa 702 = ZZ, đủ cho mọi bảng nghiệp vụ). */
 function columnLetterOf(index: number): string {
   const n = Math.max(1, Math.floor(index));
@@ -2569,11 +2583,13 @@ export class GoogleSheetsSyncService {
 
       console.log(`[GoogleSheetsSyncService] Đã tạo ${createdSheets.length} sheet mới trên ${groups.size} file riêng. Toàn bộ ${SHEETS_DEFINITIONS.length} tab sẵn sàng.`);
 
-      for (const sid of touchedSpreadsheets) {
-        // Tự động làm đẹp và định dạng các tab mới tạo (đúng file vừa tạo tab).
-        this.formatAndBeautifySpreadsheet(sid).catch(err => {
-          console.warn('[GoogleSheetsSyncService] Tự động làm đẹp Sheets thất bại:', err?.message || err);
-        });
+      if (isAutoBeautifyEnabled()) {
+        for (const sid of touchedSpreadsheets) {
+          // Tự động làm đẹp và định dạng các tab mới tạo (đúng file vừa tạo tab).
+          this.formatAndBeautifySpreadsheet(sid).catch(err => {
+            console.warn('[GoogleSheetsSyncService] Tự động làm đẹp Sheets thất bại:', err?.message || err);
+          });
+        }
       }
 
       const message = `Đã khởi tạo thành công cấu trúc ${SHEETS_DEFINITIONS.length} sheet tabs trên ${groups.size} file Google Sheets riêng!`
@@ -2726,6 +2742,18 @@ export class GoogleSheetsSyncService {
       this.cfCleanupState.running = false;
       this.cfCleanupState.finishedAt = new Date().toISOString();
     }
+  }
+
+  /**
+   * Tự động làm đẹp sau khi push đủ có nên chạy không.
+   *
+   * Tôn trọng `SHEETS_AUTO_BEAUTIFY` (production đặt 0) và giới hạn 1 lần/6 giờ.
+   * `lastBeautifyAt` chỉ nằm trong RAM nên sau mỗi lần restart trước đây beautify
+   * chạy ngay ở lượt push đầu — đúng lúc pull/backup đang cần quota đọc.
+   */
+  public shouldAutoBeautify(nowMs: number = Date.now()): boolean {
+    if (!isAutoBeautifyEnabled()) return false;
+    return nowMs - this.lastBeautifyAt > 6 * 3_600_000;
   }
 
   /**
@@ -5854,7 +5882,7 @@ export class GoogleSheetsSyncService {
         // Tự động căn chỉnh & làm đẹp: tối đa 1 lần/6 giờ (đẹp Sheets tốn ~20-30
         // write + đọc 20 dòng/tab, lấn quota của thao tác thật). Endpoint định dạng
         // thủ công (/admin/integrations/format-sheets) vẫn chạy bất kỳ lúc nào.
-        if (Date.now() - this.lastBeautifyAt > 6 * 3_600_000) {
+        if (this.shouldAutoBeautify()) {
           this.formatAndBeautifySpreadsheet().catch(err => {
             console.warn('[GoogleSheetsSyncService] Tự động làm đẹp sau syncAllData thất bại:', err?.message || err);
           });
