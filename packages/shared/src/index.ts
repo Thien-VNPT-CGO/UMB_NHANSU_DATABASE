@@ -14,6 +14,7 @@ export * from './constants/office.js';
 export * from './attendance-grid.js';
 export * from './payMode.js';
 export * from './payrollBatches.js';
+export * from './period.js';
 export * from './candidate-age.js';
 export * from './uniform-refund.js';
 export * from './error-messages.js';

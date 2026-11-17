@@ -15,6 +15,7 @@ import {
   batchOfRun,
   employeeInBatch,
   normalizePayrollBatch,
+  normalizePeriodValue,
   payrollBatchLabel,
   payrollBatchOfRunId,
 } from '@ubm/shared';
@@ -678,6 +679,10 @@ export class PayrollService {
     // chấm công). Đợt đã tính = có run/phiếu của đợt đó. Run cũ tính gộp (không
     // có batch_scope) được coi là phủ toàn bộ đợt bắt buộc — không phá dữ liệu cũ.
     const tsRows: any[] = ((timesheet as any)?.rows || []) as any[];
+    // Dòng chấm công của NV đã bị xoá khỏi NHAN_VIEN_MASTER không có `group`.
+    // Không được quy bừa các dòng này vào đợt Tổng hợp (batchOfGroup('') trả
+    // TONG_HOP) — sẽ làm đợt Tổng hợp hiện thừa NV/phiếu của bản ghi ma.
+    const tsRowsWithGroup = tsRows.filter((r: any) => String(r?.group || '').trim() !== '');
     // Đợt bắt buộc phải dựa trên NHÂN SỰ của kỳ, không chỉ dòng chấm công:
     // khối Văn phòng/Xưởng/Sales hưởng lương THÁNG có thể không có ca nào
     // nhưng vẫn phải trả lương. Chỉ tính NV đã vào làm trong/trước kỳ và chưa nghỉ.
@@ -689,7 +694,7 @@ export class PayrollService {
     });
     const requiredBatches = PAYROLL_BATCHES
       .filter(b => periodEmployees.some((e: any) => employeeInBatch(e?.group, b.id))
-        || tsRows.some((r: any) => employeeInBatch(r?.group, b.id)))
+        || tsRowsWithGroup.some((r: any) => employeeInBatch(r?.group, b.id)))
       .map(b => b.id);
     const coveredBatches = new Set<string>();
     const batchRunOf = new Map<string, any>();
@@ -722,7 +727,7 @@ export class PayrollService {
       }
     }
     // Nguồn 2: dòng chấm công (bù NV đã rời hệ thống nhưng còn công trong kỳ).
-    for (const r of tsRows) {
+    for (const r of tsRowsWithGroup) {
       const empId = String((r as any)?.employeeId || '');
       if (!empId) continue;
       for (const b of PAYROLL_BATCHES) {
@@ -1719,7 +1724,7 @@ export class PayrollService {
     };
     const best = new Map<string, any>();
     for (const s of slips || []) {
-      const key = `${s?.employee_id || s?.employee_code || ''}|${s?.period || ''}`;
+      const key = `${s?.employee_id || s?.employee_code || ''}|${normalizePeriodValue(s?.period)}`;
       if (!s?.employee_id && !s?.employee_code) continue;
       const cur = best.get(key);
       if (!cur || recency(s) >= recency(cur)) best.set(key, s);
@@ -2471,6 +2476,41 @@ export class PayrollService {
     };
   }
 
+  /**
+   * Bỏ phiếu "rác" khỏi BẢN XEM KỲ (không xoá dữ liệu gốc trong run/Sheets):
+   *  - NV vào làm SAU ngày cuối kỳ thì không thể có phiếu lương kỳ đó — dữ liệu
+   *    cũ từng sinh nhầm (VD NV tuyển 05/11 vẫn có phiếu tháng 10).
+   *  - Phiếu gắn `employee_id` không còn trong NHAN_VIEN_MASTER (bản ghi NV trùng
+   *    đã bị xoá/gộp) — tab Kỳ lương không nên cộng tiền của bản ghi ma này.
+   * Nếu chưa đọc được danh sách nhân sự thì giữ nguyên để tránh ẩn oan phiếu.
+   */
+  private async dropSlipsNotInPeriod(slips: any[], period: string): Promise<any[]> {
+    let periodEnd = '';
+    try {
+      periodEnd = monthRange(period).toDate;
+    } catch {
+      return slips;
+    }
+    const employees = await (async () => {
+      const fn = (this.repo as any)?.listEmployees;
+      if (typeof fn !== 'function') return [] as any[];
+      try {
+        const rows = await fn.call(this.repo, { branch: '*' });
+        return Array.isArray(rows) ? rows : [];
+      } catch {
+        return [] as any[];
+      }
+    })();
+    if (!employees.length) return slips;
+    const byId = new Map<string, any>(employees.map((e: any) => [String(e?.employee_id || ''), e]));
+    return slips.filter((s: any) => {
+      const emp = byId.get(String(s?.employee_id || ''));
+      if (!emp) return false;
+      const start = String(emp?.start_date || emp?.official_date || '').slice(0, 10);
+      return !start || start <= periodEnd;
+    });
+  }
+
   async getPeriodSlips(period: string) {
     const runs = await this.repo.listPayrollRuns().catch(() => []);
     const matching = (runs || [])
@@ -2491,14 +2531,22 @@ export class PayrollService {
     if (slips.length === 0 || matching.length === 0) {
       const allSlips = await this.collectAllSlipsInternal();
       for (const s of allSlips) {
-        if (s.period !== period) continue;
+        if (normalizePeriodValue(s.period) !== period) continue;
         if (runIds.has(String(s.run_id || ''))) continue;
         slips.push(s);
       }
     }
     // Tab KY_LUONG có thể rỗng sau khi restart (chỉ còn PHIEU_LUONG): nhiều lần
     // tính lại tạo nhiều run, mỗi run 1 bộ phiếu. Chỉ trả phiếu mới nhất/NV/kỳ.
+    // Chuẩn hoá kỳ trước khi gộp: dữ liệu cũ có kỳ dạng số serial Excel ("46296")
+    // sẽ bị coi là kỳ KHÁC "2026-10" → phiếu bị nhân đôi khi xem.
+    slips = slips.map((s: any) => {
+      const p = normalizePeriodValue(s?.period);
+      return p === s?.period ? s : { ...s, period: p };
+    });
     slips = await this.attachInputNotes(this.latestSlipsPerPeriod(slips));
+    // Ẩn phiếu của NV chưa vào làm trong kỳ / bản ghi nhân sự đã bị gộp.
+    slips = await this.dropSlipsNotInPeriod(slips, period);
     const run = matching.length > 0 ? this.combinePeriodRuns(matching, slips) : null;
     return { run, slips };
   }
