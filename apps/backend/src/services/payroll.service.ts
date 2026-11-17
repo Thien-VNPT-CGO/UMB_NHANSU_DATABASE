@@ -853,7 +853,10 @@ export class PayrollService {
         reason: !calculated
           ? (hasTimesheet ? 'Chưa có bảng lương — bấm "Tính lương" để tạo phiếu cho kỳ.' : 'Chưa có dữ liệu chấm công để tính lương.')
           : (missingBatches.length ? `Còn ${missingBatchLabels} chưa tính lương — tính nốt để đủ 2 đợt trước khi phát hành/chuyển khoản.` : ''),
-        completedAt: calculated ? String(run?.created_at || '') : '',
+        // Lần tính MỚI NHẤT (updated_at của kỳ gộp) — không dùng created_at của
+        // đợt cũ nhất, vì sau khi quay về bước trước rồi tính lại, bước 3 vẫn bị
+        // coi là "chưa hoàn tất lại" và hiện sai tiến độ.
+        completedAt: calculated ? String(run?.updated_at || run?.created_at || '') : '',
         batches: batchProgress,
         missingBatches,
         allBatchesCalculated,
@@ -862,7 +865,7 @@ export class PayrollService {
         id: 'fin-payroll-sheet', order: 4, title: 'Payment — Bảng lương tháng', done: calculated && !!run,
         stat: calculated && run ? `Kỳ ${run.run_id} (${runStatus || 'DRAFT'}) · ${slipCount} phiếu` : 'Chưa có kỳ lương',
         reason: calculated && run ? '' : 'Hãy tính lương trước để có bảng lương tháng.',
-        completedAt: calculated && run ? String(run?.created_at || '') : '',
+        completedAt: calculated && run ? String(run?.updated_at || run?.created_at || '') : '',
       },
       {
         id: 'fin-payroll-periods', order: 5, title: 'Kỳ lương (DRAFT → PAID)', done: periodOpen,
