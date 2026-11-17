@@ -742,6 +742,18 @@ export class PayrollService {
     const slipBatchKeyOf = (s: any) => String(
       batchOfRun({ batch_scope: (s as any)?.batch_scope, run_id: (s as any)?.run_id }) || 'ALL'
     );
+    // Tên người tính / người duyệt để Giám đốc biết kỳ này ai lập trước khi duyệt.
+    let adminAccounts: any[] = [];
+    try {
+      adminAccounts = (await (this.repo as any).listAdminAccounts?.()) || [];
+    } catch { adminAccounts = []; }
+    const adminNameOf = (id: any) => {
+      const key = String(id || '').trim();
+      if (!key) return '';
+      const acc = (adminAccounts || []).find((a: any) =>
+        String(a?.admin_id || '') === key || String(a?.username || '') === key);
+      return acc ? String(acc.full_name || acc.username || key) : key;
+    };
     const batchProgress = PAYROLL_BATCHES.map(b => {
       const ids = batchEmployeeIds.get(b.id) || new Set<string>();
       const batchSlips = slips.filter((s: any) => {
@@ -765,6 +777,11 @@ export class PayrollService {
         slipCount: batchSlips.length,
         totalHours: batchSlips.reduce((sum: number, s: any) => sum + (Number(s?.standard_hours) || 0), 0),
         totalAmount: batchSlips.reduce((sum: number, s: any) => sum + (Number(s?.net_pay ?? s?.thuc_lanh) || 0), 0),
+        // Người lập (tính lương) + người duyệt — để chặn tự duyệt và hiển thị.
+        createdBy: String(batchRun?.created_by || ''),
+        createdByName: adminNameOf(batchRun?.created_by),
+        approvedBy: String(batchRun?.approved_by || ''),
+        approvedByName: adminNameOf(batchRun?.approved_by),
       };
     });
     const run: any = (periodData as any)?.run
@@ -1639,8 +1656,12 @@ export class PayrollService {
         }
         if (!run) throw new Error('PAYROLL_RUN_NOT_FOUND');
 
-        // Separation of Duties check (chỉ kiểm tra nếu không phải Admin hệ thống)
-        if (run.created_by === approverId && approverId !== 'ADM_001' && approverId !== 'ADMIN') {
+        // SEPARATION OF DUTIES: người TÍNH/lập kỳ lương không được tự duyệt kỳ
+        // của mình — áp dụng cho MỌI vai trò (kể cả ADMIN); chỉ bỏ qua với kỳ do
+        // hệ thống tạo tự động (created_by rỗng/SYSTEM). Giám đốc/Kế toán khác
+        // duyệt bình thường.
+        const creator = String((run as any)?.created_by || '').trim();
+        if (creator && creator !== 'SYSTEM' && creator === String(approverId || '').trim()) {
           throw new Error(ERROR_CODES.SEPARATION_OF_DUTIES_VIOLATION);
         }
 

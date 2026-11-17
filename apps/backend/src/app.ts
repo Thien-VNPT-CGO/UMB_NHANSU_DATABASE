@@ -7433,7 +7433,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/payroll/:run/approve', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
+  // PHÊ DUYỆT KỲ LƯƠNG: Kế toán đối soát, Giám đốc (DIRECTOR) phê duyệt.
+  // Người đã TÍNH kỳ lương không được tự duyệt (chặn ở approveRun — SoD).
+  app.post('/payroll/:run/approve', authMiddleware, requireRole(['ADMIN', 'FINANCE', 'DIRECTOR']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const det: any = await payrollService.getRunDetails(req.params.run).catch(() => null);
       await guardFinanceStep(req, det?.run?.period, 'fin-payroll-periods', 'Phê duyệt kỳ lương');

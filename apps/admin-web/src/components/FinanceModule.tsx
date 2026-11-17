@@ -1247,7 +1247,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
           {activeTab === 'fin-bcc' && <BccTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} formatVND={formatVND} cols={colsVisible('fin-bcc')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-bcc']} workflowStep={workflow?.steps?.find((s: any) => s.id === 'fin-bcc') || null} onConfirmStep={confirmWorkflowStep} showToast={showToast} />}
           {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} finSheet={finSheet} finSheetLoading={finSheetLoading} salaryConfigs={salaryConfigs} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} runCalculateBoth={runCalculateBoth} calcBusy={calcBusy} runs={runs} workflow={workflow} inputsSaving={inputsSaving} pendingCount={pendingCount} inputsSavedAt={inputsSavedAt} cols={colsVisible('fin-calculate')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-calculate']} />}
           {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} stageBadge={stageBadge} cols={colsVisible('fin-payroll-sheet')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-sheet']} />}
-          {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} runCalculateBoth={runCalculateBoth} calcBusy={calcBusy} payRunAction={payRunAction} onNavigateTab={goTab} inputs={inputs} loadInputs={loadInputs} loadSlips={loadSlips} showToast={showToast} financeEditable={isFinance} workflow={workflow} cols={payrollPeriodsCols} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-periods']} />}
+          {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} runCalculateBoth={runCalculateBoth} calcBusy={calcBusy} payRunAction={payRunAction} onNavigateTab={goTab} inputs={inputs} loadInputs={loadInputs} loadSlips={loadSlips} showToast={showToast} financeEditable={isFinance} workflow={workflow} currentUser={currentUser} cols={payrollPeriodsCols} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-periods']} />}
           {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} fastSignLapAll={fastSignLapAll} fastSignLapBranch={fastSignLapBranch} publishBranch={publishBranch} publishSlip={publishSlip} returnSlip={returnSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} cols={colsVisible('fin-payslips')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payslips']} />}
           {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} downloadSlipPdf={downloadSlipPdf} exportPaymentFile={exportPaymentFile} readOnly={contentReadOnly} cols={colsVisible('fin-payment')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payment']} />}
           {activeTab === 'fin-signatures' && <SignatureTemplatesTab currentUser={currentUser} showToast={showToast} />}
@@ -2146,7 +2146,7 @@ const PERIOD_SLIP_FILTERS = [
   { key: 'PAID', label: 'Đã chi trả' },
 ];
 
-function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmployees, formatVND, runCalculate, runCalculateBoth, calcBusy, payRunAction, onNavigateTab, inputs = [], loadInputs, loadSlips, showToast, financeEditable = false, workflow, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
+function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmployees, formatVND, runCalculate, runCalculateBoth, calcBusy, payRunAction, onNavigateTab, inputs = [], loadInputs, loadSlips, showToast, financeEditable = false, workflow, currentUser, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -2198,11 +2198,15 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
     // Kỳ cũ tính gộp toàn công ty (không gắn đợt) — dùng chung cho cả 2 đợt.
     const runBatch = run ? batchOfRun(run) : null;
     const shared = !!run && (!runBatch || runBatch === 'ALL');
-    return { def: b, info, run, status, shared };
+    // Người TÍNH kỳ này (created_by) — không được tự duyệt (SoD, backend cũng chặn).
+    const createdBy = String((info as any)?.createdBy || (run as any)?.created_by || '');
+    const createdByName = String((info as any)?.createdByName || '');
+    const isSelf = !!createdBy && createdBy === String(currentUser?.id || '');
+    return { def: b, info, run, status, shared, createdBy, createdByName, isSelf };
   });
   // Kỳ gộp cũ có thể xuất hiện ở cả 2 đợt → chỉ thao tác 1 lần/kỳ.
   const pendingReconcile = batchInfo.filter((x, i, arr) => x.run && x.status === 'DRAFT' && arr.findIndex(y => y.run?.run_id === x.run.run_id) === i);
-  const pendingApprove = batchInfo.filter((x, i, arr) => x.run && x.status === 'RECONCILED' && arr.findIndex(y => y.run?.run_id === x.run.run_id) === i);
+  const pendingApprove = batchInfo.filter((x, i, arr) => x.run && x.status === 'RECONCILED' && !x.isSelf && arr.findIndex(y => y.run?.run_id === x.run.run_id) === i);
   const allApproved = batchInfo.length > 0 && batchInfo.every(x => ['APPROVED', 'PUBLISHED', 'PAID'].includes(x.status));
   const empCountOfBatch = (bid: string) => (allEmployees || []).filter((e: any) => employeeInBatch(e?.group, bid)).length;
 
@@ -2310,14 +2314,14 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
           {allApproved && <span className="fin-chip-stat" style={{ borderColor: '#86efac', background: '#f0fdf4', color: '#166534' }}>✓ Cả 2 đợt đã duyệt</span>}
         </CardHead>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 16px' }}>
-          {batchInfo.map(({ def, info, run, status, shared }) => {
+          {batchInfo.map(({ def, info, run, status, shared, createdBy, createdByName, isSelf }) => {
             const st = RUN_STATUS_STYLE[status] || null;
             const stageIdx = RUN_STAGES.indexOf(status);
             const empN = info?.employeeCount || empCountOfBatch(def.id);
             const slipN = info?.slipCount || (run ? (run.total_employees ?? 0) : 0);
             const amount = info?.totalAmount || run?.total_amount || 0;
             const canRec = !!run && status === 'DRAFT';
-            const canApp = !!run && status === 'RECONCILED';
+            const canApp = !!run && status === 'RECONCILED' && !isSelf;
             const canSign = ['APPROVED', 'PUBLISHED', 'PAID'].includes(status);
             return (
               <div key={def.id} style={{ border: `1.5px solid ${def.color}40`, background: `linear-gradient(135deg, #fff 0%, ${def.bg} 100%)`, borderRadius: 12, padding: '11px 13px', display: 'flex', flexDirection: 'column', gap: 9 }}>
@@ -2331,6 +2335,7 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
                     <div style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>
                       {empN} NV • {slipN} phiếu • Thực lãnh {formatVND(amount)}
                       {run ? ` • tạo ${fmtDateTime(run.created_at)}` : ''}
+                      {run ? ` • người tính: ${createdByName || createdBy || '—'}${isSelf ? ' (bạn)' : ''}` : ''}
                     </div>
                   </div>
                   {st
@@ -2346,7 +2351,7 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
                     title={canRec ? `${def.label}: DRAFT → RECONCILED` : (run ? `Đợt đang ở ${status}` : 'Đợt chưa tính lương')}
                     onClick={() => payRunAction(run.run_id, 'reconcile')}>Đối soát</button>
                   <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" disabled={!canApp}
-                    title={canApp ? `${def.label}: RECONCILED → APPROVED` : 'Chỉ duyệt được khi đợt đã Đối soát'}
+                    title={isSelf ? 'Bạn là người TÍNH kỳ này — không được tự duyệt (cần Giám đốc/người khác duyệt)' : (canApp ? `${def.label}: RECONCILED → APPROVED` : 'Chỉ duyệt được khi đợt đã Đối soát')}
                     onClick={() => payRunAction(run.run_id, 'approve')}>Phê duyệt</button>
                   {financeEditable && canSign && <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => onNavigateTab?.('fin-payslips')}><Send size={11} /> Ký & gửi NV</button>}
                 </div>
