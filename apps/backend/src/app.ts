@@ -3587,6 +3587,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.put('/employees/:id', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: employeeUpdateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const b = req.body;
+      // Bản ghi TRƯỚC khi sửa — dùng để biết ngày vào làm/ngày chính thức/khối
+      // có thực sự đổi hay không (tránh đẩy cả tab NV lên Sheet mỗi lần lưu hồ sơ).
+      const beforeEmp: any = await employeesService.getEmployee(req.params.id).catch(() => null);
       // Chuẩn hóa ở service (chấp nhận tên tiếng Việt từ dữ liệu cũ).
       const group = b.group ? String(b.group) : undefined;
       const shiftRaw = b.defaultShiftCode !== undefined ? String(b.defaultShiftCode || '').toUpperCase() : undefined;
@@ -3621,16 +3624,36 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // Đổi ĐƠN GIÁ CA qua Hồ Sơ: đồng bộ ngay bảng công + cổng NV + Sheets.
       // Trước đây chỉ đổi hồ sơ, Bảng Tổng Hợp/cổng NV/NHAN_VIEN_MASTER vẫn
       // hiện đơn giá cũ tới lượt pull/push sau.
-      if (b.currentRatePerHour !== undefined || b.current_rate_per_hour !== undefined) {
+      const rateChanged = b.currentRatePerHour !== undefined || b.current_rate_per_hour !== undefined;
+      if (rateChanged) {
         try {
           payrollService.syncEmployeeSalary(req.params.id, { action: 'employee-rate', actorId: req.user!.id });
         } catch { /* realtime best-effort */ }
+      }
+      // NGÀY VÀO LÀM / NGÀY CHÍNH THỨC / KHỐI là dữ liệu quyết định NV có được
+      // tính lương kỳ đó hay không. Phải đẩy lại tab NHAN_VIEN_MASTER NGAY, nếu
+      // không lượt pull Sheets kế tiếp sẽ trả start_date cũ về (VD: sửa NV Xưởng/
+      // Sale về 01/10 nhưng Sheet vẫn 05–10/11 → tháng 10 lại mất phiếu).
+      const day10 = (v: any) => String(v || '').trim().slice(0, 10);
+      // `updateEmployee` trả { operationId, result } — lấy đúng bản ghi NV.
+      const afterEmp: any = (result as any)?.result ?? result;
+      const groupChanged = String(afterEmp?.group || '') !== String(beforeEmp?.group || '');
+      const datesChanged = day10(afterEmp?.start_date) !== day10(beforeEmp?.start_date)
+        || day10(afterEmp?.official_date) !== day10(beforeEmp?.official_date);
+      if (rateChanged || datesChanged || groupChanged) {
         try {
           const syncSvc = (adapter as any)?.syncService;
           if (syncSvc?.pushEmployeesTab) {
-            void syncSvc.pushEmployeesTab(adapter).catch(() => null);
+            // Chờ tối đa 20s để chắc chắn Sheet đã ghi trước khi trả response,
+            // tránh pull chạy ngay sau đó đọc lại bản cũ.
+            await Promise.race([
+              syncSvc.pushEmployeesTab(adapter),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('PUSH_EMPLOYEES_TIMEOUT')), 20_000)),
+            ]);
           }
-        } catch { /* Sheets best-effort */ }
+        } catch (e: any) {
+          console.warn('[employees] Đẩy tab NHAN_VIEN_MASTER thất bại:', e?.message || e);
+        }
       }
       // NV được chuyển sang Văn Phòng → bổ sung lịch hành chính (idempotent, bỏ qua nếu đã có).
       const updEmp: any = result as any;
