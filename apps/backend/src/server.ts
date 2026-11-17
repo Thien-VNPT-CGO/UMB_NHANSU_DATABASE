@@ -33,6 +33,7 @@ import { dedupeDuplicateInterviews, enforceScreeningOutcomes } from './services/
 import { interviewNoShowTick, interviewReminderTick } from './services/interview-reminders.service.js';
 import { interviewZaloReminderTick } from './services/interview-zalo-reminder.service.js';
 import { autoRemindersTick } from './services/auto-reminders.service.js';
+import { candidateCleanupTick } from './services/candidate-cleanup.service.js';
 import { notifySystemAlert, startSystemAlertMonitor } from './services/system-alert.service.js';
 import {
   addDaysIso,
@@ -1162,6 +1163,39 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
   };
   setTimeout(interviewNoShowTickSafe, 60_000);
   setInterval(interviewNoShowTickSafe, 5 * 60_000);
+
+  // Tự động xoá ứng viên Google Form quá 20 ngày (CANDIDATE_AUTO_DELETE_DAYS)
+  // mà HR CHƯA gửi lịch phỏng vấn. Xoá khỏi bộ nhớ + master Sheet, đồng thời
+  // ghi tombstone để pull form gốc không hồi sinh. Chạy mỗi 2 phút cho HR thấy
+  // danh sách cập nhật gần như tức thời.
+  let candidateCleanupRunning = false;
+  const candidateCleanupTickSafe = () => {
+    if (candidateCleanupRunning) return;
+    candidateCleanupRunning = true;
+    candidateCleanupTick(adapter)
+      .then(r => {
+        if (r.deletedIds.length > 0) {
+          console.log(
+            `[candidate-cleanup] Tự động xoá ${r.deletedIds.length} ứng viên quá hạn chưa xếp lịch PV: `
+            + r.deletedIds.join(', '),
+          );
+          try {
+            io.emit('data:updated', {
+              entity: 'candidates',
+              data: { action: 'auto-deleted', ids: r.deletedIds },
+              timestamp: new Date().toISOString(),
+            });
+          } catch { /* non-fatal */ }
+        }
+        if (r.failedIds.length > 0) {
+          console.warn(`[candidate-cleanup] ${r.failedIds.length} hồ sơ xoá lỗi, tick sau thử lại: ${r.failedIds.join(', ')}`);
+        }
+      })
+      .catch(err => console.warn('[candidate-cleanup] tick error:', err?.message || err))
+      .finally(() => { candidateCleanupRunning = false; });
+  };
+  setTimeout(candidateCleanupTickSafe, 90_000);
+  setInterval(candidateCleanupTickSafe, 2 * 60_000);
 
   // Thử lại upload ảnh chấm công lỗi (đang giữ inline): Drive hồi là ảnh hiện
   // lại trên modal/ZIP ngay, không cần NV chụp lại.

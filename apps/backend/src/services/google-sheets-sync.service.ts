@@ -34,6 +34,11 @@ import {
   parseFormBirthYear,
   parseZaloInviteCell,
 } from './candidate-form-map.js';
+import {
+  candidateCleanupKey,
+  getCandidateCleanupTombstones,
+  isCandidateTombstoned,
+} from './candidate-cleanup.service.js';
 import { buildZipStore, ZipEntry } from '../utils/zip-store.js';
 import { contractDocsCell, parseContractDocs } from '../utils/contracts.js';
 import { uniformCell, parseUniform } from '../utils/uniform.js';
@@ -934,6 +939,12 @@ export class GoogleSheetsSyncService {
    *  là lịch về lại, chấm điểm xong ứng viên tự nhảy về tab "Chờ phỏng vấn". */
   private clearedInterviewIds = new Map<string, number>();
 
+  /** Khoá hồ sơ ứng viên VỪA bị tự động xoá (quá hạn chờ xếp lịch): chặn pull
+   *  form gốc hồi sinh trong lúc tombstone bền vững chưa kịp ghi lên Sheet cấu
+   *  hình. Hết TTL thì tombstone trong CAU_HINH_HE_THONG đã gánh nhiệm vụ. */
+  private deletedCandidateKeys = new Map<string, number>();
+  private static readonly CANDIDATE_DELETE_TTL_MS = 15 * 60_000;
+
   /** Khóa trạng thái nghiệp vụ vừa set (SCORED/ACCEPTED/CONFIRMED/...) — trong
    *  thời gian bảo vệ, pull master KHÔNG được ghi đè trạng thái/lịch trong bộ
    *  nhớ. Tách riêng khỏi tombstone xóa lịch để lịch mới đặt vẫn được giữ. */
@@ -994,6 +1005,37 @@ export class GoogleSheetsSyncService {
     }
     return true;
   }
+
+  /** Đánh dấu hồ sơ ứng viên VỪA bị xoá tự động (theo khoá nhận diện) để pull
+   *  form gốc bỏ qua ngay, không chờ ghi xong CAU_HINH_HE_THONG. */
+  public markCandidateDeleted(keys: string[], ttlMs = GoogleSheetsSyncService.CANDIDATE_DELETE_TTL_MS) {
+    const now = Date.now();
+    for (const raw of keys || []) {
+      const k = String(raw || '').trim();
+      if (k) this.deletedCandidateKeys.set(k, now + Math.max(60_000, ttlMs));
+    }
+  }
+
+  /** Xoá đánh dấu khi lô xoá thất bại (hồ sơ còn sống). */
+  public unmarkCandidateDeleted(keys: string[]) {
+    for (const raw of keys || []) {
+      const k = String(raw || '').trim();
+      if (k) this.deletedCandidateKeys.delete(k);
+    }
+  }
+
+  private isCandidateDeletedRecently(key: string): boolean {
+    const k = String(key || '').trim();
+    if (!k) return false;
+    const until = this.deletedCandidateKeys.get(k);
+    if (!until) return false;
+    if (Date.now() > until) {
+      this.deletedCandidateKeys.delete(k);
+      return false;
+    }
+    return true;
+  }
+
   /** ===== AUTO-PUSH ĐIỀU KIỆN (chỉ push khi có thay đổi thật) =====
    *  Adapter đánh dấu dirty khi dữ liệu bộ nhớ đổi mà chưa chắc đã lên Sheet
    *  (scheduleSheetsWrite / scheduleFullSync / backfill PIN). Auto-push định kỳ
@@ -4702,6 +4744,9 @@ export class GoogleSheetsSyncService {
         }
 
         const dataRows = candRows.slice(1);
+        // Tombstone tự động xoá (quá 20 ngày chưa xếp lịch): pull form gốc phải
+        // BỎ QUA hồ sơ đã xoá, nếu không dòng form cũ sẽ hồi sinh ứng viên.
+        const candidateTombstones = getCandidateCleanupTombstones((fallback as any).systemSettings);
         fallback.candidates = dataRows
           .filter(r => r && r.length > 0 && r.some(cell => String(cell || '').trim().length > 0))
           .map((r, idx) => {
@@ -4718,6 +4763,17 @@ export class GoogleSheetsSyncService {
             const hometown = getVal(colHometown) || 'TP. Hồ Chí Minh';
             const phone = getVal(colPhone) || '';
             const phoneNormalized = canonicalPhone(phone);
+            // Hồ sơ đã bị hệ thống tự xoá (quá hạn chờ lịch PV): bỏ qua dòng form,
+            // không dựng lại vào bộ nhớ/master.
+            const cleanupKey = candidateCleanupKey({
+              phone_normalized: phoneNormalized,
+              full_name: fullName,
+              created_at: rawCreatedAt,
+            });
+            if (isCandidateTombstoned(candidateTombstones, cleanupKey)
+              || this.isCandidateDeletedRecently(cleanupKey)) {
+              return null as any;
+            }
             const registeredShift = getVal(colShift) || 'Ca sáng / Ca chiều';
             const branchName = getVal(colBranch) || 'CN130 - Lê Văn Sỹ';
             const experience = getVal(colExperience) || 'Chưa có kinh nghiệm (sẵn sàng đào tạo)';
@@ -4831,7 +4887,9 @@ export class GoogleSheetsSyncService {
               source_code: sourceCode,
               created_at: rawCreatedAt,
             };
-          });
+          })
+          // Bỏ các dòng trả null do tombstone xoá tự động.
+          .filter((c: any) => !!c);
         // Phủ dữ liệu vận hành (lịch PV + Zalo + trạng thái) từ master FROM_NHAN_VIEN:
         // restart/sửa code làm bộ nhớ trắng, Sheet form gốc không có các cột này —
         // không phủ thì reload là mất. Khớp theo submission_id, rớt về SĐT+tên.

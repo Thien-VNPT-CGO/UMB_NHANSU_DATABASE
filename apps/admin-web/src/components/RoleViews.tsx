@@ -4983,6 +4983,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0', maxWidth: '680px' }}>
               Đồng bộ trực tiếp từ Google Form (FROM_NHAN_VIEN). Bảng gom 17 cột gốc thành <strong>9 cột theo nhóm</strong> — bấm <strong>👁 Chi Tiết</strong> để xem toàn bộ hồ sơ + ma trận 9 tiêu chí AI.
+              <br />
+              <span style={{ color: '#B45309', fontWeight: 700 }}>🧹 Hồ sơ quá 20 ngày kể từ lúc đăng ký mà chưa được gửi lịch phỏng vấn sẽ tự động bị xoá khỏi hệ thống và Google Sheet.</span>
             </p>
           </div>
 

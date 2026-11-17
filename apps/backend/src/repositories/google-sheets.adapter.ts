@@ -1221,6 +1221,36 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return ok;
   }
 
+  /** Xóa NHIỀU ứng viên rồi đẩy master FROM_NHAN_VIEN MỘT LẦN — dùng cho lượt
+   *  tự động dọn hồ sơ quá hạn, tránh mỗi hồ sơ một lần ghi cả bảng (cháy quota). */
+  async deleteCandidatesBatch(submissionIds: string[]): Promise<{ deleted: string[]; failed: string[] }> {
+    const deleted: string[] = [];
+    const failed: string[] = [];
+    for (const raw of submissionIds || []) {
+      const id = String(raw || '').trim();
+      if (!id) continue;
+      try {
+        const ok = await this.fallbackAdapter.deleteCandidate(id);
+        (ok ? deleted : failed).push(id);
+      } catch (err: any) {
+        console.warn(`[GoogleSheetsAdapter] Xóa ứng viên ${id} thất bại:`, err?.message || err);
+        failed.push(id);
+      }
+    }
+    if (deleted.length > 0) {
+      this.scheduleRuntimeSnapshot();
+      if (this.isConfigured) {
+        try {
+          await this.syncService.pushCandidatesTab(this.fallbackAdapter);
+        } catch (err) {
+          console.warn('[GoogleSheetsAdapter] Đẩy FROM_NHAN_VIEN sau xóa lô ứng viên thất bại:', (err as any)?.message || err);
+          this.scheduleFullSync('FROM_NHAN_VIEN.deleteBatch');
+        }
+      }
+    }
+    return { deleted, failed };
+  }
+
   /** Đẩy tab FROM_NHAN_VIEN lên Sheets NGAY (await): dùng sau xóa lịch PV trùng
    *  để pull nền sau đó không hồi sinh lịch đã xóa. Mock/không cấu hình -> no-op. */
   async pushCandidatesNow(): Promise<number> {
