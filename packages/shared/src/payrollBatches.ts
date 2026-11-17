@@ -131,3 +131,12 @@ export function payrollRunTimestamp(run: any): number {
   const t = Date.parse(String(run?.created_at || run?.updated_at || ''));
   return Number.isFinite(t) ? t : 0;
 }
+
+/**
+ * BẬT/TẮT khóa quy trình kế toán trên các tab (khóa tuần tự + khóa tháng cũ).
+ *
+ * `false` = TẮT: Kế toán mở được mọi tab và thao tác mọi bước bất kể thứ tự,
+ * kể cả tháng đã kết thúc. Thanh quy trình vẫn hiển thị tiến độ (đã xong/chưa)
+ * nhưng không chặn thao tác. Đặt `true` để bật lại khóa như trước.
+ */
+export const PAYROLL_WORKFLOW_LOCK_ENABLED = false;

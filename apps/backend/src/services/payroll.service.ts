@@ -19,6 +19,7 @@ import {
   payrollBatchLabel,
   payrollBatchOfRunId,
   payrollRunTimestamp,
+  PAYROLL_WORKFLOW_LOCK_ENABLED,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { SalaryConfigService } from './salary-config.service.js';
@@ -819,7 +820,7 @@ export class PayrollService {
     const overrideInfo: any = (settings as any)?.[`payrollWorkflowOverride:${period}`] || null;
     const overrideAt = overrideInfo?.at ? Date.parse(String(overrideInfo.at)) : 0;
     const overrideOrder = Number(overrideInfo?.toOrder) || 0;
-    const monthLocked = isPastMonth && !unlockInfo;
+    const monthLocked = PAYROLL_WORKFLOW_LOCK_ENABLED && isPastMonth && !unlockInfo;
 
     // --- Xác nhận thủ công của kế toán cho bước 1-2 (theo đúng tháng) ---
     // Đối soát công / BCC KHÔNG tự xong chỉ vì có ca đã phát hành (dữ liệu realtime
@@ -904,9 +905,10 @@ export class PayrollService {
       const effDone = effDoneOf(s);
       const prevEffDone = prev ? effDoneOf(prev) : true;
       const sequentialOpen = i === 0 ? true : prevEffDone;
-      const lockedDueToMonth = monthLocked;
-      const open = monthLocked ? false : sequentialOpen;
-      const locked = monthLocked ? true : (!sequentialOpen || effDone);
+      const lockedDueToMonth = PAYROLL_WORKFLOW_LOCK_ENABLED && monthLocked;
+      // Tắt khóa quy trình: mọi bước luôn MỞ để Kế toán xử lý tab nào cũng được.
+      const open = PAYROLL_WORKFLOW_LOCK_ENABLED ? (monthLocked ? false : sequentialOpen) : true;
+      const locked = PAYROLL_WORKFLOW_LOCK_ENABLED ? (monthLocked ? true : (!sequentialOpen || effDone)) : false;
       return {
         ...s,
         done: effDone,

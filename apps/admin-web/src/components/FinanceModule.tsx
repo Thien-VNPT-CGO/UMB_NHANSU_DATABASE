@@ -23,6 +23,7 @@ import {
   getErrorCode,
   PAYROLL_BATCHES, batchOfRun, employeeInBatch, isPayrollBatchId,
   payrollBatchLabel, payrollBatchShortLabel, payrollRunTimestamp,
+  PAYROLL_WORKFLOW_LOCK_ENABLED,
 } from '@ubm/shared';
 import { SalaryConfigView } from './SalaryConfigView.js';
 import { OfficeApprovalsView } from './OfficeApprovalsView.js';
@@ -495,7 +496,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
   //    không khóa theo tháng. Kế toán mở khóa tạm bằng nút "Quay về bước trước".
   // Workflow nạp lại ngay khi có sự kiện socket (handleRealtime gọi loadWorkflow),
   // nên khóa/mở thay đổi realtime, không cần F5.
-  const monthLocked = !!workflow?.periodMeta?.monthLocked;
+  const monthLocked = PAYROLL_WORKFLOW_LOCK_ENABLED && !!workflow?.periodMeta?.monthLocked;
   const monthUnlockInfo = workflow?.periodMeta?.monthUnlock || null;
   const complainedCount = Number(workflow?.periodMeta?.complainedCount || 0);
   const tabLocked = useMemo(() => {
@@ -506,8 +507,11 @@ export default function FinanceModule(props: FinanceModuleProps) {
       const prev = idx > 0 ? workflow.steps[idx - 1] : null;
       const done = !!s.done;
       const pending = !!(prev && !prev.done);
-      const lockedDueToMonth = !!s.lockedDueToMonth || !!monthLocked;
-      const locked = typeof s.locked === 'boolean' ? !!s.locked : (done || pending);
+      const lockedDueToMonth = PAYROLL_WORKFLOW_LOCK_ENABLED && (!!s.lockedDueToMonth || !!monthLocked);
+      // Tắt khóa quy trình (PAYROLL_WORKFLOW_LOCK_ENABLED = false): tab nào cũng mở.
+      const locked = PAYROLL_WORKFLOW_LOCK_ENABLED
+        ? (typeof s.locked === 'boolean' ? !!s.locked : (done || pending))
+        : false;
       const monthReason = lockedDueToMonth ? 'Tháng đã kết thúc — quy trình kế toán của tháng này đã KHÓA (chỉ xem). Nếu bước nào sai, bấm "Quay về bước trước" để mở khóa tạm và xử lý lại.' : '';
       m.set(s.id, {
         locked,
@@ -1103,7 +1107,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
       {isFinance && (<nav className="fin-stepper-wrap" aria-label="Các bước xử lý lương">
         <div className="fin-stepper-title">
           <span>QUY TRÌNH KẾ TOÁN — XỬ LÝ TUẦN TỰ (REALTIME) · {periodLabel(month)} · THEO TỪNG THÁNG{monthLocked ? ' · ĐÃ KHÓA (HẾT THÁNG NÀY)' : ''}</span>
-          <em>Tháng nào theo tháng đó (độc lập, không dùng chung): mỗi tháng mới tự bắt đầu lại từ bước 1 · chỉ bước đang xử lý được mở · xong bước nào khóa bước đó (chỉ xem) · bước sau mở khi bước trước xong{currentOpenStep ? ` — đang xử lý: ${currentOpenStep.title}` : ' — đã hoàn tất toàn bộ'}{complainedCount ? ` · ⚠️ ${complainedCount} phiếu bị khiếu nại chờ kiểm tra lại` : ''}</em>
+          <em>Tháng nào theo tháng đó (độc lập, không dùng chung): mỗi tháng mới tự bắt đầu lại từ bước 1 · {PAYROLL_WORKFLOW_LOCK_ENABLED ? 'chỉ bước đang xử lý được mở · xong bước nào khóa bước đó (chỉ xem) · bước sau mở khi bước trước xong' : 'đã TẮT KHÓA — mở và xử lý bất kỳ tab nào, không cần đúng thứ tự'}{currentOpenStep ? ` — đang xử lý: ${currentOpenStep.title}` : ' — đã hoàn tất toàn bộ'}{complainedCount ? ` · ⚠️ ${complainedCount} phiếu bị khiếu nại chờ kiểm tra lại` : ''}</em>
         </div>
         <div className="fin-stepper">
           {PROCESS_STEPS.map(t => {
