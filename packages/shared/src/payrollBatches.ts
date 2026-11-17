@@ -113,3 +113,21 @@ export function batchOfRun(run: any): PayrollBatchScope | null {
   if (raw === 'STORE' || raw === 'TONG_HOP' || raw === 'ALL') return raw as PayrollBatchScope;
   return payrollBatchOfRunId(run?.run_id);
 }
+
+/**
+ * Mốc phát sinh THẬT của 1 kỳ lương (epoch-ms), ưu tiên timestamp nhúng trong
+ * run_id (`PAY_2026_11_STORE_1794199425848`).
+ *
+ * created_at/updated_at của dữ liệu cũ có thể bị ghi đè lúc đồng bộ Google
+ * Sheets (run tính 02/11 hiện created_at 17/11; phiếu zero-net "cập nhật" sau
+ * phiếu đã ký) → xếp "mới nhất" theo 2 trường này sẽ chọn nhầm đợt/phiếu cũ.
+ */
+export function payrollRunTimestamp(run: any): number {
+  const m = String(run?.run_id || '').match(/_(\d{10,})$/);
+  if (m) {
+    const t = Number(m[1]);
+    if (Number.isFinite(t) && t > 0) return t;
+  }
+  const t = Date.parse(String(run?.created_at || run?.updated_at || ''));
+  return Number.isFinite(t) ? t : 0;
+}

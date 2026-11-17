@@ -278,3 +278,60 @@ test('kỳ lương đọc từ Sheets: số serial Excel 46296/46327 quy về đ
   assert.equal(normalizeSheetPeriod('2026-10'), '2026-10');
   assert.equal(normalizeSheetPeriod('01/10/2026'), '2026-10');
 });
+
+test('dữ liệu cũ: chọn đợt/phiếu theo timestamp trong run_id, không theo created_at bị Sheets ghi đè', async () => {
+  // Thực tế 10/2026: run rác tính 02/11 (run_id ..._1793611769124) bị ghi đè
+  // created_at thành 17/11 và phiếu zero-net "cập nhật" sau phiếu đã ký 09/11,
+  // làm đợt Cửa hàng hiện 0đ thay vì run APPROVED 58 triệu.
+  const state = makeState();
+  const goodRun = {
+    run_id: 'PAY_2026_10_1794199425848', period: '2026-10', branch_scope: '*',
+    status: 'APPROVED', total_employees: 1, total_hours: 0, total_amount: 10_000_000,
+    created_at: '2026-11-09T04:43:45.930Z', updated_at: '2026-11-09T04:43:45.930Z',
+  };
+  const junkRun = {
+    run_id: 'PAY_2026_10_1793611769124', period: '2026-10', branch_scope: '*',
+    status: 'DRAFT', total_employees: 1, total_hours: 0, total_amount: 0,
+    // created_at bị đồng bộ Sheets ghi đè thành "mới nhất".
+    created_at: '2026-11-17T08:46:40.854Z', updated_at: '2026-11-17T08:46:40.854Z',
+  };
+  state.runs.push(junkRun, goodRun);
+  state.slips.push(
+    {
+      item_id: 'SLIP_GOOD', run_id: goodRun.run_id, employee_id: 'E1', employee_code: 'NV01',
+      period: '2026-10', standard_hours: 0, net_pay: 10_000_000, status: 'CONFIRMED',
+      created_at: '2026-11-09T04:43:45.930Z', updated_at: '2026-11-09T14:38:45.000Z',
+    },
+    {
+      item_id: 'SLIP_JUNK', run_id: junkRun.run_id, employee_id: 'E1', employee_code: 'NV01',
+      period: '2026-10', standard_hours: 0, net_pay: 0, status: 'DRAFT',
+      created_at: '2026-11-02T10:00:00.000Z', updated_at: '2026-11-09T14:38:58.000Z',
+    },
+  );
+
+  const merged: any = await svcGetPeriodSlips(state);
+  assert.equal(merged.slips.length, 1);
+  assert.equal(merged.slips[0].run_id, goodRun.run_id);
+  assert.equal(merged.slips[0].net_pay, 10_000_000);
+  assert.equal(merged.run.status, 'APPROVED');
+
+  const wf: any = await svcWorkflow(state);
+  const store: any = wf.batches.find((b: any) => b.id === 'STORE');
+  assert.equal(store.run_id, goodRun.run_id);
+  assert.equal(store.status, 'APPROVED');
+  assert.equal(store.totalAmount, 10_000_000);
+});
+
+async function svcGetPeriodSlips(state: any) {
+  const svc: any = new PayrollService(makeRepo(state) as any);
+  return svc.getPeriodSlips('2026-10');
+}
+
+async function svcWorkflow(state: any) {
+  const svc: any = new PayrollService(makeRepo(state) as any);
+  svc.getFinanceTimesheet = async () => ({
+    totals: { totalShifts: 1, full: 1, partial: 0, absent: 0 },
+    rows: [{ employeeId: 'E1', group: 'STORE' }],
+  });
+  return svc.getWorkflowStatus('2026-10');
+}

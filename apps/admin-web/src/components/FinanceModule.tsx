@@ -22,7 +22,7 @@ import {
   monthShortFolder, periodLabel, parsePeriod,
   getErrorCode,
   PAYROLL_BATCHES, batchOfRun, employeeInBatch, isPayrollBatchId,
-  payrollBatchLabel, payrollBatchShortLabel,
+  payrollBatchLabel, payrollBatchShortLabel, payrollRunTimestamp,
 } from '@ubm/shared';
 import { SalaryConfigView } from './SalaryConfigView.js';
 import { OfficeApprovalsView } from './OfficeApprovalsView.js';
@@ -1658,7 +1658,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
       // Run cũ (không có batch_scope/không mã hóa đợt trong run_id) = tính gộp toàn công ty.
       return b === bid || b === 'ALL' || !b;
     });
-    return list.sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')))[0] || null;
+    return list.sort((a: any, b: any) => payrollRunTimestamp(b) - payrollRunTimestamp(a))[0] || null;
   }, [runsOfMonth]);
   const empCountByBatch = useMemo(() => {
     const m: Record<string, number> = { STORE: 0, TONG_HOP: 0 };
@@ -2150,7 +2150,7 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
   const [editSaving, setEditSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const show = cols?.show || (() => true);
-  const monthRuns = useMemo(() => (Array.isArray(runs) ? runs : []).filter((r: any) => r.period === month).sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || ''))), [runs, month]);
+  const monthRuns = useMemo(() => (Array.isArray(runs) ? runs : []).filter((r: any) => r.period === month).sort((a: any, b: any) => payrollRunTimestamp(b) - payrollRunTimestamp(a)), [runs, month]);
   const latest = monthRuns[0] || null;
   const allSlips = useMemo(() => Array.isArray(slips) ? slips : [], [slips]);
   const grand = sumCalc(allSlips);
@@ -2182,7 +2182,7 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
   const wfBatches = useMemo(() => (Array.isArray((workflow as any)?.batches) ? (workflow as any).batches : []), [workflow]);
   const latestRunOfBatch = (bid: string) => {
     const list = monthRuns.filter((r: any) => { const b = batchOfRun(r); return b === bid || b === 'ALL' || !b; });
-    return list.sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')))[0] || null;
+    return list.sort((a: any, b: any) => payrollRunTimestamp(b) - payrollRunTimestamp(a))[0] || null;
   };
   const batchInfo = PAYROLL_BATCHES.map(b => {
     const info = wfBatches.find((x: any) => String(x?.id) === b.id) || null;

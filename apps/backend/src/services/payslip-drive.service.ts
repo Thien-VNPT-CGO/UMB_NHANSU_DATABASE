@@ -24,6 +24,8 @@ import {
   payslipDriveFileName04,
   payslipDriveSegments,
   payslipDriveSegments04,
+  normalizePeriodValue,
+  payrollRunTimestamp,
 } from '@ubm/shared';
 import { getPayslip04DriveRootId, getPayslipDriveRootId, getPaymentExportDriveRootId } from '../config/drive-folders.js';
 import { getDriveStorage } from './drive-storage.service.js';
@@ -109,24 +111,43 @@ export class PayslipDriveService {
     return { rootId, month, monthFolderId, subfolders, phieuLuongId, folders };
   }
 
-  /** Slips của kỳ (run mới nhất, gộp trùng theo NV) — kèm map nhân viên. */
+  /** Phiếu lương của kỳ: gộp MỌI đợt (Cửa hàng + Tổng hợp) rồi giữ phiếu mới
+   * nhất/NV. Trước đây chỉ đọc run mới nhất nên khi kế toán tính 2 đợt riêng,
+   * bản đồng bộ Drive tháng bị thiếu hẳn 1 đợt (và có thể chọn nhầm run cũ do
+   * created_at bị Sheets ghi đè). */
   private async latestSlipsOfPeriod(period: string) {
     const runs: any[] = await this.repo.listPayrollRuns().catch(() => []);
-    const inPeriod = (runs || []).filter(r => String(r?.period) === period);
-    inPeriod.sort((a, b) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
+    const inPeriod = (runs || [])
+      .filter(r => String(r?.period) === period)
+      .sort((a, b) => payrollRunTimestamp(b) - payrollRunTimestamp(a));
     const latest = inPeriod[0] || null;
-    const slips: any[] = latest ? await this.repo.getPayslipsByRunId(latest.run_id).catch(() => []) : [];
-    const byEmp = new Map<string, any>();
-    for (const s of slips || []) {
-      const key = String(s?.employee_id || s?.employee_code || '');
-      const cur = byEmp.get(key);
-      if (!cur || String(s?.updated_at || s?.created_at || '') >= String(cur?.updated_at || cur?.created_at || '')) {
-        byEmp.set(key, s);
-      }
-    }
     const employees: any[] = await this.repo.listEmployees({ branch: '*' }).catch(() => []);
     const empMap = new Map<string, any>();
     for (const e of employees || []) empMap.set(String(e?.employee_id), e);
+    // Chung quy tắc với tab Kỳ lương: ẩn phiếu của NV chưa vào làm trong kỳ
+    // (VD NV tuyển 05/11 không thể có phiếu tháng 10).
+    const p = parsePeriod(period);
+    const periodEnd = p ? new Date(Date.UTC(p.year, p.month, 0)).toISOString().slice(0, 10) : '';
+    const usable = (s: any) => {
+      if (normalizePeriodValue(s?.period) !== period) return false;
+      if (!empMap.size) return true;
+      const emp = empMap.get(String(s?.employee_id || ''));
+      if (!emp) return false;
+      const start = String(emp?.start_date || emp?.official_date || '').slice(0, 10);
+      return !start || !periodEnd || start <= periodEnd;
+    };
+    const byEmp = new Map<string, any>();
+    for (const run of inPeriod) {
+      const rid = String(run?.run_id || '');
+      if (!rid) continue;
+      const slips: any[] = await this.repo.getPayslipsByRunId(rid).catch(() => []);
+      for (const s of slips || []) {
+        const key = String(s?.employee_id || s?.employee_code || '');
+        if (!key || !usable(s)) continue;
+        const cur = byEmp.get(key);
+        if (!cur || payrollRunTimestamp(s) >= payrollRunTimestamp(cur)) byEmp.set(key, s);
+      }
+    }
     return { latestRun: latest, slips: [...byEmp.values()], empMap, runs: inPeriod };
   }
 
