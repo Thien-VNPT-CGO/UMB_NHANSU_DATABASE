@@ -1,27 +1,32 @@
 /**
- * EVExplanationService — Phiếu giải trình điểm quên chấm.
+ * EVExplanationService — Phiếu giải trình lỗi tài xế.
  *
  * Luồng nghiệp vụ:
- *   1. Tài xế quên bấm xác nhận tại chi nhánh → khi kết thúc ca, hệ thống ghi
- *      check-in `is_missed = true` (điểm bỏ lọt).
- *   2. App tài xế hiện nút Giải trình: chọn MỘT HOẶC NHIỀU điểm (có thể khác ca/
+ *   1. Tài xế mắc lỗi trong ca:
+ *      - Quên bấm xác nhận tại chi nhánh → check-in `is_missed = true`.
+ *      - Đến trễ so với SLA của chặng → check-in `is_late = true` (bị trừ phạt
+ *        trễ giờ khi chạy bảng lương).
+ *   2. App tài xế hiện nút Giải trình: chọn MỘT HOẶC NHIỀU lỗi (có thể khác ca/
  *      khác chi nhánh), nhập nội dung + tải nhiều ảnh bằng chứng cùng lúc.
  *   3. Phiếu đi THẲNG tới Kế toán (FINANCE) / Giám đốc (DIRECTOR) duyệt —
  *      không qua HR.
- *   4. Khi APPROVED, các điểm trong phiếu được ghi nhận hoàn thành: check-in
- *      bỏ lọt được chuyển thành check-in bình thường (bỏ is_missed/is_late) nên
- *      bảng lương không còn trừ phạt.
+ *   4. Khi APPROVED: lỗi quên chấm được ghi nhận hoàn thành; lỗi trễ giờ được
+ *      xóa cờ trễ + trừ lại điểm phạt của ca. Bảng lương không còn trừ tiền,
+ *      hồ sơ tài xế không còn ghi nhận vi phạm.
  *
  * Ảnh: nén ở client → ghi đĩa VPS khi tạo phiếu → DB chỉ lưu metadata.
  */
 import { v4 as uuidv4 } from 'uuid';
-import type {
-  EVExplanationCandidate,
-  EVExplanationItem,
-  EVExplanationPhoto,
-  EVExplanationTicket,
-  EVShift,
-  EVShiftCheckin,
+import {
+  DEFAULT_EV_PAYROLL_CONFIG,
+  type EVExplanationCandidate,
+  type EVExplanationIssueType,
+  type EVExplanationItem,
+  type EVExplanationPhoto,
+  type EVExplanationTicket,
+  type EVPayrollConfig,
+  type EVShift,
+  type EVShiftCheckin,
 } from '@ubm/shared';
 import { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
 import { EVRouteService } from './ev-route.service.js';
@@ -86,6 +91,20 @@ export class EVExplanationService {
     return this.repo.evRoutes.find(r => r.route_id === routeId)?.name;
   }
 
+  /**
+   * Tiền phạt ước tính của 1 lỗi — dùng đúng công thức bảng lương tài xế
+   * (tỉ lệ phạt × lương ngày, theo ngày công chuẩn/2 ngày cuối).
+   */
+  private estimatedPenalty(shift: EVShift, issue: EVExplanationIssueType): number {
+    const cfg: EVPayrollConfig = DEFAULT_EV_PAYROLL_CONFIG;
+    const extra = (Number(shift.work_day_index) || 0) > cfg.standard_work_days;
+    const dailyRate = extra ? cfg.extra_daily_rate : cfg.standard_daily_rate;
+    const rate = issue === 'MISSED_CHECKIN'
+      ? (extra ? cfg.penalty_per_missed_checkin.extra : cfg.penalty_per_missed_checkin.standard)
+      : (extra ? cfg.penalty_per_late_sla.extra : cfg.penalty_per_late_sla.standard);
+    return Math.round(dailyRate * rate);
+  }
+
   /** Các điểm đang chờ giải trình của tài xế (bỏ lọt, chưa có phiếu PENDING/APPROVED). */
   async listCandidates(driverId: string, opts: { lookbackDays?: number } = {}): Promise<EVExplanationCandidate[]> {
     const id = String(driverId || '').trim();
@@ -115,8 +134,14 @@ export class EVExplanationService {
       const stops = await this.stopsForShift(shift).catch(() => []);
       const stopById = new Map(stops.map((s: any) => [String(s.stop_id), s]));
 
-      // 1. Check-in bị hệ thống đánh dấu bỏ lọt.
-      for (const c of checkins.filter(x => x.is_missed)) {
+      // 1. Check-in bị hệ thống đánh dấu bỏ lọt, HOẶC check-in đến trễ SLA
+      //    (nguồn phạt trễ giờ khi chạy bảng lương). Một check-in chỉ thuộc
+      //    một loại: is_missed ưu tiên trước (check-in bỏ lọt cũng có is_late).
+      for (const c of checkins) {
+        const issue: EVExplanationIssueType | null = c.is_missed
+          ? 'MISSED_CHECKIN'
+          : (c.is_late ? 'LATE_SLA' : null);
+        if (!issue) continue;
         if (claimed.has(keyOf(c.shift_id, c.stop_id))) continue;
         const stop: any = stopById.get(String(c.stop_id));
         out.push({
@@ -130,6 +155,9 @@ export class EVExplanationService {
           address: stop?.address,
           checkin_id: c.checkin_id,
           checked_in_at: c.checked_in_at,
+          issue_type: issue,
+          late_minutes: issue === 'LATE_SLA' ? Number(c.late_minutes) || 0 : undefined,
+          penalty_amount: this.estimatedPenalty(shift, issue),
         });
       }
 
@@ -151,6 +179,8 @@ export class EVExplanationService {
             stop_name: stop.name,
             address: stop.address,
             checkin_id: undefined,
+            issue_type: 'MISSED_CHECKIN',
+            penalty_amount: this.estimatedPenalty(shift, 'MISSED_CHECKIN'),
           });
         }
       }
@@ -221,12 +251,12 @@ export class EVExplanationService {
     for (const raw of requested) {
       const shiftId = String(raw?.shift_id || '').trim();
       const stopId = String(raw?.stop_id || '').trim();
-      if (!shiftId || !stopId) throw new Error('EXPLANATION_ITEM_INVALID: Điểm giải trình không hợp lệ');
+      if (!shiftId || !stopId) throw new Error('EXPLANATION_ITEM_INVALID: Lỗi giải trình không hợp lệ');
       const k = keyOf(shiftId, stopId);
       if (seen.has(k)) continue;
       seen.add(k);
       if (claimedByOther.has(k)) {
-        throw new Error(`EXPLANATION_EXISTS: Điểm này đã có phiếu ${claimedByOther.get(k)} đang chờ/đã duyệt`);
+        throw new Error(`EXPLANATION_EXISTS: Lỗi này đã có phiếu ${claimedByOther.get(k)} đang chờ/đã duyệt`);
       }
 
       const shift = this.repo.evShifts.find(s => s.shift_id === shiftId);
@@ -235,11 +265,21 @@ export class EVExplanationService {
       if (isEvTestShift(shift)) throw new Error('EXPLANATION_TEST_SHIFT: Ca chạy thử không cần giải trình');
 
       const checkin = this.repo.evShiftCheckins.find(c => c.shift_id === shiftId && c.stop_id === stopId);
-      if (checkin && !checkin.is_missed) {
-        throw new Error('EXPLANATION_ALREADY_DONE: Điểm này đã được xác nhận, không cần giải trình');
-      }
-      if (!checkin && shift.status !== 'COMPLETED') {
-        throw new Error('EXPLANATION_SHIFT_RUNNING: Ca chưa kết thúc — hãy chấm điểm trực tiếp trên lộ trình');
+      // Xác định loại lỗi từ dữ liệu thật (không tin client):
+      //  - is_missed  → quên bấm xác nhận
+      //  - is_late    → trễ giờ/SLA
+      //  - đã chấm đúng giờ → không cần giải trình
+      //  - chưa có check-in + ca đã kết thúc → coi như quên chấm
+      let issueType: EVExplanationIssueType;
+      if (checkin) {
+        if (checkin.is_missed) issueType = 'MISSED_CHECKIN';
+        else if (checkin.is_late) issueType = 'LATE_SLA';
+        else throw new Error('EXPLANATION_ALREADY_DONE: Điểm này đã được xác nhận đúng giờ, không cần giải trình');
+      } else {
+        if (shift.status !== 'COMPLETED') {
+          throw new Error('EXPLANATION_SHIFT_RUNNING: Ca chưa kết thúc — hãy chấm điểm trực tiếp trên lộ trình');
+        }
+        issueType = 'MISSED_CHECKIN';
       }
 
       const stops = await this.stopsForShift(shift).catch(() => []);
@@ -256,9 +296,13 @@ export class EVExplanationService {
         stop_name: String(stop?.name || checkin?.stop_name || 'Điểm giao'),
         address: stop?.address,
         checkin_id: checkin?.checkin_id,
+        issue_type: issueType,
+        late_minutes: issueType === 'LATE_SLA' ? Number(checkin?.late_minutes) || 0 : undefined,
+        penalty_amount: this.estimatedPenalty(shift, issueType),
       });
     }
-    if (!items.length) throw new Error('EXPLANATION_ITEMS_REQUIRED: Chọn ít nhất 1 điểm cần giải trình');
+    if (!items.length) throw new Error('EXPLANATION_ITEMS_REQUIRED: Chọn ít nhất 1 lỗi cần giải trình');
+    const totalPenalty = items.reduce((n, it) => n + (Number(it.penalty_amount) || 0), 0);
 
     // --- Lưu ảnh trước khi ghi phiếu (DB chỉ giữ metadata) ---
     const ticketId = uuidv4();
@@ -290,13 +334,19 @@ export class EVExplanationService {
       reason,
       items,
       photos,
+      total_penalty_amount: totalPenalty || undefined,
       status: 'PENDING',
     });
 
     return ticket;
   }
 
-  /** Kế toán/Giám đốc duyệt → các điểm bỏ lọt được tính hoàn thành. */
+  /**
+   * Kế toán/Giám đốc duyệt → xóa phạt & tính hoàn thành ca:
+   *  - Lỗi quên chấm: check-in bỏ lọt thành hoàn thành (không trừ lương).
+   *  - Lỗi trễ giờ: xóa is_late/late_minutes và trừ lại 1 điểm phạt của ca
+   *    (điểm đã bị cộng lúc check-in trễ) → hồ sơ không còn vi phạm.
+   */
   async approve(
     ticketId: string,
     actorId: string,
@@ -316,7 +366,11 @@ export class EVExplanationService {
         c => c.shift_id === item.shift_id && c.stop_id === item.stop_id,
       );
       if (existing) {
-        if (!existing.is_missed) continue; // điểm đã hoàn thành từ trước
+        // Điểm đã chấm đúng giờ từ trước → không đụng tới.
+        if (!existing.is_missed && !existing.is_late) continue;
+        const wasMissed = !!existing.is_missed;
+        const wasLate = !!existing.is_late;
+
         await this.repo.updateEVShiftCheckin(existing.checkin_id, {
           is_missed: false,
           is_late: false,
@@ -324,6 +378,17 @@ export class EVExplanationService {
           penalty_amount: 0,
           notes: existing.notes ? `${existing.notes} • ${noteText}` : noteText,
         });
+
+        // Check-in trễ đã cộng 1 điểm phạt cho ca lúc chấm điểm → trừ lại.
+        // Check-in bỏ lọt không cộng điểm phạt nên không trừ.
+        if (!wasMissed && wasLate) {
+          const shift = this.repo.evShifts.find(s => s.shift_id === item.shift_id);
+          if (shift) {
+            await this.repo.updateEVShift(shift.shift_id, {
+              penalty_points: Math.max(0, Number(shift.penalty_points || 0) - 1),
+            });
+          }
+        }
         continue;
       }
       // Ca đã kết thúc nhưng chưa có bản ghi bỏ lọt → tạo check-in hoàn thành.

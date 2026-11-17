@@ -1915,7 +1915,7 @@ const ExplanationView: React.FC<{
       });
       showToast(
         action === 'approve'
-          ? '✅ Đã duyệt — các điểm quên chấm được tính là hoàn thành.'
+          ? '✅ Đã duyệt — lỗi được đền bù phạt, ca làm hoàn thành.'
           : '❌ Đã từ chối phiếu giải trình.',
       );
       await load();
@@ -1941,7 +1941,7 @@ const ExplanationView: React.FC<{
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
         <ClipboardList size={17} color="#B45309" />
         <span style={{ fontSize: '14px', fontWeight: 900, color: 'var(--text)' }}>
-          Phiếu giải trình điểm quên chấm — Kế toán/Giám đốc duyệt
+          Phiếu giải trình lỗi tài xế (quên chấm / trễ giờ) — Kế toán/Giám đốc duyệt
         </span>
         <button className="btn-secondary" style={{ marginLeft: 'auto', padding: '6px 11px', fontSize: '12px', fontWeight: 700 }} onClick={() => void load()}>
           <RefreshCw size={13} /> Làm mới
@@ -1982,12 +1982,27 @@ const ExplanationView: React.FC<{
               </div>
 
               <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                {(t.items || []).map((it: any, idx: number) => (
-                  <div key={`${it.shift_id}_${it.stop_id}_${idx}`} style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>
-                    • {fmtDay(it.shift_date)}{it.route_name ? ` • ${it.route_name}` : ''} — điểm {it.stop_order}: {it.stop_name}
-                    {it.address ? <span style={{ fontWeight: 600, color: MUTED }}> ({it.address})</span> : ''}
-                  </div>
-                ))}
+                {(t.items || []).map((it: any, idx: number) => {
+                  const isLate = it.issue_type === 'LATE_SLA';
+                  return (
+                    <div key={`${it.shift_id}_${it.stop_id}_${idx}`} style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>
+                      • {fmtDay(it.shift_date)}{it.route_name ? ` • ${it.route_name}` : ''} — điểm {it.stop_order}: {it.stop_name}
+                      {it.address ? <span style={{ fontWeight: 600, color: MUTED }}> ({it.address})</span> : ''}
+                      <span style={{
+                        marginLeft: '6px', padding: '1px 7px', borderRadius: '999px', fontSize: '10.5px', fontWeight: 800,
+                        color: isLate ? '#B45309' : '#B91C1C',
+                        backgroundColor: isLate ? '#FEF3C7' : '#FEE2E2',
+                      }}>
+                        {isLate ? `Trễ ${Number(it.late_minutes) || 0} phút SLA` : 'Quên chấm điểm'}
+                      </span>
+                      {Number(it.penalty_amount) > 0 && (
+                        <span style={{ marginLeft: '6px', fontSize: '11px', fontWeight: 800, color: '#047857' }}>
+                          đền bù {fmtMoney(it.penalty_amount)}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
               <div style={{
@@ -1997,6 +2012,18 @@ const ExplanationView: React.FC<{
               }}>
                 📝 {t.reason}
               </div>
+
+              {Number(t.total_penalty_amount) > 0 && (
+                <div style={{
+                  marginTop: '8px', display: 'inline-flex', alignItems: 'center', gap: '6px',
+                  padding: '5px 10px', borderRadius: '8px', fontSize: '12px', fontWeight: 800,
+                  color: t.status === 'APPROVED' ? '#047857' : '#92400E',
+                  backgroundColor: t.status === 'APPROVED' ? '#ECFDF5' : '#FFFBEB',
+                  border: `1px solid ${t.status === 'APPROVED' ? '#A7F3D0' : '#FDE68A'}`,
+                }}>
+                  💰 {t.status === 'APPROVED' ? 'Đã đền bù phạt' : 'Đền bù dự kiến'}: {fmtMoney(t.total_penalty_amount)}
+                </div>
+              )}
 
               {Array.isArray(t.photos) && t.photos.length > 0 && (
                 <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', marginTop: '9px' }}>
@@ -2036,7 +2063,7 @@ const ExplanationView: React.FC<{
                   <button className="btn-primary" disabled={!!busy}
                     onClick={() => void act(t, 'approve')}
                     style={{ padding: '7px 15px', fontSize: '12.5px', fontWeight: 800, backgroundColor: '#047857' }}>
-                    <CheckCircle2 size={14} /> Duyệt — tính hoàn thành
+                    <CheckCircle2 size={14} /> Duyệt — đền bù phạt
                   </button>
                   <button className="btn-secondary" disabled={!!busy}
                     onClick={() => void act(t, 'reject')}
@@ -2056,8 +2083,9 @@ const ExplanationView: React.FC<{
       </div>
 
       <div style={{ marginTop: '14px', padding: '10px 12px', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '9px', fontSize: '11.5px', fontWeight: 600, color: '#1E40AF', lineHeight: 1.7 }}>
-        <b>Quy trình:</b> tài xế quên bấm xác nhận tại chi nhánh → gửi phiếu giải trình (nhiều điểm + nhiều ảnh)
-        → <b>Kế toán hoặc Giám đốc duyệt</b> → điểm được tính <b>hoàn thành</b>, bảng lương không còn trừ phạt.
+        <b>Quy trình:</b> tài xế mắc lỗi (quên chấm điểm / trễ giờ SLA…) → gửi phiếu giải trình (nhiều lỗi + nhiều ảnh)
+        → <b>Kế toán hoặc Giám đốc duyệt</b> → lỗi được <b>đền bù phạt</b>, ca làm được tính <b>hoàn thành</b>,
+        bảng lương không còn trừ tiền và hồ sơ tài xế không còn vi phạm.
       </div>
 
       {preview && (

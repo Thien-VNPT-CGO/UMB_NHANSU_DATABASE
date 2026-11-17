@@ -1790,6 +1790,15 @@ export class MockSheetsAdapter implements ISheetsRepository {
         stop_name: String(it?.stop_name ?? '').trim(),
         address: String(it?.address ?? '').trim() || undefined,
         checkin_id: String(it?.checkin_id ?? '').trim() || undefined,
+        issue_type: it?.issue_type === 'LATE_SLA'
+          ? 'LATE_SLA'
+          : (it?.issue_type === 'MISSED_CHECKIN' ? 'MISSED_CHECKIN' : undefined),
+        late_minutes: Number.isFinite(Number(it?.late_minutes)) && Number(it?.late_minutes) > 0
+          ? Number(it.late_minutes)
+          : undefined,
+        penalty_amount: Number.isFinite(Number(it?.penalty_amount)) && Number(it?.penalty_amount) >= 0
+          ? Number(it.penalty_amount)
+          : undefined,
       })),
       photos: photos.map((p: any) => ({
         photo_id: String(p?.photo_id ?? '').trim() || uuidv4(),
@@ -1799,6 +1808,9 @@ export class MockSheetsAdapter implements ISheetsRepository {
         drive_file_id: String(p?.drive_file_id ?? '').trim() || undefined,
         created_at: String(p?.created_at ?? '').trim() || now,
       })),
+      total_penalty_amount: Number(input?.total_penalty_amount) > 0
+        ? Number(input.total_penalty_amount)
+        : undefined,
       status: (input?.status as EVExplanationTicket['status']) || 'PENDING',
       approved_by: String(input?.approved_by ?? '').trim() || undefined,
       approved_by_name: String(input?.approved_by_name ?? '').trim() || undefined,

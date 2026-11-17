@@ -97,9 +97,9 @@ export class EVPayrollService {
             type: 'MISSED_CHECKIN',
             amount: penalty,
           });
-        }
-
-        if (checkin.is_late) {
+        } else if (checkin.is_late) {
+          // Chỉ tính phạt trễ khi điểm ĐÃ được chấm (không tính chồng lên phạt
+          // bỏ lọt — dữ liệu cũ từng đánh dấu is_late=true cho điểm bỏ lọt).
           const penalty = Math.round(dailyRate * latePenaltyRate);
           totalPenaltyAmount += penalty;
           penaltyBreakdown.late_sla++;

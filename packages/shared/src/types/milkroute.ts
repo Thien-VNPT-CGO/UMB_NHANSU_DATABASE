@@ -242,8 +242,15 @@ export interface EVChargingTicket {
 export type EVExplanationStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
 /**
- * Một điểm dừng tài xế quên bấm xác nhận, được đưa vào phiếu giải trình.
- * Một phiếu có thể gom nhiều điểm của nhiều ca/chi nhánh khác nhau.
+ * Loại lỗi tài xế cần giải trình:
+ *  - MISSED_CHECKIN: quên bấm xác nhận tại điểm dừng (bị đánh dấu bỏ lọt).
+ *  - LATE_SLA: đến trễ so với SLA của chặng (bị trừ phạt trễ giờ).
+ */
+export type EVExplanationIssueType = 'MISSED_CHECKIN' | 'LATE_SLA';
+
+/**
+ * Một lỗi của tài xế được đưa vào phiếu giải trình.
+ * Một phiếu có thể gom nhiều lỗi của nhiều ca/chi nhánh khác nhau.
  */
 export interface EVExplanationItem {
   shift_id: string;
@@ -256,6 +263,12 @@ export interface EVExplanationItem {
   address?: string;
   /** Check-in "bỏ lọt" do hệ thống tạo khi kết thúc ca (nếu có). */
   checkin_id?: string;
+  /** Loại lỗi — phiếu cũ chưa có trường này được hiểu là MISSED_CHECKIN. */
+  issue_type?: EVExplanationIssueType;
+  /** Số phút trễ so với SLA (chỉ với LATE_SLA). */
+  late_minutes?: number;
+  /** Tiền phạt ước tính sẽ được đền bù khi phiếu được duyệt. */
+  penalty_amount?: number;
 }
 
 /** Ảnh bằng chứng — chỉ lưu metadata, file nằm trên đĩa/Drive. */
@@ -270,9 +283,9 @@ export interface EVExplanationPhoto {
 }
 
 /**
- * Phiếu giải trình điểm quên chấm.
+ * Phiếu giải trình lỗi tài xế (quên chấm điểm / trễ giờ).
  * Tài xế tạo → chuyển thẳng Kế toán (FINANCE) / Giám đốc (DIRECTOR) duyệt.
- * Khi APPROVED, các điểm trong phiếu được tính là đã hoàn thành.
+ * Khi APPROVED, các lỗi trong phiếu được xóa phạt và tính hoàn thành ca.
  */
 export interface EVExplanationTicket {
   ticket_id: string;
@@ -282,6 +295,8 @@ export interface EVExplanationTicket {
   reason: string;                  // Nội dung giải trình
   items: EVExplanationItem[];
   photos: EVExplanationPhoto[];
+  /** Tổng tiền phạt ước tính được đền bù khi duyệt. */
+  total_penalty_amount?: number;
   status: EVExplanationStatus;
   approved_by?: string;
   approved_by_name?: string;
@@ -296,7 +311,7 @@ export interface EVExplanationTicket {
   updated_at: string;
 }
 
-/** Điểm dừng đủ điều kiện giải trình (trả về cho app tài xế). */
+/** Lỗi đủ điều kiện giải trình (trả về cho app tài xế). */
 export interface EVExplanationCandidate extends EVExplanationItem {
   checkin_id?: string;
   checked_in_at?: string;

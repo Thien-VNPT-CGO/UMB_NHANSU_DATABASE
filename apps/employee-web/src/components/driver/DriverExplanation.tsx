@@ -1,11 +1,14 @@
 /**
  * Tab "Giải trình" của APP TÀI XẾ.
  *
- * Dùng khi tài xế quên bấm xác nhận tại chi nhánh:
- *  - Chọn NHIỀU điểm bỏ lọt (có thể thuộc nhiều ca/chi nhánh khác nhau).
+ * Dùng khi tài xế mắc bất kỳ lỗi nào trên hệ thống vận chuyển:
+ *  - Quên bấm xác nhận tại chi nhánh (điểm bỏ lọt).
+ *  - Đến trễ so với SLA/giờ quy định (bị trừ phạt trễ giờ).
+ *  - Chọn NHIỀU lỗi (có thể thuộc nhiều ca/chi nhánh khác nhau).
  *  - Nhập nội dung giải trình.
  *  - Tải NHIỀU ảnh bằng chứng cùng lúc (client nén trước khi gửi).
- *  - Gửi thẳng Kế toán/Giám đốc duyệt; duyệt xong điểm được tính hoàn thành.
+ *  - Gửi thẳng Kế toán/Giám đốc duyệt; duyệt xong được đền bù phạt và tính
+ *    hoàn thành ca làm.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -23,11 +26,17 @@ import {
 
 const EXPLANATION_STATUS: Record<string, { text: string; fg: string; bg: string }> = {
   PENDING: { text: 'Chờ Kế toán/GĐ duyệt', fg: '#1D4ED8', bg: '#EFF6FF' },
-  APPROVED: { text: 'Đã duyệt — tính hoàn thành', fg: DC.success, bg: DC.successSoft },
+  APPROVED: { text: 'Đã duyệt — đền bù phạt', fg: DC.success, bg: DC.successSoft },
   REJECTED: { text: 'Từ chối', fg: DC.danger, bg: DC.dangerSoft },
 };
 
 type LocalPhoto = { id: string; name: string; data_url: string; mime_type: string; size_bytes: number };
+
+const isLateIssue = (it: any) => it?.issue_type === 'LATE_SLA';
+const issueText = (it: any) => isLateIssue(it)
+  ? `Trễ ${Number(it?.late_minutes) || 0} phút so với SLA`
+  : 'Quên bấm xác nhận';
+const fmtMoney = (n: any) => `${Math.round(Number(n) || 0).toLocaleString('vi-VN')}đ`;
 
 export function DriverExplanation({
   d, showToast, focus, onFocusUsed,
@@ -46,9 +55,15 @@ export function DriverExplanation({
   const candidates = d.explanationCandidates || [];
   const tickets = d.explanationTickets || [];
   const pendingTickets = tickets.filter((t: any) => t.status === 'PENDING');
+  const missedCount = candidates.filter((c: any) => !isLateIssue(c)).length;
+  const lateCount = candidates.filter(isLateIssue).length;
 
   const keyOf = (c: any) => `${c.shift_id}::${c.stop_id}`;
   const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const selectedPenalty = useMemo(
+    () => candidates.reduce((n: number, c: any) => (selectedSet.has(keyOf(c)) ? n + (Number(c.penalty_amount) || 0) : n), 0),
+    [candidates, selectedSet],
+  );
 
   // Nhóm điểm theo ngày + ca để tài xế dễ chọn.
   const groups = useMemo(() => {
@@ -153,7 +168,7 @@ export function DriverExplanation({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <ScreenTitle
         title="Phiếu giải trình"
-        sub="Quên bấm xác nhận chi nhánh? Chọn điểm bỏ lọt, mô tả lý do và gửi ảnh bằng chứng."
+        sub="Bất kỳ lỗi nào (quên chấm điểm, trễ giờ/SLA…) đều lập phiếu tại đây. Chọn lỗi, mô tả lý do và gửi ảnh bằng chứng."
       />
 
       <Card style={{ backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }}>
@@ -161,7 +176,8 @@ export function DriverExplanation({
           <ShieldCheck size={17} color={DC.blue} style={{ flexShrink: 0, marginTop: 1 }} />
           <div style={{ fontSize: 11.5, fontWeight: 700, color: '#1E40AF', lineHeight: 1.65 }}>
             Phiếu chuyển <b>thẳng Kế toán và Giám đốc</b> duyệt (không qua HR).
-            Khi được duyệt, các điểm này được tính là <b>hoàn thành</b> và không bị trừ phạt.
+            Khi được duyệt, lỗi được <b>đền bù phạt</b>, ca làm được tính <b>hoàn thành</b> và
+            hồ sơ tài xế không còn ghi nhận vi phạm.
           </div>
         </div>
       </Card>
@@ -172,7 +188,7 @@ export function DriverExplanation({
             <Clock3 size={15} /> {pendingTickets.length} phiếu đang chờ duyệt
           </div>
           <div style={{ fontSize: 11, fontWeight: 600, color: '#92400E', marginTop: 4, lineHeight: 1.6 }}>
-            Điểm trong phiếu đang chờ duyệt chưa bị trừ phạt cho đến khi có kết quả.
+            Lỗi trong phiếu đang chờ duyệt chưa bị trừ phạt cho đến khi có kết quả.
           </div>
         </Card>
       )}
@@ -181,7 +197,7 @@ export function DriverExplanation({
       <Card>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
           <ClipboardList size={16} color={DC.brand} />
-          <div style={{ fontSize: 13.5, fontWeight: 900, color: DC.ink }}>Điểm quên xác nhận</div>
+          <div style={{ fontSize: 13.5, fontWeight: 900, color: DC.ink }}>Lỗi cần giải trình</div>
           <span style={{ marginLeft: 'auto' }}>
             <Pill
               text={`${selected.length}/${candidates.length} đã chọn`}
@@ -191,11 +207,19 @@ export function DriverExplanation({
           </span>
         </div>
 
+        {(missedCount > 0 || lateCount > 0) && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+            {missedCount > 0 && <Pill text={`${missedCount} quên chấm điểm`} fg={DC.danger} bg={DC.dangerSoft} />}
+            {lateCount > 0 && <Pill text={`${lateCount} trễ giờ/SLA`} fg={DC.warn} bg={DC.warnSoft} />}
+            {selectedPenalty > 0 && <Pill text={`Đền bù dự kiến ${fmtMoney(selectedPenalty)}`} fg={DC.success} bg={DC.successSoft} />}
+          </div>
+        )}
+
         {!candidates.length ? (
           <Empty
             icon={<CheckCircle2 size={34} color={DC.success} />}
-            title="Không có điểm nào cần giải trình"
-            desc="Tất cả điểm giao đã được xác nhận hoặc đã có phiếu giải trình đang chờ/đã duyệt."
+            title="Không có lỗi nào cần giải trình"
+            desc="Mọi điểm giao đã được xác nhận đúng giờ hoặc đã có phiếu giải trình đang chờ/đã duyệt."
           />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -243,8 +267,12 @@ export function DriverExplanation({
                               {c.address}
                             </span>
                           )}
-                          <span style={{ display: 'block', fontSize: 10, fontWeight: 700, color: DC.danger, marginTop: 2 }}>
-                            Quên bấm xác nhận
+                          <span style={{
+                            display: 'block', fontSize: 10, fontWeight: 800, marginTop: 2,
+                            color: isLateIssue(c) ? DC.warn : DC.danger,
+                          }}>
+                            {issueText(c)}
+                            {Number(c.penalty_amount) > 0 ? ` • phạt ${fmtMoney(c.penalty_amount)}` : ''}
                           </span>
                         </span>
                       </button>
@@ -346,7 +374,7 @@ export function DriverExplanation({
             <Send size={16} />
             {d.busy === 'explanation'
               ? 'ĐANG GỬI PHIẾU...'
-              : `GỬI PHIẾU GIẢI TRÌNH (${selected.length} điểm)`}
+              : `GỬI PHIẾU GIẢI TRÌNH (${selected.length} lỗi)`}
           </BigButton>
 
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 9, fontSize: 10.5, fontWeight: 600, color: DC.muted, lineHeight: 1.6 }}>
@@ -392,16 +420,27 @@ export function DriverExplanation({
                     {(t.items || []).map((it: any, idx: number) => (
                       <div key={`${it.shift_id}_${it.stop_id}_${idx}`} style={{ fontSize: 11.5, fontWeight: 700, color: DC.ink }}>
                         • {fmtDay(it.shift_date)} — {it.stop_name}
+                        <span style={{ fontWeight: 800, color: isLateIssue(it) ? DC.warn : DC.danger }}>
+                          {' '}· {issueText(it)}
+                        </span>
+                        {Number(it.penalty_amount) > 0 && (
+                          <span style={{ fontWeight: 700, color: DC.muted }}> · phạt {fmtMoney(it.penalty_amount)}</span>
+                        )}
                       </div>
                     ))}
                   </div>
+                  {Number(t.total_penalty_amount) > 0 && (
+                    <div style={{ fontSize: 11, fontWeight: 800, color: t.status === 'APPROVED' ? DC.success : DC.muted, marginTop: 5 }}>
+                      {t.status === 'APPROVED' ? '💰 Đã đền bù phạt' : '💰 Đền bù dự kiến'}: {fmtMoney(t.total_penalty_amount)}
+                    </div>
+                  )}
                   <div style={{ fontSize: 11, fontWeight: 600, color: DC.muted, marginTop: 6, lineHeight: 1.6 }}>
                     📝 {t.reason}
                   </div>
                   {t.status === 'APPROVED' && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontWeight: 700, color: DC.success, marginTop: 5 }}>
                       <CheckCircle2 size={12} /> Đã duyệt{String(t.approved_by_name || '').trim() ? ` bởi ${t.approved_by_name}` : ''}
-                      {t.approved_at ? ` lúc ${fmtTime(t.approved_at)}` : ''} — điểm được tính hoàn thành.
+                      {t.approved_at ? ` lúc ${fmtTime(t.approved_at)}` : ''} — đền bù phạt, ca được tính hoàn thành.
                     </div>
                   )}
                   {t.status === 'REJECTED' && (

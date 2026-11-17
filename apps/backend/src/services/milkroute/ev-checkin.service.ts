@@ -221,7 +221,9 @@ export class EVCheckinService {
             is_within_geofence: false,
             sla_minutes: stop.sla_minutes,
             actual_travel_min: 0,
-            is_late: true,
+            // Điểm bỏ lọt chỉ bị phạt "quên chấm", KHÔNG cộng thêm phạt trễ giờ
+            // (bảng lương dùng is_late cho các chặng đã chấm nhưng quá SLA).
+            is_late: false,
             late_minutes: 0,
             penalty_amount: 0,
             is_missed: true,

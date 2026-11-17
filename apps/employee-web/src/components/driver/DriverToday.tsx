@@ -51,6 +51,12 @@ export function DriverToday({ d, onOpenExplanation }: { d: DriverData; onOpenExp
   const st = STATUS_LABEL[status] || STATUS_LABEL.SCHEDULED;
   const firstName = String(profile?.driver?.full_name || '').trim().split(/\s+/).pop() || 'tài xế';
   const pct = stops.length ? Math.round((checkedCount / stops.length) * 100) : 0;
+  const explanationCandidates = d.explanationCandidates || [];
+  const missedIssueCount = explanationCandidates.filter((c: any) => c.issue_type !== 'LATE_SLA').length;
+  const lateIssueCount = explanationCandidates.filter((c: any) => c.issue_type === 'LATE_SLA').length;
+  const issueCandidateOf = (stopId?: string) => explanationCandidates.find(
+    (c: any) => String(c.stop_id) === String(stopId || '') && String(c.shift_id) === String(current?.shift_id || ''),
+  );
   // Cho phép bấm khi trong bán kính điểm dừng + dung sai GPS (backend dùng
   // cùng quy tắc). Chỉ chặn khi GPS hỏng hẳn — không chặn ở 30m như trước.
   // Chế độ Test (Admin bật): bỏ mọi ràng buộc vị trí/thứ tự.
@@ -129,8 +135,8 @@ export function DriverToday({ d, onOpenExplanation }: { d: DriverData; onOpenExp
         </div>
       )}
 
-      {/* ---------------- Nhắc giải trình điểm quên chấm ---------------- */}
-      {(d.explanationCandidates || []).length > 0 && (
+      {/* ---------------- Nhắc giải trình lỗi trong ca ---------------- */}
+      {explanationCandidates.length > 0 && (
         <button
           type="button"
           onClick={() => onOpenExplanation?.('', '')}
@@ -143,10 +149,14 @@ export function DriverToday({ d, onOpenExplanation }: { d: DriverData; onOpenExp
           <AlertTriangle size={17} color={DC.warn} style={{ flexShrink: 0, marginTop: 1 }} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12.5, fontWeight: 900, color: '#92400E' }}>
-              {(d.explanationCandidates || []).length} điểm quên bấm xác nhận
+              {explanationCandidates.length} lỗi cần giải trình
             </div>
             <div style={{ fontSize: 10.5, fontWeight: 700, color: '#92400E', marginTop: 2, lineHeight: 1.55 }}>
-              Gửi phiếu giải trình kèm ảnh bằng chứng để Kế toán/Giám đốc duyệt — không bị trừ phạt.
+              {[
+                missedIssueCount ? `${missedIssueCount} quên chấm điểm` : '',
+                lateIssueCount ? `${lateIssueCount} trễ giờ/SLA` : '',
+              ].filter(Boolean).join(' • ')}
+              {' — '}gửi phiếu kèm ảnh bằng chứng để Kế toán/Giám đốc duyệt, được đền bù phạt.
             </div>
           </div>
           <span style={{ fontSize: 11, fontWeight: 900, color: '#B45309', whiteSpace: 'nowrap', alignSelf: 'center' }}>
@@ -348,6 +358,10 @@ export function DriverToday({ d, onOpenExplanation }: { d: DriverData; onOpenExp
                 : null;
               const inRange = testMode || isCheckinDistanceOk(s, dist, coords?.accuracy);
               const canCheck = isRunning && !done && (testMode || (inRange && gpsOk));
+              const lateCandidate = s.isLate ? issueCandidateOf(s.stop_id) : null;
+              const shownPenalty = Number(s.penaltyAmount) > 0
+                ? Number(s.penaltyAmount)
+                : Number(lateCandidate?.penalty_amount) || 0;
               return (
                 <div key={s.stop_id} style={{ display: 'flex', gap: 10, paddingBottom: idx === stops.length - 1 ? 0 : 14 }}>
                   {/* timeline */}
@@ -380,11 +394,24 @@ export function DriverToday({ d, onOpenExplanation }: { d: DriverData; onOpenExp
                       {dist != null ? ` • cách ${Math.round(dist)}m` : ''}
                     </div>
                     {done && !s.isMissed && (
-                      <div style={{ fontSize: 10.5, color: DC.success, fontWeight: 700, marginTop: 3 }}>
+                      <div style={{ fontSize: 10.5, color: s.isLate ? DC.warn : DC.success, fontWeight: 700, marginTop: 3 }}>
                         ✅ {fmtTime(s.checkedInAt)}
-                        {s.isLate ? ` • trễ ${s.lateMinutes} phút` : ''}
-                        {Number(s.penaltyAmount) > 0 ? ` • phạt ${Number(s.penaltyAmount).toLocaleString('vi-VN')}đ` : ''}
+                        {s.isLate ? ` • trễ ${s.lateMinutes} phút so với SLA` : ''}
+                        {shownPenalty > 0 ? ` • phạt ${shownPenalty.toLocaleString('vi-VN')}đ` : ''}
                       </div>
+                    )}
+                    {done && !s.isMissed && s.isLate && lateCandidate && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenExplanation?.(s.shift_id || current?.shift_id || '', s.stop_id)}
+                        style={{
+                          marginTop: 6, padding: '6px 11px', borderRadius: 9, fontSize: 11.5, fontWeight: 800,
+                          border: `1.5px solid ${DC.warn}`, cursor: 'pointer',
+                          backgroundColor: DC.warnSoft, color: '#B45309',
+                        }}
+                      >
+                        Giải trình trễ giờ
+                      </button>
                     )}
                     {s.isMissed && (
                       <div style={{ marginTop: 5 }}>
