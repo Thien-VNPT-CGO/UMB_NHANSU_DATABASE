@@ -1663,6 +1663,12 @@ export class MockSheetsAdapter implements ISheetsRepository {
       longitude: Number(input?.longitude),
       geofence_radius_m: Number(input?.geofence_radius_m) > 0 ? Number(input.geofence_radius_m) : 100,
       sla_minutes: Number(input?.sla_minutes) >= 0 ? Number(input.sla_minutes) : 0,
+      sla_minutes_with_charging: Number(input?.sla_minutes_with_charging) >= 0
+        ? Number(input.sla_minutes_with_charging)
+        : undefined,
+      sla_minutes_without_charging: Number(input?.sla_minutes_without_charging) >= 0
+        ? Number(input.sla_minutes_without_charging)
+        : undefined,
       stop_type: (input?.stop_type as EVRouteStop['stop_type']) || 'DELIVERY',
       is_mandatory: input?.is_mandatory !== false,
       notes: String(input?.notes ?? '').trim() || undefined,

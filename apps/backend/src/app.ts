@@ -611,9 +611,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     const gps = await ev.gps.getVehicleLatestGPS(shift.vehicle_id).catch(() => null);
     const stops: any[] = detail?.stops || [];
     const next = stops.find(s => !s.isCompleted);
-    // SLA còn lại tính từ lần check-in gần nhất (nếu có).
+    // SLA còn lại tính từ mốc check-in gần nhất (điểm cuối có phiếu sạc dùng
+    // mốc kết thúc sạc do getShiftDetail trả về).
     const lastCheckin = stops.filter(s => s.checkedInAt).pop();
-    const baseAt = Date.parse(lastCheckin?.checkedInAt || shift.actual_start_at || shift.planned_start_at || '');
+    const baseAt = Date.parse(next?.slaBaseAt || lastCheckin?.checkedInAt || shift.actual_start_at || shift.planned_start_at || '');
     const elapsedMin = Number.isFinite(baseAt) ? (Date.now() - baseAt) / 60000 : 0;
     const slaRemainingSeconds = next
       ? Math.max(0, Math.round((Number(next.sla_minutes || 0) - elapsedMin) * 60))

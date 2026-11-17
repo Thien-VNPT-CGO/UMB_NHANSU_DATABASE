@@ -158,7 +158,7 @@ export function DriverMap({ d }: { d: DriverData }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
             <Navigation size={14} color={DC.brand} />
             <span style={{ fontSize: 10.5, fontWeight: 800, color: DC.brand, letterSpacing: 0.4 }}>ĐIỂM KẾ TIẾP</span>
-            <Pill text={`SLA ${fmtMin(Number(next.sla_minutes || 0))}`} fg={DC.blue} bg={DC.blueSoft} style={{ marginLeft: 'auto' }} />
+            <Pill text={`SLA ${fmtMin(Number(next.sla_minutes || 0))}${next.stop_type === 'END' ? (next.slaFromCharging ? ' từ trạm sạc' : ' từ chi nhánh') : ''}`} fg={DC.blue} bg={DC.blueSoft} style={{ marginLeft: 'auto' }} />
           </div>
           <div style={{ fontSize: 15.5, fontWeight: 900, color: DC.ink }}>{next.name}</div>
           {next.address && <div style={{ fontSize: 11.5, color: DC.muted, fontWeight: 600, marginTop: 3 }}>{next.address}</div>}

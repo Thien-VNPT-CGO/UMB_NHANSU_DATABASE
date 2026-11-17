@@ -237,6 +237,12 @@ export class EVRouteService {
           longitude: useBaseCharging ? Number(baseCharging!.longitude) : Number(s.longitude) || 0,
           geofence_radius_m: Number(s.geofence_radius_m) > 0 ? Number(s.geofence_radius_m) : 100,
           sla_minutes: Number(s.sla_minutes) >= 0 ? Number(s.sla_minutes) : 0,
+          sla_minutes_with_charging: Number(s.sla_minutes_with_charging) >= 0
+            ? Number(s.sla_minutes_with_charging)
+            : undefined,
+          sla_minutes_without_charging: Number(s.sla_minutes_without_charging) >= 0
+            ? Number(s.sla_minutes_without_charging)
+            : undefined,
           stop_type: s.stop_type,
           is_mandatory: s.is_mandatory !== false,
           notes: s.notes,

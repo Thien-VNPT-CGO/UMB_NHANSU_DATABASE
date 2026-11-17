@@ -390,7 +390,9 @@ export function DriverToday({ d, onOpenExplanation }: { d: DriverData; onOpenExp
                       {s.stop_type === 'CHARGING' && <Pill text="TRẠM SẠC" fg={DC.purple} bg={DC.purpleSoft} />}
                     </div>
                     <div style={{ fontSize: 10.5, color: DC.muted, fontWeight: 600, marginTop: 2 }}>
-                      SLA {fmtMin(Number(s.sla_minutes || 0))} • bán kính {Math.round(checkinRadius(s))}m
+                      SLA {fmtMin(Number(s.sla_minutes || 0))}
+                      {s.stop_type === 'END' ? (s.slaFromCharging ? ' từ trạm sạc' : ' từ chi nhánh') : ''}
+                      {' • '}bán kính {Math.round(checkinRadius(s))}m
                       {dist != null ? ` • cách ${Math.round(dist)}m` : ''}
                     </div>
                     {done && !s.isMissed && (

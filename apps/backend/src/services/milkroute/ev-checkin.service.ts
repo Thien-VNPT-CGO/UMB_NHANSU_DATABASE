@@ -1,5 +1,5 @@
 import { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
-import { EVShift, EVRouteStop, EVShiftCheckin } from '@ubm/shared';
+import { EVShift, EVRouteStop, EVShiftCheckin, effectiveEndSlaMinutes } from '@ubm/shared';
 import { EVRouteService } from './ev-route.service.js';
 import { isEvTestModeEnabled, isEvTestShift, withEvTestShiftMark } from './ev-test-mode.js';
 
@@ -102,6 +102,11 @@ export class EVCheckinService {
     }
 
     // Calculate SLA
+    const chargingEndAt = this.latestChargingEndAt(input.shiftId);
+    const hasCharging = chargingEndAt != null;
+    // Điểm cuối có 2 mốc tùy chỉnh: có phiếu sạc (từ trạm sạc về) và không có
+    // phiếu sạc (từ chi nhánh cuối về). Điểm khác dùng sla_minutes như cũ.
+    const effectiveSla = effectiveEndSlaMinutes(stop, hasCharging);
     let actualTravelMin = 0;
     let isLate = false;
     let lateMinutes = 0;
@@ -116,7 +121,10 @@ export class EVCheckinService {
       const prevStop = stops.find(s => s.stop_order === stop.stop_order - 1);
       const prevCheckin = this.repo.evShiftCheckins.find(c => c.shift_id === input.shiftId && c.stop_id === prevStop?.stop_id);
       let prevTime: number | null = null;
-      if (prevCheckin) {
+      if (stop.stop_type === 'END' && chargingEndAt != null) {
+        // Điểm cuối + ca có phiếu sạc đã kết thúc: mốc là lúc kết thúc sạc.
+        prevTime = chargingEndAt;
+      } else if (prevCheckin) {
         prevTime = new Date(prevCheckin.checked_in_at).getTime();
       } else if (prevStop?.stop_type === 'CHARGING') {
         // Chặng cuối (trạm sạc → xưởng): mốc là lúc KẾT THÚC SẠC,
@@ -141,8 +149,8 @@ export class EVCheckinService {
     }
 
     // Chế độ Test: không tính trễ/phạt để không ảnh hưởng lương tài xế.
-    isLate = !testMode && actualTravelMin > stop.sla_minutes;
-    lateMinutes = isLate ? actualTravelMin - stop.sla_minutes : 0;
+    isLate = !testMode && actualTravelMin > effectiveSla;
+    lateMinutes = isLate ? actualTravelMin - effectiveSla : 0;
 
     // Calculate penalty
     let penaltyAmount = 0;
@@ -163,7 +171,7 @@ export class EVCheckinService {
       longitude: input.driverLocation.longitude,
       distance_m: Math.round(distance * 100) / 100,
       is_within_geofence: isWithinGeofence,
-      sla_minutes: stop.sla_minutes,
+      sla_minutes: effectiveSla,
       actual_travel_min: actualTravelMin,
       is_late: isLate,
       late_minutes: lateMinutes,
@@ -199,6 +207,7 @@ export class EVCheckinService {
     const stops = await this.stopsForShift(shift);
     const checkins = this.repo.evShiftCheckins.filter(c => c.shift_id === shiftId);
     const completedOrders = new Set(checkins.map(c => c.stop_order));
+    const hasCharging = this.latestChargingEndAt(shiftId) != null;
 
     const missed: EVShiftCheckin[] = [];
     for (const stop of stops) {
@@ -219,7 +228,7 @@ export class EVCheckinService {
             longitude: 0,
             distance_m: 0,
             is_within_geofence: false,
-            sla_minutes: stop.sla_minutes,
+            sla_minutes: effectiveEndSlaMinutes(stop, hasCharging),
             actual_travel_min: 0,
             // Điểm bỏ lọt chỉ bị phạt "quên chấm", KHÔNG cộng thêm phạt trễ giờ
             // (bảng lương dùng is_late cho các chặng đã chấm nhưng quá SLA).
@@ -253,6 +262,16 @@ export class EVCheckinService {
         penalty_points: Number(shift.penalty_points || 0) + points,
       });
     }
+  }
+
+  /** Mốc kết thúc sạc gần nhất của ca (null nếu ca không có phiếu sạc đã kết thúc). */
+  private latestChargingEndAt(shiftId: string): number | null {
+    const ends = this.repo.evChargingTickets
+      .filter(t => String(t.shift_id) === String(shiftId) && t.charging_end_at)
+      .map(t => Date.parse(String(t.charging_end_at)))
+      .filter(n => Number.isFinite(n))
+      .sort((a, b) => b - a);
+    return ends.length ? ends[0] : null;
   }
 
   /** Haversine distance calculation */

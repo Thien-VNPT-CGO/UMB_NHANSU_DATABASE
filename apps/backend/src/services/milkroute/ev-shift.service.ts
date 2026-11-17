@@ -1,5 +1,5 @@
 import { MockSheetsAdapter } from '../../repositories/mock-sheets.adapter.js';
-import { EVShift, EVRouteStop, EVRoute, EVVehicle } from '@ubm/shared';
+import { EVShift, EVRouteStop, EVRoute, EVVehicle, effectiveEndSlaMinutes } from '@ubm/shared';
 import { EVRouteService } from './ev-route.service.js';
 import { isEvTestModeEnabled, isEvTestShift, withEvTestShiftMark } from './ev-test-mode.js';
 
@@ -438,6 +438,10 @@ export class EVShiftService {
       isLate: boolean;
       lateMinutes: number;
       penaltyAmount: number;
+      /** Điểm cuối + ca có phiếu sạc: mốc bắt đầu tính SLA (lúc kết thúc sạc). */
+      slaBaseAt?: string;
+      /** Điểm cuối đang áp mốc nào: true = từ trạm sạc, false = từ chi nhánh. */
+      slaFromCharging?: boolean;
     }>;
   } | null> {
     const shift = await this.getShift(shiftId);
@@ -451,7 +455,14 @@ export class EVShiftService {
 
     const checkins = this.repo.evShiftCheckins.filter(c => c.shift_id === shiftId);
 
-    const stopsWithCheckin = stops.map(stop => {
+    // Điểm cuối: hiển thị + đếm ngược theo đúng mốc (có phiếu sạc / từ chi nhánh).
+    const chargingEndAt = this.latestChargingEndAt(shiftId);
+    const hasCharging = chargingEndAt != null;
+    const stopsWithEndSla = stops.map(stop => stop.stop_type === 'END'
+      ? { ...stop, sla_minutes: effectiveEndSlaMinutes(stop, hasCharging) }
+      : stop);
+
+    const stopsWithCheckin = stopsWithEndSla.map(stop => {
       const checkin = checkins.find(c => c.stop_id === stop.stop_id);
       return {
         ...stop,
@@ -461,6 +472,10 @@ export class EVShiftService {
         lateMinutes: checkin?.late_minutes || 0,
         penaltyAmount: checkin?.penalty_amount || 0,
         isMissed: checkin?.is_missed || false,
+        slaBaseAt: stop.stop_type === 'END' && chargingEndAt != null
+          ? new Date(chargingEndAt).toISOString()
+          : undefined,
+        slaFromCharging: stop.stop_type === 'END' ? hasCharging : undefined,
       };
     });
 
@@ -472,6 +487,16 @@ export class EVShiftService {
       routeName: route?.name || 'Unknown',
       stops: stopsWithCheckin,
     };
+  }
+
+  /** Mốc kết thúc sạc gần nhất của ca (null nếu không có phiếu sạc đã kết thúc). */
+  private latestChargingEndAt(shiftId: string): number | null {
+    const ends = this.repo.evChargingTickets
+      .filter(t => String(t.shift_id) === String(shiftId) && t.charging_end_at)
+      .map(t => Date.parse(String(t.charging_end_at)))
+      .filter(n => Number.isFinite(n))
+      .sort((a, b) => b - a);
+    return ends.length ? ends[0] : null;
   }
 
   /** Haversine distance calculation */

@@ -387,7 +387,8 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   const slaLeftSec = useMemo(() => {
     if (!nextStop || !current) return null;
     const prevDone = stops.filter((s: any) => s.isCompleted && s.stop_order < nextStop.stop_order).pop();
-    const baseIso = prevDone?.checkedInAt || current.actual_start_at || current.planned_start_at;
+    // Điểm cuối + ca có phiếu sạc: mốc là lúc kết thúc sạc (backend trả slaBaseAt).
+    const baseIso = nextStop.slaBaseAt || prevDone?.checkedInAt || current.actual_start_at || current.planned_start_at;
     const base = Date.parse(baseIso || '');
     if (!Number.isFinite(base)) return null;
     return Math.round((base + Number(nextStop.sla_minutes || 0) * 60000 - nowMs) / 1000);

@@ -80,6 +80,16 @@ export interface EVRouteStop {
   longitude: number;
   geofence_radius_m: number;       // Mặc định 100m
   sla_minutes: number;             // SLA từ điểm trước đến điểm này
+  /**
+   * Riêng điểm cuối (END): thời gian tối đa từ trạm sạc về điểm cuối khi ca
+   * có phiếu sạc đã kết thúc. Bỏ trống → dùng `sla_minutes`.
+   */
+  sla_minutes_with_charging?: number;
+  /**
+   * Riêng điểm cuối (END): thời gian tối đa từ chi nhánh cuối về điểm cuối khi
+   * ca không có phiếu sạc. Bỏ trống → dùng `sla_minutes`.
+   */
+  sla_minutes_without_charging?: number;
   stop_type: 'START' | 'DELIVERY' | 'OFFICE' | 'CHARGING' | 'END';
   is_mandatory: boolean;           // Bắt buộc check-in
   notes?: string;
@@ -109,9 +119,36 @@ export interface EVRouteChangeStop {
   longitude: number;
   geofence_radius_m: number;
   sla_minutes: number;
+  /** Điểm cuối: SLA từ trạm sạc về khi ca có phiếu sạc (bỏ trống → `sla_minutes`). */
+  sla_minutes_with_charging?: number;
+  /** Điểm cuối: SLA từ chi nhánh cuối về khi ca không có phiếu sạc (bỏ trống → `sla_minutes`). */
+  sla_minutes_without_charging?: number;
   stop_type: EVRouteStop['stop_type'];
   is_mandatory: boolean;
   notes?: string;
+}
+
+/**
+ * SLA hiệu lực của điểm cuối theo việc ca có phiếu sạc đã kết thúc hay không.
+ * - Có sạc: dùng `sla_minutes_with_charging`.
+ * - Không sạc: dùng `sla_minutes_without_charging`.
+ * - Chưa cấu hình 2 mốc mới: giữ tương thích bằng `sla_minutes`.
+ * Điểm dừng khác END luôn dùng `sla_minutes`.
+ */
+export function effectiveEndSlaMinutes(
+  stop: Pick<EVRouteStop, 'stop_type' | 'sla_minutes' | 'sla_minutes_with_charging' | 'sla_minutes_without_charging'>,
+  hasCharging: boolean,
+): number {
+  const toMinutes = (value: unknown): number | null => {
+    if (value === undefined || value === null || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+  };
+  if (stop.stop_type !== 'END') return toMinutes(stop.sla_minutes) ?? 0;
+  const specific = toMinutes(hasCharging
+    ? stop.sla_minutes_with_charging
+    : stop.sla_minutes_without_charging);
+  return specific ?? toMinutes(stop.sla_minutes) ?? 0;
 }
 
 export type EVRouteChangeStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';

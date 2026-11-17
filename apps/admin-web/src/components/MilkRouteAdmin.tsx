@@ -794,6 +794,9 @@ const FleetView: React.FC<{
   // Chỉnh nhanh thời gian lộ trình giữa các điểm (SLA chặng).
   const [timingEdit, setTimingEdit] = useState(false);
   const [timingDraft, setTimingDraft] = useState<Record<string, string>>({});
+  // Điểm cuối có 2 mốc riêng: có phiếu sạc / không có phiếu sạc.
+  const [timingDraftWithCharging, setTimingDraftWithCharging] = useState<Record<string, string>>({});
+  const [timingDraftWithoutCharging, setTimingDraftWithoutCharging] = useState<Record<string, string>>({});
   const [timingBusy, setTimingBusy] = useState(false);
 
   // Chỉ nhân sự khối Xưởng được chọn làm tài xế phụ trách xe.
@@ -830,6 +833,8 @@ const FleetView: React.FC<{
     // Đổi lộ trình → thoát chế độ chỉnh thời gian để tránh lưu nhầm sang lộ trình khác.
     setTimingEdit(false);
     setTimingDraft({});
+    setTimingDraftWithCharging({});
+    setTimingDraftWithoutCharging({});
     if (!routeId) { setStops([]); return; }
     // Màn cấu hình lộ trình: luôn xem điểm dừng GỐC (phiếu đổi lộ trình
     // chỉ áp dụng theo ngày/sản phẩm ở Live Map + app tài xế).
@@ -838,57 +843,136 @@ const FleetView: React.FC<{
       .catch(() => setStops([]));
   }, [routeId]);
 
+  /** Điểm cuối có 2 mốc tùy chỉnh; các điểm khác chỉ có 1 mốc. */
+  const isEndStop = (stop: any): boolean => stop?.stop_type === 'END';
+
   /** Số phút của chặng: lấy bản nháp khi đang chỉnh, ngược lại lấy dữ liệu đã lưu. */
   const minutesOf = (stop: any): number => {
     const raw = timingEdit ? (timingDraft[stop.stop_id] ?? stop.sla_minutes) : stop.sla_minutes;
     const v = Number(raw);
     return Number.isFinite(v) && v >= 0 ? Math.round(v) : 0;
   };
-  const totalTiming = stops.reduce((sum, stop) => sum + minutesOf(stop), 0);
+
+  /** Mốc điểm cuối đã lưu (chưa có 2 trường mới → lấy sla_minutes để tương thích). */
+  const savedEndMinutes = (stop: any, withCharging: boolean): number => {
+    const raw = withCharging ? stop.sla_minutes_with_charging : stop.sla_minutes_without_charging;
+    const v = Number(raw ?? stop.sla_minutes);
+    return Number.isFinite(v) && v >= 0 ? Math.round(v) : 0;
+  };
+
+  /** Số phút điểm cuối khi có phiếu sạc (đang chỉnh → lấy bản nháp). */
+  const minutesWithChargingOf = (stop: any): number => {
+    if (!timingEdit) return savedEndMinutes(stop, true);
+    const raw = timingDraftWithCharging[stop.stop_id] ?? savedEndMinutes(stop, true);
+    const v = Number(raw);
+    return Number.isFinite(v) && v >= 0 ? Math.round(v) : 0;
+  };
+
+  /** Số phút điểm cuối khi không có phiếu sạc (đang chỉnh → lấy bản nháp). */
+  const minutesWithoutChargingOf = (stop: any): number => {
+    if (!timingEdit) return savedEndMinutes(stop, false);
+    const raw = timingDraftWithoutCharging[stop.stop_id] ?? savedEndMinutes(stop, false);
+    const v = Number(raw);
+    return Number.isFinite(v) && v >= 0 ? Math.round(v) : 0;
+  };
+
+  /** Tổng thời gian lộ trình theo 2 trường hợp của điểm cuối. */
+  const totalTimingWithoutCharging = stops.reduce(
+    (sum, stop) => sum + (isEndStop(stop) ? minutesWithoutChargingOf(stop) : minutesOf(stop)), 0,
+  );
+  const totalTimingWithCharging = stops.reduce(
+    (sum, stop) => sum + (isEndStop(stop) ? minutesWithChargingOf(stop) : minutesOf(stop)), 0,
+  );
+  const hasEndStop = stops.some(isEndStop);
 
   const beginTimingEdit = () => {
     const draft: Record<string, string> = {};
-    stops.forEach((stop) => { draft[stop.stop_id] = String(minutesOf(stop)); });
+    const withCharging: Record<string, string> = {};
+    const withoutCharging: Record<string, string> = {};
+    stops.forEach((stop) => {
+      draft[stop.stop_id] = String(minutesOf(stop));
+      if (isEndStop(stop)) {
+        withCharging[stop.stop_id] = String(savedEndMinutes(stop, true));
+        withoutCharging[stop.stop_id] = String(savedEndMinutes(stop, false));
+      }
+    });
     setTimingDraft(draft);
+    setTimingDraftWithCharging(withCharging);
+    setTimingDraftWithoutCharging(withoutCharging);
     setTimingEdit(true);
   };
 
   const cancelTimingEdit = () => {
     setTimingEdit(false);
     setTimingDraft({});
+    setTimingDraftWithCharging({});
+    setTimingDraftWithoutCharging({});
   };
 
   /**
    * Lưu thời gian di chuyển giữa các điểm dừng (sla_minutes của từng chặng).
    * Mỗi chặng = thời gian tối đa tính từ lúc check-in điểm trước; điểm đầu
-   * tính từ giờ xuất phát của ca. Kế toán / Giám đốc cấu hình linh hoạt theo
-   * thực tế giao thông mà không cần tạo phiếu đổi lộ trình.
+   * tính từ giờ xuất phát của ca. Riêng điểm cuối có 2 mốc: từ trạm sạc (ca có
+   * phiếu sạc) và từ chi nhánh cuối (ca không có phiếu sạc). Kế toán / Giám đốc
+   * cấu hình linh hoạt theo thực tế giao thông mà không cần tạo phiếu đổi lộ trình.
    */
   const saveTiming = async () => {
     const invalid = stops.some((stop) => {
-      const raw = String(timingDraft[stop.stop_id] ?? '').trim();
-      const v = Number(raw);
-      return raw === '' || !Number.isFinite(v) || v < 0;
+      const raws = isEndStop(stop)
+        ? [timingDraftWithCharging[stop.stop_id], timingDraftWithoutCharging[stop.stop_id]]
+        : [timingDraft[stop.stop_id]];
+      return raws.some((raw) => {
+        const text = String(raw ?? '').trim();
+        const v = Number(text);
+        return text === '' || !Number.isFinite(v) || v < 0;
+      });
     });
     if (invalid) return showToast('⚠️ Thời gian mỗi chặng phải là số phút ≥ 0!');
 
-    const changed = stops.filter((stop) => minutesOf(stop) !== Math.max(0, Math.round(Number(stop.sla_minutes) || 0)));
-    if (!changed.length) {
+    const changes: Array<{ stop: any; body: Record<string, number>; patch: Record<string, any> }> = [];
+    for (const stop of stops) {
+      if (isEndStop(stop)) {
+        const withCharging = minutesWithChargingOf(stop);
+        const withoutCharging = minutesWithoutChargingOf(stop);
+        if (withCharging !== savedEndMinutes(stop, true) || withoutCharging !== savedEndMinutes(stop, false)) {
+          changes.push({
+            stop,
+            // sla_minutes giữ bằng mốc "không sạc" để dữ liệu cũ/consumer cũ vẫn đúng.
+            body: {
+              sla_minutes: withoutCharging,
+              sla_minutes_with_charging: withCharging,
+              sla_minutes_without_charging: withoutCharging,
+            },
+            patch: {
+              sla_minutes: withoutCharging,
+              sla_minutes_with_charging: withCharging,
+              sla_minutes_without_charging: withoutCharging,
+            },
+          });
+        }
+        continue;
+      }
+      const minutes = minutesOf(stop);
+      if (minutes !== Math.max(0, Math.round(Number(stop.sla_minutes) || 0))) {
+        changes.push({ stop, body: { sla_minutes: minutes }, patch: { sla_minutes: minutes } });
+      }
+    }
+
+    if (!changes.length) {
       cancelTimingEdit();
       return showToast('ℹ️ Không có thay đổi thời gian.');
     }
 
     setTimingBusy(true);
     try {
-      for (const stop of changed) {
-        const minutes = minutesOf(stop);
+      for (const { stop, body, patch } of changes) {
         await apiRequest(`/ev/admin/stops/${encodeURIComponent(stop.stop_id)}`, {
           method: 'PUT',
-          body: JSON.stringify({ sla_minutes: minutes }),
+          body: JSON.stringify(body),
         });
-        setStops((list) => list.map((s) => (s.stop_id === stop.stop_id ? { ...s, sla_minutes: minutes } : s)));
+        setStops((list) => list.map((s) => (s.stop_id === stop.stop_id ? { ...s, ...patch } : s)));
       }
-      showToast(`✅ Đã cập nhật thời gian ${changed.length} chặng.`);
+      showToast(`✅ Đã cập nhật thời gian ${changes.length} chặng.`);
       cancelTimingEdit();
     } catch (e: any) {
       showToast(`⚠️ ${e?.message || 'Cập nhật thời gian thất bại.'}`);
@@ -1097,7 +1181,8 @@ const FleetView: React.FC<{
         {stops.length > 0 && (
           <div style={{ marginBottom: '10px', padding: '8px 11px', backgroundColor: '#F0FDFA', border: '1px solid #99F6E4', borderRadius: '9px', fontSize: '11.5px', fontWeight: 700, color: '#0F766E', lineHeight: 1.7 }}>
             ⏱️ <b>Thời gian lộ trình:</b> mỗi điểm là thời gian di chuyển tối đa tính từ lúc check-in điểm trước
-            (điểm đầu tính từ giờ xuất phát). {canEditTiming
+            (điểm đầu tính từ giờ xuất phát). Riêng <b>điểm cuối</b> có 2 mốc: <b>từ trạm sạc về</b> khi ca có phiếu sạc
+            và <b>từ chi nhánh cuối về</b> khi ca không có phiếu sạc. {canEditTiming
               ? 'Kế toán / Giám đốc bấm “Sửa thời gian” để điều chỉnh linh hoạt theo thực tế.'
               : 'Liên hệ Kế toán / Giám đốc để điều chỉnh thời gian.'}
             {' '}Nếu đang có phiếu đổi lộ trình hiệu lực, thời gian trên phiếu được ưu tiên.
@@ -1121,22 +1206,60 @@ const FleetView: React.FC<{
                 </div>
               </div>
               {timingEdit ? (
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '10.5px', fontWeight: 700, color: MUTED, flexShrink: 0 }}
-                  title={idx === 0 ? 'Thời gian từ lúc xuất phát đến điểm này' : 'Thời gian di chuyển từ điểm trước đến điểm này'}>
-                  <span>{idx === 0 ? 'Từ xuất phát' : 'Từ điểm trước'}</span>
-                  <input
-                    type="number" min={0} step={1}
-                    value={timingDraft[s.stop_id] ?? String(minutesOf(s))}
-                    onChange={(e) => setTimingDraft((d) => ({ ...d, [s.stop_id]: e.target.value }))}
-                    style={{ width: '68px', padding: '4px 6px', fontSize: '12px', fontWeight: 800, textAlign: 'center', borderRadius: '7px', border: `1px solid #5EEAD4` }}
-                  />
-                  <span>phút</span>
-                </label>
+                isEndStop(s) ? (
+                  <div style={{ display: 'inline-flex', alignItems: 'flex-end', gap: '8px', flexWrap: 'wrap', flexShrink: 0 }}>
+                    <label style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '3px', fontSize: '10.5px', fontWeight: 700, color: MUTED }}
+                      title="Thời gian tối đa từ trạm sạc về điểm cuối khi ca có phiếu sạc">
+                      <span>🔌 Từ trạm sạc (phút)</span>
+                      <input
+                        type="number" min={0} step={1}
+                        value={timingDraftWithCharging[s.stop_id] ?? String(minutesWithChargingOf(s))}
+                        onChange={(e) => setTimingDraftWithCharging((d) => ({ ...d, [s.stop_id]: e.target.value }))}
+                        style={{ width: '76px', padding: '4px 6px', fontSize: '12px', fontWeight: 800, textAlign: 'center', borderRadius: '7px', border: `1px solid #5EEAD4` }}
+                      />
+                    </label>
+                    <label style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '3px', fontSize: '10.5px', fontWeight: 700, color: MUTED }}
+                      title="Thời gian tối đa từ chi nhánh cuối về điểm cuối khi ca không có phiếu sạc">
+                      <span>🏬 Từ chi nhánh (phút)</span>
+                      <input
+                        type="number" min={0} step={1}
+                        value={timingDraftWithoutCharging[s.stop_id] ?? String(minutesWithoutChargingOf(s))}
+                        onChange={(e) => setTimingDraftWithoutCharging((d) => ({ ...d, [s.stop_id]: e.target.value }))}
+                        style={{ width: '76px', padding: '4px 6px', fontSize: '12px', fontWeight: 800, textAlign: 'center', borderRadius: '7px', border: `1px solid #5EEAD4` }}
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '10.5px', fontWeight: 700, color: MUTED, flexShrink: 0 }}
+                    title={idx === 0 ? 'Thời gian từ lúc xuất phát đến điểm này' : 'Thời gian di chuyển từ điểm trước đến điểm này'}>
+                    <span>{idx === 0 ? 'Từ xuất phát' : 'Từ điểm trước'}</span>
+                    <input
+                      type="number" min={0} step={1}
+                      value={timingDraft[s.stop_id] ?? String(minutesOf(s))}
+                      onChange={(e) => setTimingDraft((d) => ({ ...d, [s.stop_id]: e.target.value }))}
+                      style={{ width: '68px', padding: '4px 6px', fontSize: '12px', fontWeight: 800, textAlign: 'center', borderRadius: '7px', border: `1px solid #5EEAD4` }}
+                    />
+                    <span>phút</span>
+                  </label>
+                )
               ) : (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 9px', borderRadius: '999px', backgroundColor: '#F0FDFA', color: '#0F766E', fontSize: '11px', fontWeight: 800, whiteSpace: 'nowrap', flexShrink: 0 }}
-                  title={idx === 0 ? 'Thời gian từ lúc xuất phát đến điểm này' : 'Thời gian di chuyển từ điểm trước đến điểm này'}>
-                  <Gauge size={12} /> {minutesOf(s)} phút
-                </span>
+                isEndStop(s) ? (
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end', flexShrink: 0 }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 9px', borderRadius: '999px', backgroundColor: '#F5F3FF', color: '#6D28D9', fontSize: '11px', fontWeight: 800, whiteSpace: 'nowrap' }}
+                      title="Thời gian tối đa từ trạm sạc về điểm cuối khi ca có phiếu sạc">
+                      🔌 Trạm sạc: {minutesWithChargingOf(s)} phút
+                    </span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 9px', borderRadius: '999px', backgroundColor: '#F0FDFA', color: '#0F766E', fontSize: '11px', fontWeight: 800, whiteSpace: 'nowrap' }}
+                      title="Thời gian tối đa từ chi nhánh cuối về điểm cuối khi ca không có phiếu sạc">
+                      <Gauge size={12} /> Từ chi nhánh: {minutesWithoutChargingOf(s)} phút
+                    </span>
+                  </div>
+                ) : (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 9px', borderRadius: '999px', backgroundColor: '#F0FDFA', color: '#0F766E', fontSize: '11px', fontWeight: 800, whiteSpace: 'nowrap', flexShrink: 0 }}
+                    title={idx === 0 ? 'Thời gian từ lúc xuất phát đến điểm này' : 'Thời gian di chuyển từ điểm trước đến điểm này'}>
+                    <Gauge size={12} /> {minutesOf(s)} phút
+                  </span>
+                )
               )}
               {s.stop_type === 'START' || s.stop_type === 'END'
                 ? pill('#0369A1', '#F0F9FF', s.stop_type === 'START' ? 'XUẤT PHÁT' : 'KẾT THÚC')
@@ -1152,10 +1275,21 @@ const FleetView: React.FC<{
         {stops.length > 0 && (
           <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '10px 12px', backgroundColor: timingEdit ? '#F0FDFA' : BG, border: `1px solid ${timingEdit ? '#5EEAD4' : BORDER}`, borderRadius: '10px' }}>
             <span style={{ fontSize: '12.5px', fontWeight: 800, color: 'var(--text)' }}>
-              ⏱️ Tổng thời gian dự kiến cả lộ trình: <span style={{ color: '#0F766E' }}>{totalTiming} phút</span>
+              ⏱️ Tổng thời gian dự kiến cả lộ trình:{' '}
+              {hasEndStop ? (
+                <>
+                  <span style={{ color: '#0F766E' }}>không sạc {totalTimingWithoutCharging} phút</span>
+                  {' • '}
+                  <span style={{ color: '#6D28D9' }}>có sạc {totalTimingWithCharging} phút</span>
+                </>
+              ) : (
+                <span style={{ color: '#0F766E' }}>{totalTimingWithoutCharging} phút</span>
+              )}
             </span>
             <span style={{ fontSize: '11px', color: MUTED, fontWeight: 600 }}>
-              {timingEdit ? 'Thời gian mỗi chặng tính từ lúc check-in điểm trước.' : 'Thời gian được áp dụng cho SLA và cảnh báo trễ trên Live Map + app tài xế.'}
+              {timingEdit
+                ? 'Thời gian mỗi chặng tính từ lúc check-in điểm trước; điểm cuối tính từ trạm sạc hoặc chi nhánh cuối.'
+                : 'Thời gian được áp dụng cho SLA và cảnh báo trễ trên Live Map + app tài xế.'}
             </span>
             {timingEdit && (
               <div style={{ marginLeft: 'auto', display: 'flex', gap: '7px', flexWrap: 'wrap' }}>
@@ -2332,6 +2466,12 @@ const RouteChangesView: React.FC<{
     longitude: Number(s.longitude) || 0,
     geofence_radius_m: Number(s.geofence_radius_m) || 100,
     sla_minutes: Number(s.sla_minutes) || 0,
+    sla_minutes_with_charging: s.sla_minutes_with_charging === undefined || s.sla_minutes_with_charging === null
+      ? undefined
+      : Number(s.sla_minutes_with_charging),
+    sla_minutes_without_charging: s.sla_minutes_without_charging === undefined || s.sla_minutes_without_charging === null
+      ? undefined
+      : Number(s.sla_minutes_without_charging),
     stop_type: s.stop_type || 'DELIVERY',
     is_mandatory: s.is_mandatory !== false,
     notes: String(s.notes || ''),
@@ -2388,6 +2528,7 @@ const RouteChangesView: React.FC<{
       {
         stop_id: '', stop_order: list.length + 1, name: '', branch_id: '', address: '',
         latitude: 0, longitude: 0, geofence_radius_m: 100, sla_minutes: 15,
+        sla_minutes_with_charging: undefined, sla_minutes_without_charging: undefined,
         stop_type: 'DELIVERY', is_mandatory: true, notes: '',
       },
     ]);
@@ -2411,6 +2552,11 @@ const RouteChangesView: React.FC<{
       longitude: Number(s.longitude) || 0,
       geofence_radius_m: Number(s.geofence_radius_m) || 100,
       sla_minutes: Number(s.sla_minutes) || 0,
+      // Điểm cuối: gửi kèm 2 mốc (bỏ trống → backend dùng sla_minutes).
+      ...(s.stop_type === 'END' ? {
+        sla_minutes_with_charging: Number(s.sla_minutes_with_charging ?? s.sla_minutes) || 0,
+        sla_minutes_without_charging: Number(s.sla_minutes_without_charging ?? s.sla_minutes) || 0,
+      } : {}),
       stop_type: s.stop_type,
       is_mandatory: s.is_mandatory !== false,
       notes: String(s.notes || '').trim() || undefined,
@@ -2595,11 +2741,28 @@ const RouteChangesView: React.FC<{
                     <input type="number" step="0.000001" value={s.longitude} onChange={(e) => patchStop(idx, { longitude: Number(e.target.value) })}
                       style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12px', borderRadius: '7px', border: `1px solid ${BORDER}`, width: '100%' }} />
                   </label>
-                  <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, width: '86px' }} title="Thời gian di chuyển tối đa từ điểm trước đến điểm này">
-                    Từ điểm trước (phút)
-                    <input type="number" min={0} value={s.sla_minutes} onChange={(e) => patchStop(idx, { sla_minutes: Number(e.target.value) })}
-                      style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12px', borderRadius: '7px', border: `1px solid ${BORDER}`, width: '100%' }} />
-                  </label>
+                  {s.stop_type === 'END' ? (
+                    <>
+                      <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, width: '112px' }} title="Thời gian tối đa từ trạm sạc về điểm cuối khi ca có phiếu sạc">
+                        Từ trạm sạc (phút)
+                        <input type="number" min={0} value={s.sla_minutes_with_charging ?? s.sla_minutes}
+                          onChange={(e) => patchStop(idx, { sla_minutes_with_charging: Number(e.target.value) })}
+                          style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12px', borderRadius: '7px', border: `1px solid ${BORDER}`, width: '100%' }} />
+                      </label>
+                      <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, width: '112px' }} title="Thời gian tối đa từ chi nhánh cuối về điểm cuối khi ca không có phiếu sạc">
+                        Từ chi nhánh (phút)
+                        <input type="number" min={0} value={s.sla_minutes_without_charging ?? s.sla_minutes}
+                          onChange={(e) => patchStop(idx, { sla_minutes_without_charging: Number(e.target.value) })}
+                          style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12px', borderRadius: '7px', border: `1px solid ${BORDER}`, width: '100%' }} />
+                      </label>
+                    </>
+                  ) : (
+                    <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, width: '86px' }} title="Thời gian di chuyển tối đa từ điểm trước đến điểm này">
+                      Từ điểm trước (phút)
+                      <input type="number" min={0} value={s.sla_minutes} onChange={(e) => patchStop(idx, { sla_minutes: Number(e.target.value) })}
+                        style={{ display: 'block', marginTop: '2px', padding: '6px 8px', fontSize: '12px', borderRadius: '7px', border: `1px solid ${BORDER}`, width: '100%' }} />
+                    </label>
+                  )}
                   <label style={{ fontSize: '10.5px', fontWeight: 700, color: MUTED, width: '86px' }}>
                     Geofence (m)
                     <input type="number" min={1} value={s.geofence_radius_m} onChange={(e) => patchStop(idx, { geofence_radius_m: Number(e.target.value) })}
@@ -2682,7 +2845,10 @@ const RouteChangesView: React.FC<{
                         <span style={{ fontWeight: 900, color: '#7C3AED', width: '18px' }}>{s.stop_order}</span>
                         <span style={{ fontWeight: 800, color: 'var(--text)', flex: 1 }}>{s.name}</span>
                         <span style={{ fontSize: '10.5px', color: MUTED, fontWeight: 700 }}>
-                          {s.stop_type}{s.is_mandatory === false ? ' • tùy chọn' : ''} • ⏱ {s.sla_minutes} phút từ điểm trước
+                          {s.stop_type}{s.is_mandatory === false ? ' • tùy chọn' : ''}
+                          {s.stop_type === 'END'
+                            ? ` • 🔌 ${s.sla_minutes_with_charging ?? s.sla_minutes} phút từ trạm sạc • 🏬 ${s.sla_minutes_without_charging ?? s.sla_minutes} phút từ chi nhánh`
+                            : ` • ⏱ ${s.sla_minutes} phút từ điểm trước`}
                         </span>
                       </div>
                     ))}
