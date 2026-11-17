@@ -7,6 +7,7 @@ import {
   Gavel,
   Loader2,
   Plus,
+  RotateCcw,
   Search,
   ShieldCheck,
   Trash2,
@@ -90,6 +91,14 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
   const selectedEmployee = employees.find(employee => employee.employee_id === selectedEmployeeId) || null;
   const total = items.reduce((sum, item) => sum + (Number(item.fine_amount) || 0), 0);
 
+  /** Mức phạt gốc theo quy chế, dùng để hiển thị và khôi phục khi người lập phiếu sửa tiền. */
+  const regulationById = useMemo(
+    () => new Map(regulations.map(regulation => [regulation.regulation_id, regulation])),
+    [regulations],
+  );
+
+  const defaultFineOf = (regulationId: string) => regulationById.get(regulationId)?.fine_amount ?? 0;
+
   const pickerCategories = useMemo(
     () => Array.from(new Set(regulations.map(item => item.category).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'vi')),
     [regulations],
@@ -124,6 +133,15 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
     setItems(current =>
       current.map(item =>
         item.regulation_id === regulationId ? { ...item, fine_amount: Number(digits || 0) } : item,
+      ),
+    );
+  };
+
+  const resetFine = (regulationId: string) => {
+    const fallback = defaultFineOf(regulationId);
+    setItems(current =>
+      current.map(item =>
+        item.regulation_id === regulationId ? { ...item, fine_amount: fallback } : item,
       ),
     );
   };
@@ -323,36 +341,62 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
                   </button>
                 ) : (
                   <div className="item-list">
-                    {items.map((item, index) => (
-                      <div key={item.regulation_id} className="item-row">
-                        <span className="item-index">{String(index + 1).padStart(2, '0')}</span>
-                        <div className="item-copy">
-                          <strong>{item.name}</strong>
-                          <span>
-                            {item.category}
-                            {item.fine_note ? ` · ${item.fine_note}` : ''}
-                          </span>
+                    {items.map((item, index) => {
+                      const defaultFine = defaultFineOf(item.regulation_id);
+                      const overridden = item.fine_amount !== defaultFine;
+                      return (
+                        <div key={item.regulation_id} className="item-row">
+                          <span className="item-index">{String(index + 1).padStart(2, '0')}</span>
+                          <div className="item-copy">
+                            <strong>{item.name}</strong>
+                            <span>
+                              {item.category}
+                              {item.fine_note ? ` · ${item.fine_note}` : ''}
+                            </span>
+                            {defaultFine > 0 ? (
+                              <span className="item-default">
+                                Mức phạt mặc định: {money(defaultFine)}
+                                {overridden ? <em> · Đã sửa</em> : null}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="item-amount">
+                            <label className="money-input">
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                aria-label={`Số tiền lỗi ${item.name}`}
+                                title="Sửa số tiền lỗi cho phiếu này"
+                                value={item.fine_amount ? item.fine_amount.toLocaleString('vi-VN') : ''}
+                                placeholder={item.fine_note ? 'Nhập số tiền' : '0'}
+                                onFocus={event => event.currentTarget.select()}
+                                onChange={event => updateFine(item.regulation_id, event.target.value)}
+                              />
+                              <span>đ</span>
+                            </label>
+                            {overridden ? (
+                              <button
+                                type="button"
+                                className="icon-button icon-button-sm"
+                                onClick={() => resetFine(item.regulation_id)}
+                                title={`Khôi phục mức phạt mặc định (${money(defaultFine)})`}
+                                aria-label={`Khôi phục mức phạt mặc định cho ${item.name}`}
+                              >
+                                <RotateCcw size={14} />
+                              </button>
+                            ) : null}
+                          </div>
+                          <button
+                            type="button"
+                            className="icon-button icon-button-danger"
+                            onClick={() => removeItem(item.regulation_id)}
+                            aria-label={`Xóa ${item.name}`}
+                          >
+                            <Trash2 size={16} />
+                          </button>
                         </div>
-                        <label className="money-input">
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            value={item.fine_amount ? item.fine_amount.toLocaleString('vi-VN') : ''}
-                            placeholder={item.fine_note ? 'Nhập số tiền' : '0'}
-                            onChange={event => updateFine(item.regulation_id, event.target.value)}
-                          />
-                          <span>đ</span>
-                        </label>
-                        <button
-                          type="button"
-                          className="icon-button icon-button-danger"
-                          onClick={() => removeItem(item.regulation_id)}
-                          aria-label={`Xóa ${item.name}`}
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 
@@ -404,7 +448,7 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         title="Chọn lỗi vi phạm"
-        subtitle="Có thể chọn nhiều lỗi cho cùng một phiếu. Mức phạt sẽ được điền sẵn theo quy chế."
+        subtitle="Có thể chọn nhiều lỗi cho cùng một phiếu. Mức phạt được điền sẵn theo quy chế và có thể sửa trực tiếp ngay tại đây."
         size="lg"
         footer={
           <>
@@ -443,25 +487,67 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
 
         <div className="picker-list">
           {pickerResults.map(regulation => {
-            const added = items.some(item => item.regulation_id === regulation.regulation_id);
+            const addedItem = items.find(item => item.regulation_id === regulation.regulation_id);
+            const added = !!addedItem;
             return (
-              <button
-                key={regulation.regulation_id}
-                type="button"
-                className={`picker-row ${added ? 'is-added' : ''}`}
-                onClick={() => addRegulation(regulation)}
-              >
-                <span className="regulation-code">{regulation.code}</span>
-                <span className="picker-copy">
-                  <strong>{regulation.name}</strong>
-                  <span>
-                    {regulation.category} · {regulation.fine_note || money(regulation.fine_amount)}
+              <div key={regulation.regulation_id} className={`picker-row ${added ? 'is-added' : ''}`}>
+                <button
+                  type="button"
+                  className="picker-select"
+                  onClick={() => addRegulation(regulation)}
+                  disabled={added}
+                  aria-pressed={added}
+                >
+                  <span className="regulation-code">{regulation.code}</span>
+                  <span className="picker-copy">
+                    <strong>{regulation.name}</strong>
+                    <span>
+                      {regulation.category} · {regulation.fine_note || money(regulation.fine_amount)}
+                    </span>
                   </span>
-                </span>
-                <span className={`picker-add ${added ? 'is-added' : ''}`}>
-                  {added ? <Check size={16} /> : <Plus size={16} />}
-                </span>
-              </button>
+                  <span className={`picker-add ${added ? 'is-added' : ''}`}>
+                    {added ? <Check size={16} /> : <Plus size={16} />}
+                  </span>
+                </button>
+
+                {added && addedItem ? (
+                  <div className="picker-amount">
+                    <label className="money-input money-input-picker">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        aria-label={`Số tiền lỗi ${regulation.name}`}
+                        title="Sửa số tiền lỗi thay cho mức phạt mặc định"
+                        value={addedItem.fine_amount ? addedItem.fine_amount.toLocaleString('vi-VN') : ''}
+                        placeholder={regulation.fine_note ? 'Nhập số tiền' : '0'}
+                        onFocus={event => event.currentTarget.select()}
+                        onChange={event => updateFine(regulation.regulation_id, event.target.value)}
+                      />
+                      <span>đ</span>
+                    </label>
+                    {addedItem.fine_amount !== regulation.fine_amount ? (
+                      <button
+                        type="button"
+                        className="icon-button icon-button-sm"
+                        onClick={() => resetFine(regulation.regulation_id)}
+                        title={`Khôi phục mức phạt mặc định (${money(regulation.fine_amount)})`}
+                        aria-label={`Khôi phục mức phạt mặc định cho ${regulation.name}`}
+                      >
+                        <RotateCcw size={14} />
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="icon-button icon-button-sm icon-button-danger"
+                      onClick={() => removeItem(regulation.regulation_id)}
+                      title="Bỏ lỗi khỏi phiếu"
+                      aria-label={`Bỏ ${regulation.name} khỏi phiếu`}
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             );
           })}
           {pickerResults.length === 0 ? (

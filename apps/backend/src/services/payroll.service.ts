@@ -1,6 +1,9 @@
 import {
   BankQrConfig,
   ERROR_CODES,
+  PAYROLL_BATCHES,
+  PayrollBatchId,
+  PayrollBatchScope,
   PayrollRun,
   PayrollRunStatus,
   PayslipItem,
@@ -8,6 +11,12 @@ import {
   SHIFT_TEMPLATES,
   STANDARD_HOURLY_RATES,
   DEFAULT_PAYROLL_FORMULA,
+  batchOfGroup,
+  batchOfRun,
+  employeeInBatch,
+  normalizePayrollBatch,
+  payrollBatchLabel,
+  payrollBatchOfRunId,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { SalaryConfigService } from './salary-config.service.js';
@@ -654,9 +663,72 @@ export class PayrollService {
       .filter((r: any) => String(r?.period) === period)
       .sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
     const slipRunIds = new Set(slips.map(s => String(s?.run_id || '')).filter(Boolean));
-    const run: any = periodRuns.find((r: any) => slipRunIds.has(String(r.run_id)))
+    // --- TIẾN ĐỘ 2 ĐỢT TÍNH LƯƠNG (Cửa hàng / Tổng hợp) ---
+    // Đợt chỉ được coi là BẮT BUỘC khi kỳ có nhân viên thuộc khối đó (có dòng
+    // chấm công). Đợt đã tính = có run/phiếu của đợt đó. Run cũ tính gộp (không
+    // có batch_scope) được coi là phủ toàn bộ đợt bắt buộc — không phá dữ liệu cũ.
+    const tsRows: any[] = ((timesheet as any)?.rows || []) as any[];
+    const requiredBatches = PAYROLL_BATCHES
+      .filter(b => tsRows.some((r: any) => employeeInBatch(r?.group, b.id)))
+      .map(b => b.id);
+    const coveredBatches = new Set<string>();
+    const batchRunOf = new Map<string, any>();
+    for (const r of periodRuns) {
+      if (slipRunIds.size > 0 && !slipRunIds.has(String(r?.run_id))) continue;
+      const bid = String(batchOfRun(r) || 'ALL');
+      if (bid === 'ALL') {
+        for (const rb of requiredBatches) {
+          coveredBatches.add(rb);
+          if (!batchRunOf.has(rb)) batchRunOf.set(rb, r);
+        }
+      } else if (requiredBatches.includes(bid as any)) {
+        coveredBatches.add(bid);
+        if (!batchRunOf.has(bid)) batchRunOf.set(bid, r);
+      }
+    }
+    const missingBatches = requiredBatches.filter(b => !coveredBatches.has(b));
+    const allBatchesCalculated = requiredBatches.length === 0 || missingBatches.length === 0;
+    // Số NV + tiền từng đợt để tab Kỳ lương hiển thị/điều khiển riêng từng đợt.
+    const batchEmployeeIds = new Map<string, Set<string>>();
+    for (const b of PAYROLL_BATCHES) batchEmployeeIds.set(b.id, new Set<string>());
+    for (const r of tsRows) {
+      const empId = String((r as any)?.employeeId || '');
+      if (!empId) continue;
+      for (const b of PAYROLL_BATCHES) {
+        if (employeeInBatch((r as any)?.group, b.id)) batchEmployeeIds.get(b.id)!.add(empId);
+      }
+    }
+    const slipBatchKeyOf = (s: any) => String(
+      batchOfRun({ batch_scope: (s as any)?.batch_scope, run_id: (s as any)?.run_id }) || 'ALL'
+    );
+    const batchProgress = PAYROLL_BATCHES.map(b => {
+      const ids = batchEmployeeIds.get(b.id) || new Set<string>();
+      const batchSlips = slips.filter((s: any) => {
+        const sb = slipBatchKeyOf(s);
+        // Run cũ tính gộp (ALL) không ghi đợt trên phiếu — quy về đợt theo khối NV.
+        if (sb === 'ALL') return ids.size === 0 || ids.has(String(s?.employee_id || ''));
+        return sb === b.id;
+      });
+      const batchRun = batchRunOf.get(b.id) || null;
+      return {
+        id: b.id,
+        label: b.label,
+        shortLabel: b.shortLabel,
+        color: b.color,
+        bg: b.bg,
+        required: requiredBatches.includes(b.id),
+        calculated: coveredBatches.has(b.id),
+        status: String(batchRun?.status || ''),
+        run_id: batchRun ? String(batchRun.run_id || '') : null,
+        employeeCount: ids.size,
+        slipCount: batchSlips.length,
+        totalHours: batchSlips.reduce((sum: number, s: any) => sum + (Number(s?.standard_hours) || 0), 0),
+        totalAmount: batchSlips.reduce((sum: number, s: any) => sum + (Number(s?.net_pay ?? s?.thuc_lanh) || 0), 0),
+      };
+    });
+    const run: any = (periodData as any)?.run
+      || periodRuns.find((r: any) => slipRunIds.has(String(r.run_id)))
       || periodRuns[0]
-      || (periodData as any)?.run
       || null;
     const runStatus = String(run?.status || '').toUpperCase();
 
@@ -682,7 +754,14 @@ export class PayrollService {
 
     const hasTimesheet = totalShifts > 0;
     const hasBcc = hasTimesheet;
+    // "Đã tính lương" = đã có ít nhất 1 phiếu. Tiến độ TỪNG ĐỢT được báo riêng
+    // (coveredBatches/requiredBatches) để Kế toán biết còn đợt nào chưa tính mà
+    // vẫn đối soát/phê duyệt được đợt đã tính trước (2 đợt độc lập).
     const calculated = slipCount > 0;
+    const batchProgressText = requiredBatches.length > 0
+      ? `${requiredBatches.length - missingBatches.length}/${requiredBatches.length} đợt`
+      : '';
+    const missingBatchLabels = missingBatches.map(b => payrollBatchLabel(b)).join(', ');
     // Kỳ lương được coi là "đã mở" khi run đã duyệt/phát hành/chi trả HOẶC đã
     // có ít nhất 1 phiếu được phát hành (Kế toán có thể phát hành từng phiếu
     // trước khi đổi trạng thái run — trước đây bước 6 bị khóa vĩnh viễn).
@@ -726,9 +805,17 @@ export class PayrollService {
       },
       {
         id: 'fin-calculate', order: 3, title: 'Tính lương (công thức & nhập tay)', done: calculated,
-        stat: calculated ? `${slipCount} phiếu · ${slipHours.toLocaleString('vi-VN')} giờ · ${Math.round(slipNet).toLocaleString('vi-VN')} đ` : 'Chưa tính',
-        reason: calculated ? '' : (hasTimesheet ? 'Chưa có bảng lương — bấm "Tính lương" để tạo phiếu cho kỳ.' : 'Chưa có dữ liệu chấm công để tính lương.'),
+        dataReady: hasTimesheet,
+        stat: calculated
+          ? `${batchProgressText ? `${batchProgressText} · ` : ''}${slipCount} phiếu · ${slipHours.toLocaleString('vi-VN')} giờ · ${Math.round(slipNet).toLocaleString('vi-VN')} đ`
+          : (hasTimesheet && requiredBatches.length ? `0/${requiredBatches.length} đợt · Chưa tính` : 'Chưa tính'),
+        reason: !calculated
+          ? (hasTimesheet ? 'Chưa có bảng lương — bấm "Tính lương" để tạo phiếu cho kỳ.' : 'Chưa có dữ liệu chấm công để tính lương.')
+          : (missingBatches.length ? `Còn ${missingBatchLabels} chưa tính lương — tính nốt để đủ 2 đợt trước khi phát hành/chuyển khoản.` : ''),
         completedAt: calculated ? String(run?.created_at || '') : '',
+        batches: batchProgress,
+        missingBatches,
+        allBatchesCalculated,
       },
       {
         id: 'fin-payroll-sheet', order: 4, title: 'Payment — Bảng lương tháng', done: calculated && !!run,
@@ -738,9 +825,12 @@ export class PayrollService {
       },
       {
         id: 'fin-payroll-periods', order: 5, title: 'Kỳ lương (DRAFT → PAID)', done: periodOpen,
-        stat: run ? `Trạng thái: ${runStatus || 'DRAFT'} · ${publishedCount}/${slipCount || 0} phiếu đã phát hành` : 'Chưa có kỳ lương',
+        stat: run
+          ? `${batchProgressText ? `${batchProgressText} · ` : ''}Trạng thái: ${runStatus || 'DRAFT'} · ${publishedCount}/${slipCount || 0} phiếu đã phát hành`
+          : 'Chưa có kỳ lương',
         reason: periodOpen ? '' : (run ? 'Kỳ lương đang DRAFT — cần Duyệt/Phát hành phiếu trước khi ký.' : 'Chưa có kỳ lương — hãy tính lương trước.'),
         completedAt: periodOpen ? (maxTime(lastSlipPublishedAt, run?.approved_at, run?.published_at, run?.paid_at) || String(run?.updated_at || '')) : '',
+        batches: batchProgress,
       },
       {
         id: 'fin-payslips', order: 6, title: 'Phiếu lương (KT ký → GĐ duyệt → NV ký / khiếu nại)', done: allSigned,
@@ -795,6 +885,12 @@ export class PayrollService {
     });
     return {
       period, runId: run?.run_id || null, steps, generatedAt: new Date().toISOString(),
+      // Tiến độ 2 đợt tính lương (Cửa hàng / Tổng hợp) — UI dùng để hiện thẻ đợt,
+      // biết đợt nào đã tính/đang ở trạng thái nào, đợt nào còn thiếu.
+      batches: batchProgress,
+      requiredBatches,
+      missingBatches,
+      allBatchesCalculated,
       periodMeta: {
         currentPeriod: vnCurrent,
         isCurrentMonth,
@@ -1181,13 +1277,30 @@ export class PayrollService {
   }
 
   /**
-   * Tính lương theo công thức Excel cho toàn bộ NV (đã bỏ hoàn toàn phụ cấp OT):
+   * Tính lương theo công thức Excel cho 1 ĐỢT của kỳ (đã bỏ hoàn toàn phụ cấp OT):
    * TỔNG CỘNG = LCB(tay) + Lương giờ + OT thêm(tay) + Bonus
    * TỔNG LƯƠNG = TỔNG CỘNG − KPI(tay) − phạt trễ/vắng
    * THỰC LÃNH = TỔNG LƯƠNG − Ứng − Đồng phục
+   *
+   * `opts.batch`:
+   *  - 'STORE'    → chỉ nhân viên khối Cửa hàng (đợt 1).
+   *  - 'TONG_HOP' → chỉ Văn phòng + Xưởng + Sales (đợt 2).
+   *  - 'ALL'/bỏ trống → toàn bộ NV (tương thích lời gọi cũ).
+   * Mỗi đợt tạo 1 run riêng; đợt nào tính trước cũng được, tính lại 1 đợt
+   * không đụng số liệu đợt còn lại.
    */
-  async calculateFormulaPayroll(period: string, branchScope = '*', creatorId: string) {
-    const runId = `PAY_${period.replace('-', '_')}_${Date.now()}`;
+  async calculateFormulaPayroll(
+    period: string,
+    branchScope = '*',
+    creatorId: string,
+    opts?: { batch?: PayrollBatchScope | string | null },
+  ) {
+    const requestedBatch = String(opts?.batch || '').trim().toUpperCase();
+    const batch: PayrollBatchScope = requestedBatch === 'ALL' || !requestedBatch
+      ? 'ALL'
+      : (normalizePayrollBatch(requestedBatch) || 'ALL');
+    const batchTag = batch === 'ALL' ? 'ALL' : batch;
+    const runId = `PAY_${period.replace('-', '_')}_${batchTag}_${Date.now()}`;
     return singleWriterQueue.enqueue({
       entityType: 'KY_LUONG',
       entityId: runId,
@@ -1196,7 +1309,14 @@ export class PayrollService {
         const formula = await this.getFormula(period);
         const inputsArr = await this.repo.getPayrollInputs(period).catch(() => []);
         const inputs = new Map((inputsArr || []).map((x: any) => [x.employee_id, x]));
-        const employees = await this.repo.listEmployees({ branch: branchScope });
+        const allEmployees = await this.repo.listEmployees({ branch: branchScope });
+        // Lọc theo ĐỢT: chỉ những NV thuộc khối của đợt này được tính.
+        const employees = batch === 'ALL'
+          ? allEmployees
+          : (allEmployees || []).filter((emp: any) => employeeInBatch((emp as any)?.group, batch));
+        if (batch !== 'ALL' && employees.length === 0) {
+          throw new Error(`EMPTY_BATCH: không có nhân viên nào thuộc ${batch === 'STORE' ? 'Khối Cửa hàng' : 'Khối Tổng hợp (Văn phòng + Xưởng + Sales)'} — kiểm tra lại khối nhân sự trước khi tính!`);
+        }
         const salaryConfigs: any = await this.salaryConfig?.getAll().catch(() => ({})) || {};
         const { fromDate, toDate } = monthRange(period);
 
@@ -1328,6 +1448,7 @@ export class PayrollService {
             employee_code: emp.employee_code,
             full_name: emp.full_name,
             period,
+            batch_scope: batch,
             total_shifts: publishedShifts.length,
             absent_shifts: absentShifts,
             standard_hours: empHours,
@@ -1368,6 +1489,7 @@ export class PayrollService {
           run_id: runId,
           period,
           branch_scope: branchScope,
+          batch_scope: batch,
           status: 'DRAFT',
           total_employees: employees.length,
           total_hours: totalHours,
@@ -1375,7 +1497,7 @@ export class PayrollService {
           created_by: creatorId,
         };
         const created = await this.repo.createPayrollRun(runRecord, payslipItems);
-        this.notifySlipsChanged('calculate-draft', { runId, period });
+        this.notifySlipsChanged('calculate-draft', { runId, period, batch });
         // FIX timeout (/payroll/:period/calculate-formula mất kết nối): Sheets là export một
         // chiều chậm (Google API) — không await trong singleWriterQueue để không khóa hàng đợi
         // và không vượt timeout 60s của client/Nginx. Đẩy Sheets nền sau 2s.
@@ -2262,25 +2384,83 @@ export class PayrollService {
     return out;
   }
 
+  /**
+   * Gộp nhiều run của CÙNG 1 kỳ (2 đợt tính lương) thành 1 "kỳ hiển thị":
+   *  - Tiền/NV/giờ = tổng của toàn bộ phiếu trong kỳ.
+   *  - Trạng thái = trạng thái CHẬM NHẤT trong các đợt (đợt nào chưa duyệt thì
+   *    kỳ vẫn chưa xong) — tránh việc đợt 1 đã duyệt mà đợt 2 bị bỏ qua.
+   * `batch_scope = 'ALL'` để UI biết đây là kỳ gộp; chi tiết từng đợt nằm ở
+   * thuộc tính `batches` để tab Kỳ lương hiển thị/điều khiển riêng từng đợt.
+   */
+  private combinePeriodRuns(runs: any[], slips: any[]): any {
+    const ORDER: Record<string, number> = { DRAFT: 0, RECONCILED: 1, APPROVED: 2, PUBLISHED: 3, PAID: 4, CONFIRMED: 3 };
+    const sorted = [...(runs || [])].sort((a: any, b: any) =>
+      String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
+    if (sorted.length === 0) return null;
+    if (sorted.length === 1) return sorted[0];
+    // Mỗi đợt chỉ giữ run MỚI NHẤT (tính lại 1 đợt tạo run mới).
+    const byBatch = new Map<string, any>();
+    for (const r of sorted) {
+      const b = String(batchOfRun(r) || 'ALL');
+      if (!byBatch.has(b)) byBatch.set(b, r);
+    }
+    const picked = [...byBatch.values()];
+    const rankOf = (r: any) => ORDER[String(r?.status || 'DRAFT').toUpperCase()] ?? 0;
+    const worst = picked.reduce((a: any, b: any) => (rankOf(b) < rankOf(a) ? b : a), picked[0]);
+    const totalAmount = (slips || []).reduce((s: number, x: any) => s + (Number(x?.net_pay ?? x?.thuc_lanh) || 0), 0);
+    const totalHours = (slips || []).reduce((s: number, x: any) => s + (Number(x?.standard_hours) || 0), 0);
+    return {
+      ...worst,
+      // run_id/created_by của đợt chậm nhất (hành động cấp kỳ phải xử lý đợt này trước).
+      run_id: String(worst?.run_id || sorted[0].run_id),
+      batch_scope: 'ALL',
+      status: worst?.status || 'DRAFT',
+      total_employees: (slips || []).length,
+      total_hours: totalHours,
+      total_amount: totalAmount,
+      created_at: sorted[sorted.length - 1]?.created_at || worst?.created_at || '',
+      updated_at: sorted[0]?.updated_at || worst?.updated_at || '',
+      batches: picked.map((r: any) => ({
+        run_id: String(r?.run_id || ''),
+        batch_scope: String(batchOfRun(r) || 'ALL'),
+        status: String(r?.status || 'DRAFT'),
+        total_employees: Number(r?.total_employees) || 0,
+        total_hours: Number(r?.total_hours) || 0,
+        total_amount: Number(r?.total_amount) || 0,
+        created_at: String(r?.created_at || ''),
+      })),
+    };
+  }
+
   async getPeriodSlips(period: string) {
     const runs = await this.repo.listPayrollRuns().catch(() => []);
-    const matching = (runs || []).filter(r => r.period === period);
-    let run: any = null;
+    const matching = (runs || [])
+      .filter(r => r.period === period)
+      .sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
+    // Gộp phiếu của MỌI đợt trong kỳ (đợt Cửa hàng + đợt Tổng hợp). Trước đây
+    // chỉ lấy run mới nhất nên tính đợt 2 xong là mất phiếu đợt 1 khỏi màn hình.
     let slips: any[] = [];
-    if (matching.length > 0) {
-      // Lấy kỳ MỚI NHẤT theo created_at (đúng mẫu summarizeOfficialMonth) —
-      // lấy phần tử cuối mảng có thể trúng kỳ cũ sau pull Sheets.
-      run = matching.reduce((a: any, b: any) =>
-        String(b.created_at || '') >= String(a.created_at || '') ? b : a);
-      slips = await this.repo.getPayslipsByRunId(run.run_id).catch(() => []);
+    const runIds = new Set<string>();
+    for (const r of matching) {
+      const rid = String((r as any)?.run_id || '');
+      if (!rid) continue;
+      runIds.add(rid);
+      const ss = await this.repo.getPayslipsByRunId(rid).catch(() => []);
+      slips.push(...(ss || []));
     }
-    if (slips.length === 0) {
+    // Phiếu mồ côi (run không còn trong tab KY_LUONG sau restart) vẫn phải hiện.
+    if (slips.length === 0 || matching.length === 0) {
       const allSlips = await this.collectAllSlipsInternal();
-      slips = allSlips.filter(s => s.period === period);
+      for (const s of allSlips) {
+        if (s.period !== period) continue;
+        if (runIds.has(String(s.run_id || ''))) continue;
+        slips.push(s);
+      }
     }
     // Tab KY_LUONG có thể rỗng sau khi restart (chỉ còn PHIEU_LUONG): nhiều lần
     // tính lại tạo nhiều run, mỗi run 1 bộ phiếu. Chỉ trả phiếu mới nhất/NV/kỳ.
     slips = await this.attachInputNotes(this.latestSlipsPerPeriod(slips));
+    const run = matching.length > 0 ? this.combinePeriodRuns(matching, slips) : null;
     return { run, slips };
   }
 

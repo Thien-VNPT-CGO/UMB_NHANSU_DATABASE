@@ -15,7 +15,7 @@ export type PayMode = 'MONTHLY' | 'HOURLY';
 export type PayModeGroup = 'STORE' | 'XUONG' | 'VAN_PHONG' | 'SALE' | string;
 
 /** Chuẩn hóa tên khối: bỏ dấu tiếng Việt, khoảng trắng/gạch nối -> VAN_PHONG. */
-function groupKey(group: unknown): string {
+export function payGroupKey(group: unknown): string {
   return String(group ?? '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -28,14 +28,14 @@ function groupKey(group: unknown): string {
 
 /** Nhân viên thuộc khối Văn Phòng? (chấp nhận VAN_PHONG, Văn Phòng, OFFICE...) */
 export function isOfficeGroup(group: unknown): boolean {
-  const g = groupKey(group);
+  const g = payGroupKey(group);
   if (!g) return false;
   return g === 'VAN_PHONG' || g === 'VANPHONG' || g === 'OFFICE' || g.includes('VAN_PHONG') || g.includes('TRU_SO');
 }
 
 /** Nhân viên thuộc khối Cửa Hàng? */
 export function isStoreGroup(group: unknown): boolean {
-  const g = groupKey(group);
+  const g = payGroupKey(group);
   if (!g) return false;
   return g === 'STORE' || g === 'CUA_HANG' || g === 'CUAHANG' || g.includes('CUA_HANG');
 }
@@ -43,7 +43,7 @@ export function isStoreGroup(group: unknown): boolean {
 /** Hình thức lương mặc định của khối khi NV chưa được Kế toán cấu hình. */
 export function defaultPayModeForGroup(group: unknown): PayMode {
   if (isOfficeGroup(group)) return 'MONTHLY';
-  const g = groupKey(group);
+  const g = payGroupKey(group);
   if (g === 'SALE') return 'MONTHLY';
   // STORE, XUONG và nhóm khác -> theo ca
   return 'HOURLY';

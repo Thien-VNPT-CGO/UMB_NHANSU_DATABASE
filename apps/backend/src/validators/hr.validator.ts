@@ -512,6 +512,8 @@ export const payrollPeriodParams = z.object({
 
 export const payrollCalculateBody = z.object({
   branchScope: z.string().trim().max(32).default('*'),
+  /** Đợt tính lương: STORE (Cửa hàng) | TONG_HOP (VP+Xưởng+Sales) | ALL (toàn bộ). */
+  batch: z.string().trim().max(20).optional(),
 });
 
 // Công thức lương 1 kỳ (lưu từ file Excel của Kế toán).

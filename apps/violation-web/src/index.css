@@ -284,6 +284,12 @@ p {
   border-color: rgba(255, 107, 107, 0.32);
 }
 
+.icon-button-sm {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+
 .link-button {
   display: inline-flex;
   align-items: center;
@@ -2807,6 +2813,26 @@ select.input,
   letter-spacing: 0.04em;
 }
 
+.item-copy .item-default {
+  margin-top: 2px;
+  color: var(--muted-2);
+  font-size: 0.62rem;
+  letter-spacing: 0;
+}
+
+.item-default em {
+  color: var(--gold);
+  font-style: normal;
+  font-weight: 600;
+}
+
+.item-amount {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
 .money-input {
   display: flex;
   align-items: center;
@@ -2929,7 +2955,6 @@ select.input,
   background: rgba(255, 255, 255, 0.02);
   color: var(--ink);
   text-align: left;
-  cursor: pointer;
   transition: border-color 0.16s ease, background 0.16s ease;
 }
 
@@ -2941,6 +2966,35 @@ select.input,
 .picker-row.is-added {
   border-color: rgba(78, 212, 160, 0.26);
   background: rgba(78, 212, 160, 0.05);
+}
+
+.picker-select {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.picker-select:disabled {
+  cursor: default;
+}
+
+.picker-amount {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
+.money-input-picker {
+  width: 118px;
 }
 
 .picker-copy {
@@ -4152,7 +4206,7 @@ select.input,
     flex: 1 1 calc(100% - 60px);
   }
 
-  .money-input {
+  .item-amount {
     margin-left: 30px;
   }
 
@@ -4174,6 +4228,23 @@ select.input,
 
   .ticket-actions .btn-danger-ghost {
     flex: 0 0 40px;
+  }
+
+  .picker-row {
+    flex-wrap: wrap;
+  }
+
+  .picker-select {
+    flex: 1 1 100%;
+  }
+
+  .picker-amount {
+    width: 100%;
+  }
+
+  .money-input-picker {
+    width: auto;
+    flex: 1;
   }
 
   .picker-row .regulation-code {

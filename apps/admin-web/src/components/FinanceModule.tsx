@@ -21,6 +21,8 @@ import {
   payslipStage, PAYSLIP_STAGE_LABEL,
   monthShortFolder, periodLabel, parsePeriod,
   getErrorCode,
+  PAYROLL_BATCHES, batchOfRun, employeeInBatch, isPayrollBatchId,
+  payrollBatchLabel, payrollBatchShortLabel,
 } from '@ubm/shared';
 import { SalaryConfigView } from './SalaryConfigView.js';
 import { OfficeApprovalsView } from './OfficeApprovalsView.js';
@@ -792,25 +794,62 @@ export default function FinanceModule(props: FinanceModuleProps) {
       showToast(e?.message || 'Đã lưu vào hệ thống nhưng CHƯA ghi được Google Sheets — vui lòng thử lại');
     }
   }, [flushAllPendingInputs, post, month, showToast]);
-  /** Tính lương kỳ (công thức Excel) + tạo/cập nhật phiếu — thay cho nút "Tính lương" bị thiếu ở bản cũ. */
-  const runCalculate = useCallback(async () => {
+  /**
+   * Tính lương kỳ (công thức Excel) + tạo/cập nhật phiếu.
+   * `batch` = 'STORE' (Khối Cửa hàng) | 'TONG_HOP' (VP + Xưởng + Sales).
+   * Bỏ trống = tính toàn bộ nhân viên (tương thích hành vi cũ).
+   */
+  const runCalculate = useCallback(async (batchArg?: any) => {
+    const batch = typeof batchArg === 'string' && isPayrollBatchId(batchArg) ? batchArg : undefined;
     if (!isFinance) {
       showToast?.('Chỉ tài khoản Kế toán (FINANCE) được tính lương. ADMIN chỉ duyệt phiếu lương kỳ.');
       return;
     }
-    if (!window.confirm(`TÍNH LƯƠNG ${periodLabel(month)} theo CÔNG THỨC EXCEL?\nTỔNG CỘNG = LCB + giờ công + OT thêm + Bonus; THỰC LÃNH = TỔNG CỘNG − KPI − phạt − ứng − đồng phục.\nHệ thống sẽ tạo/cập nhật kỳ lương và phiếu cho toàn bộ nhân viên.`)) return;
+    const scopeLabel = batch ? payrollBatchLabel(batch) : 'TOÀN BỘ NHÂN VIÊN';
+    if (!window.confirm(`TÍNH LƯƠNG ${periodLabel(month)} — ${scopeLabel} theo CÔNG THỨC EXCEL?\nTỔNG CỘNG = LCB + giờ công + OT thêm + Bonus; THỰC LÃNH = TỔNG CỘNG − KPI − phạt − ứng − đồng phục.\nChỉ nhân viên thuộc đợt này được tính; đợt còn lại giữ nguyên.`)) return;
     setCalcBusy(true);
     try {
       // Flush mọi ô nhập tay đang chờ trước khi tính — nếu không, kỳ lương đọc số cũ.
       await flushAllPendingInputs();
-      const r: any = await post(`/payroll/${encodeURIComponent(month)}/calculate-formula`, { branchScope: '*' }, { _timeoutMs: 180000 });
+      const payload: any = { branchScope: '*' };
+      if (batch) payload.batch = batch;
+      const r: any = await post(`/payroll/${encodeURIComponent(month)}/calculate-formula`, payload, { _timeoutMs: 180000 });
       const res = r?.result ?? r;
-      showToast(`Đã tính lương ${periodLabel(month)}: ${res?.run?.total_employees ?? '?'} NV — thực lãnh ${formatVND(res?.run?.total_amount || 0)}`);
+      showToast(`Đã tính ${batch ? payrollBatchLabel(batch) : 'toàn bộ NV'} kỳ ${periodLabel(month)}: ${res?.run?.total_employees ?? '?'} NV — thực lãnh ${formatVND(res?.run?.total_amount || 0)}`);
       await post(`/payroll/period-slips/${encodeURIComponent(month)}/ensure`, { branchScope: '*' }, { _timeoutMs: 180000 }).catch(() => null);
       await Promise.all([loadSlips(), loadRuns(), loadWorkflow()]);
       refreshCurrentTab();
     } catch (e: any) { showToast(e?.message || 'Tính lương thất bại'); } finally { setCalcBusy(false); }
-  }, [post, month, showToast, loadSlips, loadRuns, loadWorkflow, refreshCurrentTab, flushAllPendingInputs]);
+  }, [post, month, showToast, loadSlips, loadRuns, loadWorkflow, refreshCurrentTab, flushAllPendingInputs, isFinance]);
+
+  /** Tính LẦN LƯỢT cả 2 đợt (Cửa hàng → Tổng hợp). Đợt nào lỗi thì báo riêng, đợt kia vẫn chạy. */
+  const runCalculateBoth = useCallback(async () => {
+    if (!isFinance) {
+      showToast?.('Chỉ tài khoản Kế toán (FINANCE) được tính lương. ADMIN chỉ duyệt phiếu lương kỳ.');
+      return;
+    }
+    if (!window.confirm(`TÍNH LƯƠNG ${periodLabel(month)} CHO CẢ 2 ĐỢT (Cửa hàng + Tổng hợp)?\nHệ thống tính lần lượt từng đợt; đợt nào đã có số cũ (nếu tháng đã khóa) sẽ không tính được.`)) return;
+    setCalcBusy(true);
+    const failed: string[] = [];
+    const counts: string[] = [];
+    try {
+      await flushAllPendingInputs();
+      for (const b of PAYROLL_BATCHES) {
+        try {
+          const r: any = await post(`/payroll/${encodeURIComponent(month)}/calculate-formula`, { branchScope: '*', batch: b.id }, { _timeoutMs: 180000 });
+          const res = r?.result ?? r;
+          counts.push(`${b.shortLabel}: ${res?.run?.total_employees ?? 0} NV`);
+        } catch (e: any) {
+          failed.push(`${b.shortLabel}: ${e?.message || 'lỗi'}`);
+        }
+      }
+      await post(`/payroll/period-slips/${encodeURIComponent(month)}/ensure`, { branchScope: '*' }, { _timeoutMs: 180000 }).catch(() => null);
+      await Promise.all([loadSlips(), loadRuns(), loadWorkflow()]);
+      refreshCurrentTab();
+      if (failed.length) showToast(`Đã tính: ${counts.join(' · ') || '—'}. Lỗi: ${failed.join(' · ')}`);
+      else showToast(`Đã tính xong 2 đợt kỳ ${periodLabel(month)} — ${counts.join(' · ')}`);
+    } catch (e: any) { showToast(e?.message || 'Tính lương thất bại'); } finally { setCalcBusy(false); }
+  }, [post, month, showToast, loadSlips, loadRuns, loadWorkflow, refreshCurrentTab, flushAllPendingInputs, isFinance]);
 
   // CHỈ tài khoản FINANCE mới thấy thanh QUY TRÌNH KẾ TOÁN tuần tự/sẽ bị khóa theo workflow.
   // Các tài khoản khác (ADMIN, DIRECTOR, HR...) không hiển thị thanh quy trình và không bị khóa tuần tự khi mở tab.
@@ -1202,9 +1241,9 @@ export default function FinanceModule(props: FinanceModuleProps) {
           {activeTab === 'fin-dashboard' && <DashboardTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} slips={slips} workflow={workflow} formatVND={formatVND} colVis={colVis} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVisSaving={colVisSaving} />}
           {activeTab === 'fin-timesheet' && <TimesheetTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} loadFinSheet={loadFinSheet} formatVND={formatVND} cols={colsVisible('fin-timesheet')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-timesheet']} workflowStep={workflow?.steps?.find((s: any) => s.id === 'fin-timesheet') || null} onConfirmStep={confirmWorkflowStep} showToast={showToast} />}
           {activeTab === 'fin-bcc' && <BccTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} formatVND={formatVND} cols={colsVisible('fin-bcc')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-bcc']} workflowStep={workflow?.steps?.find((s: any) => s.id === 'fin-bcc') || null} onConfirmStep={confirmWorkflowStep} showToast={showToast} />}
-          {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} finSheet={finSheet} finSheetLoading={finSheetLoading} salaryConfigs={salaryConfigs} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} calcBusy={calcBusy} runs={runs} inputsSaving={inputsSaving} pendingCount={pendingCount} inputsSavedAt={inputsSavedAt} cols={colsVisible('fin-calculate')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-calculate']} />}
+          {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} finSheet={finSheet} finSheetLoading={finSheetLoading} salaryConfigs={salaryConfigs} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} runCalculateBoth={runCalculateBoth} calcBusy={calcBusy} runs={runs} workflow={workflow} inputsSaving={inputsSaving} pendingCount={pendingCount} inputsSavedAt={inputsSavedAt} cols={colsVisible('fin-calculate')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-calculate']} />}
           {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} stageBadge={stageBadge} cols={colsVisible('fin-payroll-sheet')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-sheet']} />}
-          {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} calcBusy={calcBusy} payRunAction={payRunAction} onNavigateTab={goTab} inputs={inputs} loadInputs={loadInputs} loadSlips={loadSlips} showToast={showToast} financeEditable={isFinance} cols={payrollPeriodsCols} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-periods']} />}
+          {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} runCalculateBoth={runCalculateBoth} calcBusy={calcBusy} payRunAction={payRunAction} onNavigateTab={goTab} inputs={inputs} loadInputs={loadInputs} loadSlips={loadSlips} showToast={showToast} financeEditable={isFinance} workflow={workflow} cols={payrollPeriodsCols} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-periods']} />}
           {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} fastSignLapAll={fastSignLapAll} fastSignLapBranch={fastSignLapBranch} publishBranch={publishBranch} publishSlip={publishSlip} returnSlip={returnSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} cols={colsVisible('fin-payslips')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payslips']} />}
           {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} downloadSlipPdf={downloadSlipPdf} exportPaymentFile={exportPaymentFile} readOnly={contentReadOnly} cols={colsVisible('fin-payment')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payment']} />}
           {activeTab === 'fin-signatures' && <SignatureTemplatesTab currentUser={currentUser} showToast={showToast} />}
@@ -1591,24 +1630,68 @@ function BccTab({ month, finSheet, finSheetLoading, formatVND, cols, onToggleCol
 /* ============================================================================
    4 · TÍNH LƯƠNG — CÔNG THỨC & NHẬP TAY (+ NÚT TÍNH LƯƠNG)
    ============================================================================ */
-function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEmployees, finSheet, finSheetLoading, salaryConfigs, saveFormula, upsertInput, saveAllInputs, loadFormula, loadInputs, runCalculate, calcBusy, runs, inputsSaving, pendingCount, inputsSavedAt, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
+function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEmployees, finSheet, finSheetLoading, salaryConfigs, saveFormula, upsertInput, saveAllInputs, loadFormula, loadInputs, runCalculate, runCalculateBoth, calcBusy, runs, workflow, inputsSaving, pendingCount, inputsSavedAt, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const [q, setQ] = useState('');
   const [expandId, setExpandId] = useState<string | null>(null);
+  // Bộ lọc ĐỢT cho 2 bảng (nhập tay + B4 xem trước). 'ALL' = cả công ty.
+  const [batchFilter, setBatchFilter] = useState<string>('ALL');
   const show = cols?.show || (() => true);
   const fmt = useCallback((n: any) => `${Math.round(Number(n) || 0).toLocaleString('vi-VN')}đ`, []);
-  const latestRun = useMemo(() => (Array.isArray(runs) ? runs : []).filter((r: any) => r.period === month).sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')))[0] || null, [runs, month]);
+  const allEmps = useMemo(() => (Array.isArray(allEmployees) ? allEmployees : []), [allEmployees]);
+  const batchEmployees = useMemo(
+    () => allEmps.filter((e: any) => employeeInBatch(e?.group, batchFilter === 'ALL' ? 'ALL' : batchFilter)),
+    [allEmps, batchFilter],
+  );
+  const batchEmpIds = useMemo(() => new Set(batchEmployees.map((e: any) => String(e?.employee_id))), [batchEmployees]);
+  const inputRows = useMemo(
+    () => (batchFilter === 'ALL' ? (inputs || []) : (inputs || []).filter((i: any) => batchEmpIds.has(String(i?.employee_id)))),
+    [inputs, batchFilter, batchEmpIds],
+  );
+  const runsOfMonth = useMemo(
+    () => (Array.isArray(runs) ? runs : []).filter((r: any) => r.period === month),
+    [runs, month],
+  );
+  /** Kỳ lương mới nhất của 1 đợt (run cũ tính gộp không có đợt -> dùng chung cho cả 2). */
+  const runOfBatch = useCallback((bid: string) => {
+    const list = runsOfMonth.filter((r: any) => {
+      const b = batchOfRun(r);
+      // Run cũ (không có batch_scope/không mã hóa đợt trong run_id) = tính gộp toàn công ty.
+      return b === bid || b === 'ALL' || !b;
+    });
+    return list.sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')))[0] || null;
+  }, [runsOfMonth]);
+  const empCountByBatch = useMemo(() => {
+    const m: Record<string, number> = { STORE: 0, TONG_HOP: 0 };
+    for (const e of allEmps) {
+      for (const b of PAYROLL_BATCHES) if (employeeInBatch((e as any)?.group, b.id)) m[b.id] += 1;
+    }
+    return m;
+  }, [allEmps]);
+  const batchProgressOf = useCallback((bid: string) => {
+    const arr = (workflow as any)?.batches;
+    return Array.isArray(arr) ? arr.find((x: any) => String(x?.id) === bid) || null : null;
+  }, [workflow]);
+  const batchPills = (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      {[{ id: 'ALL', label: 'Tất cả', n: allEmps.length }, ...PAYROLL_BATCHES.map(b => ({ id: b.id, label: b.shortLabel, n: empCountByBatch[b.id] || 0 }))].map(opt => (
+        <button key={opt.id} type="button" className={`fin-pill${batchFilter === opt.id ? ' is-active' : ''}`} onClick={() => setBatchFilter(opt.id)} title={`Lọc bảng theo ${opt.id === 'ALL' ? 'toàn bộ nhân viên' : payrollBatchLabel(opt.id)}`}>
+          {opt.label} <span style={{ opacity: .7 }}>({opt.n})</span>
+        </button>
+      ))}
+    </div>
+  );
   const groups = useMemo(() => {
-    const filtered = (allEmployees || []).filter(matchesFilter(q.trim()));
+    const filtered = batchEmployees.filter(matchesFilter(q.trim()));
     return branchGroups(filtered, (e: any) => e.default_branch_id);
-  }, [allEmployees, q]);
+  }, [batchEmployees, q]);
   const inputTotals = useMemo(() => ({
-    lcb: sumBy(inputs, 'luong_cb'), ot: sumBy(inputs, 'ot_extra'), bonus: sumBy(inputs, 'bonus_extra'),
-    ung: sumBy(inputs, 'ung_luong'), kpi: sumBy(inputs, 'tru_kpi'), dp: sumBy(inputs, 'dong_phuc'),
-  }), [inputs]);
+    lcb: sumBy(inputRows, 'luong_cb'), ot: sumBy(inputRows, 'ot_extra'), bonus: sumBy(inputRows, 'bonus_extra'),
+    ung: sumBy(inputRows, 'ung_luong'), kpi: sumBy(inputRows, 'tru_kpi'), dp: sumBy(inputRows, 'dong_phuc'),
+  }), [inputRows]);
   // Đồng phục HR đã nhập cho đúng tháng đang chọn — hiển thị để Kế toán đối soát
   // với cột "Trừ ĐP" (tiền được backend tự ghi vào lương theo ngày nhận).
   const uniformRecords = useMemo(() => {
-    return (allEmployees || [])
+    return (batchEmployees || [])
       .map((e: any) => {
         const u = e?.uniform;
         if (!u) return null;
@@ -1632,7 +1715,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
         };
       })
       .filter(Boolean) as any[];
-  }, [allEmployees, month]);
+  }, [batchEmployees, month]);
   // Bản đồ đồng phục theo NV để cột "Trừ ĐP" luôn hiện số tiền HR vừa nhập,
   // kể cả khi tab nhập tay chưa kịp nạp dòng của NV đó (realtime từ Hồ Sơ NV).
   const uniformByEmp = useMemo(() => {
@@ -1652,7 +1735,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
   const dpTotal = useMemo(() => {
     let total = 0;
     const seen = new Set<string>();
-    for (const i of (inputs || [])) {
+    for (const i of inputRows) {
       total += Number(i?.dong_phuc) || 0;
       seen.add(String(i?.employee_id));
     }
@@ -1660,7 +1743,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
       if (!seen.has(String(r.employee_id))) total += Number(r.amount) || 0;
     }
     return total;
-  }, [inputs, uniformRecords]);
+  }, [inputRows, uniformRecords]);
   const totals = useMemo(() => ({ ...inputTotals, dp: dpTotal }), [inputTotals, dpTotal]);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1687,24 +1770,60 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
         </div>
       )}
 
-      {/* Nút tính lương — tạo kỳ + phiếu cho toàn bộ NV */}
+      {/* Tính lương theo 2 ĐỢT độc lập: Cửa hàng / Tổng hợp — chọn đợt nào trước cũng được */}
       <div className="fin-card" style={{ border: '1.5px solid var(--fin-brand-line)', background: 'linear-gradient(120deg, #fff 0%, #fdf2f7 100%)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '16px 18px', flexWrap: 'wrap' }}>
-          <div style={{ width: 52, height: 52, borderRadius: 14, background: 'var(--fin-brand)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 16px rgba(232,93,146,.45)' }}>
-            <Calculator size={26} />
-          </div>
-          <div style={{ flex: 1, minWidth: 260 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--fin-ink)' }}>TÍNH LƯƠNG {periodLabel(month).toUpperCase()} — SINH KỲ &amp; PHIẾU</div>
-            <div style={{ fontSize: 11, color: 'var(--fin-muted)', marginTop: 2, lineHeight: 1.5 }}>
-              Chạy công thức Excel trên toàn bộ NV (LCB + giờ công × đơn giá + OT + Bonus − KPI − phạt − ứng − đồng phục).
-              {latestRun
-                ? <> Kỳ gần nhất: <b>{latestRun.run_id}</b> — trạng thái <b>{latestRun.status}</b>. Bấm lại sẽ TÍNH LẠI và tạo kỳ mới.</>
-                : <> Chưa có kỳ lương cho tháng này — bấm nút bên phải để tạo.</>}
-            </div>
-          </div>
-          <button type="button" className="fin-btn fin-btn-primary" style={{ fontSize: 13, padding: '12px 20px' }} onClick={runCalculate} disabled={calcBusy}>
-            {calcBusy ? <Loader2 size={16} className="fin-spin" /> : <Calculator size={16} />} {calcBusy ? 'Đang tính…' : 'TÍNH LƯƠNG NGAY'}
+        <CardHead
+          title={`TÍNH LƯƠNG ${periodLabel(month).toUpperCase()} THEO 2 ĐỢT`}
+          icon={<Calculator size={14} color="#E85D92" />}
+          sub="Mỗi đợt chỉ tính nhân viên thuộc khối của đợt đó — đợt còn lại giữ nguyên số liệu. Chọn đợt nào tính trước cũng được."
+        >
+          <span className="fin-chip-stat">{allEmps.length} NV toàn công ty</span>
+          {Array.isArray((workflow as any)?.missingBatches) && (workflow as any).missingBatches.length > 0 && (
+            <span className="fin-chip-stat" style={{ borderColor: '#fcd34d', background: '#fffbeb', color: '#92400e' }}>
+              ⚠ Còn {(workflow as any).missingBatches.length} đợt chưa tính
+            </span>
+          )}
+          <button type="button" className="fin-btn fin-btn-dark fin-btn-sm" onClick={() => runCalculateBoth?.()} disabled={calcBusy} title="Tính lần lượt đợt Cửa hàng rồi đợt Tổng hợp">
+            {calcBusy ? <Loader2 size={13} className="fin-spin" /> : <Calculator size={13} />} Tính cả 2 đợt
           </button>
+        </CardHead>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 10, padding: '12px 16px' }}>
+          {PAYROLL_BATCHES.map(b => {
+            const run = runOfBatch(b.id);
+            const prog = batchProgressOf(b.id);
+            const st = run ? (RUN_STATUS_STYLE[String(run.status || 'DRAFT')] || RUN_STATUS_STYLE.DRAFT) : null;
+            const empN = empCountByBatch[b.id] || 0;
+            return (
+              <div key={b.id} style={{ border: `1.5px solid ${b.color}40`, background: `linear-gradient(135deg, #fff 0%, ${b.bg} 100%)`, borderRadius: 12, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 9 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 9 }}>
+                  <span style={{ width: 30, height: 30, borderRadius: 9, background: b.color, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 13, flex: '0 0 auto' }}>{b.order}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 800, fontSize: 13, color: 'var(--fin-ink)' }}>{b.label}</div>
+                    <div style={{ fontSize: 10.5, color: 'var(--fin-muted)', lineHeight: 1.45 }}>{b.desc}</div>
+                  </div>
+                  {st ? (
+                    <span className="fin-badge" style={{ color: st.fg, background: st.bg, borderColor: st.fg + '40' }}><span className="fin-badge-dot" />{st.label}</span>
+                  ) : (
+                    <span className="fin-badge" style={{ color: '#92400e', background: '#FEF3C7', borderColor: '#FCD34D66' }}><span className="fin-badge-dot" />Chưa tính</span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <span className="fin-chip-stat">{empN} NV</span>
+                  {run && <span className="fin-chip-stat">{run.total_employees ?? prog?.slipCount ?? 0} phiếu</span>}
+                  {run && <span className="fin-chip-stat">Thực lãnh {formatVND(run.total_amount ?? prog?.totalAmount ?? 0)}</span>}
+                  {run && <span className="fin-chip-stat">{fmtDateTime(run.created_at)}</span>}
+                  {!run && prog?.required && <span className="fin-chip-stat" style={{ borderColor: '#fcd34d', background: '#fffbeb', color: '#92400e' }}>Cần tính đợt này</span>}
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" disabled={calcBusy || empN === 0} onClick={() => runCalculate(b.id)}
+                    title={empN === 0 ? `Không có nhân viên thuộc ${b.label} — không cần tính đợt này` : `Chỉ tính nhân viên ${b.label.toLowerCase()} (đợt ${b.order})`}>
+                    {calcBusy ? <Loader2 size={13} className="fin-spin" /> : <Calculator size={13} />} {run ? 'Tính lại đợt này' : 'Tính đợt này'}
+                  </button>
+                  {run && <span className="fin-mono" style={{ fontSize: 10, color: 'var(--fin-muted)' }}>{run.run_id}</span>}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -1746,6 +1865,10 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
           <span className="fin-chip-stat">Bonus {formatVND(inputTotals.bonus)}</span>
           <span className="fin-chip-stat">Ứng {formatVND(inputTotals.ung)}</span>
         </CardHead>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 16px', borderBottom: '1px solid #f1f5f9', alignItems: 'center' }}>
+          <span style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--fin-muted)', textTransform: 'uppercase', letterSpacing: .6 }}>Đợt:</span>
+          {batchPills}
+        </div>
         <div className="fin-table-wrap" style={{ maxHeight: '62vh' }}>
           <table className="fin-table" style={{ minWidth: 1080 }}>
             <thead>
@@ -1800,9 +1923,11 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                 );
               })}
               {groups.length === 0 && <tr><td colSpan={FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols)} className="fin-empty">{q ? 'Không tìm thấy nhân viên phù hợp.' : 'Chưa có nhân viên.'}</td></tr>}
-              {inputs.length > 0 && (
+              {batchEmployees.length > 0 && (
                 <tr className="fin-grand">
-                  <td colSpan={Math.max(0, FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols) - 7)}>TỔNG TOÀN CÔNG TY</td>
+                  <td colSpan={Math.max(0, FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols) - 7)}>
+                    {batchFilter === 'ALL' ? 'TỔNG TOÀN CÔNG TY' : `TỔNG ĐỢT ${payrollBatchLabel(batchFilter).toUpperCase()}`} ({batchEmployees.length} NV)
+                  </td>
                   {show('luong_cb') && <td className="num fin-money">{formatVND(inputTotals.lcb)}</td>}
                   {show('ot_extra') && <td className="num fin-money">{formatVND(inputTotals.ot)}</td>}
                   {show('bonus_extra') && <td className="num fin-money">{formatVND(inputTotals.bonus)}</td>}
@@ -1826,6 +1951,11 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
         <CardHead title="B4 — Các bước tính lương xem trước (realtime)" icon={<Calculator size={14} color="#059669" />} sub={`Kỳ ${periodLabel(month)} • B1 giờ công/LCB • B2 Tổng cộng • B3 Tổng lương • B4 Thực lãnh. Bấm ▶ để xem từng bước.`}>
           <ColumnSettings tabKey="fin-calculate" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-calculate')} saving={colVisSaving} />
         </CardHead>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 16px', borderBottom: '1px solid #f1f5f9', alignItems: 'center' }}>
+          <span style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--fin-muted)', textTransform: 'uppercase', letterSpacing: .6 }}>Đợt:</span>
+          {batchPills}
+          <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Xem trước theo đúng đợt sẽ tính — số liệu thật từ chấm công + nhập tay.</span>
+        </div>
         <div className="fin-table-wrap" style={{ maxHeight: '60vh' }}>
           <table className="fin-table" style={{ minWidth: 980 }}>
             <thead><tr>{show('name') && <th>Nhân viên</th>}{show('b1') && <th className="num">B1 Giờ/LCB</th>}{show('b2') && <th className="num">B2 Tổng cộng</th>}{show('b3') && <th className="num">B3 Tổng lương</th>}{show('b4') && <th className="num">B4 Thực lãnh</th>}</tr></thead>
@@ -1834,12 +1964,12 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                 <tr><td colSpan={FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols)} className="fin-empty">Đang tải bảng chấm công…</td></tr>
               ) : (() => {
                 const rows: any[] = (() => {
-                  const list = (finSheet?.rows || []) as any[];
+                  const list = ((finSheet?.rows || []) as any[]).filter((r: any) => employeeInBatch(r?.group, batchFilter === 'ALL' ? 'ALL' : batchFilter));
                   if (!list.length) return [];
                   const qv = q.trim().toLowerCase();
                   return qv ? list.filter((r: any) => String(r.fullName || '').toLowerCase().includes(qv) || String(r.employeeCode || '').toLowerCase().includes(qv)) : list;
                 })();
-                if (!rows.length) return <tr><td colSpan={FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols)} className="fin-empty">{finSheet ? 'Kỳ này chưa có ca chấm công — xem trước hiện sau khi có chấm công. Vẫn bấm TÍNH LƯƠNG NGAY được.' : 'Chưa tải được bảng công — bấm Tải lại ở tab Đối soát công, hoặc bấm TÍNH LƯƠNG NGAY để tính trên server.'}</td></tr>;
+                if (!rows.length) return <tr><td colSpan={FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols)} className="fin-empty">{finSheet ? 'Đợt này chưa có ca chấm công — xem trước hiện sau khi có chấm công. Vẫn bấm "Tính đợt này" được.' : 'Chưa tải được bảng công — bấm Tải lại ở tab Đối soát công, hoặc bấm "Tính đợt này" để tính trên server.'}</td></tr>;
                 return rows.flatMap((r: any) => {
                   const inp = (inputs || []).find((i: any) => i.employee_id === r.employeeId) || {};
                   const num = (v: any) => Math.max(0, Math.floor(Number(v) || 0));
@@ -2012,7 +2142,7 @@ const PERIOD_SLIP_FILTERS = [
   { key: 'PAID', label: 'Đã chi trả' },
 ];
 
-function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmployees, formatVND, runCalculate, calcBusy, payRunAction, onNavigateTab, inputs = [], loadInputs, loadSlips, showToast, financeEditable = false, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
+function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmployees, formatVND, runCalculate, runCalculateBoth, calcBusy, payRunAction, onNavigateTab, inputs = [], loadInputs, loadSlips, showToast, financeEditable = false, workflow, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -2048,10 +2178,29 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
   const leftColCount = ['stt', 'full_name', 'employee_code', 'branch'].filter(k => show(k)).length;
   const RUN_STAGES = ['DRAFT', 'RECONCILED', 'APPROVED', 'PUBLISHED', 'PAID'];
   const RUN_STAGE_LABEL: Record<string, string> = { DRAFT: 'Nháp', RECONCILED: 'Đối soát', APPROVED: 'Duyệt', PUBLISHED: 'Đã phát hành', PAID: 'Chi trả' };
-  const latestStageIdx = latest ? RUN_STAGES.indexOf(String(latest.status || 'DRAFT').toUpperCase()) : -1;
-  const canReconcile = latest && String(latest.status || '').toUpperCase() === 'DRAFT';
-  const canApprove = latest && String(latest.status || '').toUpperCase() === 'RECONCILED';
-  const canGoSign = latest && ['APPROVED', 'PUBLISHED', 'PAID'].includes(String(latest.status || '').toUpperCase());
+  // --- Tiến độ 2 ĐỢT (Cửa hàng / Tổng hợp): mỗi đợt có kỳ lương + trạng thái duyệt riêng.
+  const wfBatches = useMemo(() => (Array.isArray((workflow as any)?.batches) ? (workflow as any).batches : []), [workflow]);
+  const latestRunOfBatch = (bid: string) => {
+    const list = monthRuns.filter((r: any) => { const b = batchOfRun(r); return b === bid || b === 'ALL' || !b; });
+    return list.sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')))[0] || null;
+  };
+  const batchInfo = PAYROLL_BATCHES.map(b => {
+    const info = wfBatches.find((x: any) => String(x?.id) === b.id) || null;
+    // Ưu tiên run mà workflow báo cho đợt này; workflow nói CHƯA tính thì không
+    // mượn kỳ của đợt khác (tránh 2 thẻ cùng hiện 1 kỳ gây nhầm khi đối soát).
+    let run: any = info?.run_id ? monthRuns.find((r: any) => String(r.run_id) === String(info.run_id)) || null : null;
+    if (!run && (!info || info.calculated)) run = latestRunOfBatch(b.id);
+    const status = String(info?.status || run?.status || '').toUpperCase();
+    // Kỳ cũ tính gộp toàn công ty (không gắn đợt) — dùng chung cho cả 2 đợt.
+    const runBatch = run ? batchOfRun(run) : null;
+    const shared = !!run && (!runBatch || runBatch === 'ALL');
+    return { def: b, info, run, status, shared };
+  });
+  // Kỳ gộp cũ có thể xuất hiện ở cả 2 đợt → chỉ thao tác 1 lần/kỳ.
+  const pendingReconcile = batchInfo.filter((x, i, arr) => x.run && x.status === 'DRAFT' && arr.findIndex(y => y.run?.run_id === x.run.run_id) === i);
+  const pendingApprove = batchInfo.filter((x, i, arr) => x.run && x.status === 'RECONCILED' && arr.findIndex(y => y.run?.run_id === x.run.run_id) === i);
+  const allApproved = batchInfo.length > 0 && batchInfo.every(x => ['APPROVED', 'PUBLISHED', 'PAID'].includes(x.status));
+  const empCountOfBatch = (bid: string) => (allEmployees || []).filter((e: any) => employeeInBatch(e?.group, bid)).length;
 
   /** Chỉnh sửa trực tiếp trên nhân viên (nhập tay: LCB/OT/Bonus/Ứng/KPI/ĐP). */
   const startEdit = (s: any) => {
@@ -2119,6 +2268,17 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
       setRefreshing(false);
     }
   };
+  /** Đối soát / Phê duyệt TẤT CẢ đợt đang cần (mỗi đợt vẫn xác nhận riêng). */
+  const runAllBatchAction = async (action: 'reconcile' | 'approve') => {
+    const targets = action === 'reconcile' ? pendingReconcile : pendingApprove;
+    if (!targets.length) {
+      showToast?.(action === 'reconcile' ? 'Không có đợt nào đang ở trạng thái Nháp cần đối soát.' : 'Không có đợt nào đã đối soát cần phê duyệt.');
+      return;
+    }
+    for (const t of targets) {
+      try { await payRunAction(t.run.run_id, action); } catch { /* payRunAction đã báo lỗi */ }
+    }
+  };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <TabHead step={6} title={financeEditable ? 'Kỳ lương — DRAFT → PAID' : 'Duyệt phiếu lương kỳ'} desc={financeEditable ? `Vòng đời kỳ lương ${periodLabel(month)}: Tính → Đối soát → Duyệt → từng phiếu gửi NV → NV ký → chi trả. Bảng dưới Nhóm theo CHI NHÁNH, mỗi NV 1 dòng với ĐỦ cột tiền + dòng CỘNG tổng tiền chi nhánh. Kế toán có thể SỬA TRỰC TIẾP từng NV (LCB/OT/Bonus/Ứng/KPI/ĐP) ngay trên bảng, rồi bấm CẬP NHẬT DỮ LIỆU để tải lại / TÍNH LẠI KỲ để áp số mới.` : `Kế toán xuất phiếu lương kỳ ${periodLabel(month)} → ADMIN rà soát số liệu và duyệt kỳ. Chỉ xem và duyệt, không sửa số liệu của Kế toán.`}>
@@ -2128,41 +2288,92 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
           {refreshing ? <Loader2 size={13} className="fin-spin" /> : <RefreshCw size={13} />} Cập nhật dữ liệu
         </button>
         {financeEditable && (
-          <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={runCalculate} disabled={calcBusy} title="Tính lại kỳ (tạo kỳ mới — phiếu cũ vẫn giữ để đối chiếu)">
-            {calcBusy ? <Loader2 size={13} className="fin-spin" /> : <Calculator size={13} />} {latest ? 'Tính lại kỳ' : 'Tính lương ngay'}
+          <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => runCalculateBoth?.()} disabled={calcBusy} title="Tính lần lượt cả 2 đợt (Cửa hàng → Tổng hợp); mỗi đợt chỉ tính nhân viên thuộc khối đó">
+            {calcBusy ? <Loader2 size={13} className="fin-spin" /> : <Calculator size={13} />} Tính cả 2 đợt
           </button>
         )}
       </TabHead>
 
-      {/* Vòng đời kỳ mới nhất DRAFT -> PAID */}
+      {/* Tiến độ 2 ĐỢT tính lương — mỗi đợt 1 kỳ riêng, chọn đợt nào trước cũng được */}
       <div className="fin-card">
-        <CardHead title="Tiến độ kỳ lương (kỳ mới nhất)" icon={<CalendarRange size={14} color="#E85D92" />} sub={latest ? `${latest.run_id} — tạo ${fmtDateTime(latest.created_at)}` : 'Chưa có kỳ — hãy tính lương trước'}>
-          {latest && (() => { const st = RUN_STATUS_STYLE[String(latest.status || 'DRAFT')] || RUN_STATUS_STYLE.DRAFT; return <span className="fin-badge" style={{ color: st.fg, background: st.bg, borderColor: st.fg + '40' }}><span className="fin-badge-dot" />{st.label}</span>; })()}
+        <CardHead
+          title="Tiến độ 2 đợt tính lương"
+          icon={<CalendarRange size={14} color="#E85D92" />}
+          sub={`Kỳ ${periodLabel(month)} — Cửa hàng và Tổng hợp có kỳ lương + trạng thái duyệt riêng. Đợt nào tính/duyệt trước cũng được.`}
+        >
+          <span className="fin-chip-stat">{allSlips.length} phiếu tổng</span>
+          <span className="fin-chip-stat">THỰC LÃNH {formatVND(grand.thuc)}</span>
+          {allApproved && <span className="fin-chip-stat" style={{ borderColor: '#86efac', background: '#f0fdf4', color: '#166534' }}>✓ Cả 2 đợt đã duyệt</span>}
         </CardHead>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 0, flexWrap: 'wrap', padding: '12px 16px' }}>
-          {RUN_STAGES.map((s, i) => {
-            const done = latestStageIdx >= 0 && i <= latestStageIdx;
-            const cur = latestStageIdx === i;
-            const st = RUN_STATUS_STYLE[s] || RUN_STATUS_STYLE.DRAFT;
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 16px' }}>
+          {batchInfo.map(({ def, info, run, status, shared }) => {
+            const st = RUN_STATUS_STYLE[status] || null;
+            const stageIdx = RUN_STAGES.indexOf(status);
+            const empN = info?.employeeCount || empCountOfBatch(def.id);
+            const slipN = info?.slipCount || (run ? (run.total_employees ?? 0) : 0);
+            const amount = info?.totalAmount || run?.total_amount || 0;
+            const canRec = !!run && status === 'DRAFT';
+            const canApp = !!run && status === 'RECONCILED';
+            const canSign = ['APPROVED', 'PUBLISHED', 'PAID'].includes(status);
             return (
-              <span key={s} style={{ display: 'inline-flex', alignItems: 'center' }}>
-                <span style={{ padding: '6px 14px', borderRadius: '999px', fontSize: 12, fontWeight: 800, background: done ? st.bg : '#F8FAFC', color: done ? st.fg : '#9CA3AF', border: `1.5px solid ${done ? st.fg + '40' : '#E5E7EB'}`, boxShadow: cur ? '0 0 0 3px rgba(16,185,129,0.15)' : undefined }}>
-                  {done ? '✓ ' : ''}{RUN_STAGE_LABEL[s]}
-                </span>
-                {i < RUN_STAGES.length - 1 && <span style={{ width: 22, height: 2, background: latestStageIdx > i ? '#10B981' : '#E5E7EB', display: 'inline-block' }} />}
-              </span>
+              <div key={def.id} style={{ border: `1.5px solid ${def.color}40`, background: `linear-gradient(135deg, #fff 0%, ${def.bg} 100%)`, borderRadius: 12, padding: '11px 13px', display: 'flex', flexDirection: 'column', gap: 9 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <span style={{ width: 28, height: 28, borderRadius: 8, background: def.color, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 12, flex: '0 0 auto' }}>{def.order}</span>
+                  <div style={{ flex: 1, minWidth: 180 }}>
+                    <div style={{ fontWeight: 800, fontSize: 12.5, color: 'var(--fin-ink)' }}>
+                      {def.label}
+                      <span className="fin-mono" style={{ marginLeft: 8, fontSize: 10, fontWeight: 500, color: 'var(--fin-muted)' }}>{run ? `${run.run_id}${shared ? ' · kỳ gộp cũ' : ''}` : '— chưa tính —'}</span>
+                    </div>
+                    <div style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>
+                      {empN} NV • {slipN} phiếu • Thực lãnh {formatVND(amount)}
+                      {run ? ` • tạo ${fmtDateTime(run.created_at)}` : ''}
+                    </div>
+                  </div>
+                  {st
+                    ? <span className="fin-badge" style={{ color: st.fg, background: st.bg, borderColor: st.fg + '40' }}><span className="fin-badge-dot" />{st.label}</span>
+                    : <span className="fin-badge" style={{ color: '#92400e', background: '#FEF3C7', borderColor: '#FCD34D66' }}><span className="fin-badge-dot" />Chưa tính</span>}
+                  {financeEditable && (
+                    <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" disabled={calcBusy || empN === 0}
+                      onClick={() => runCalculate(def.id)} title={`Chỉ tính nhân viên ${def.label.toLowerCase()} — không đụng đợt còn lại`}>
+                      {calcBusy ? <Loader2 size={12} className="fin-spin" /> : <Calculator size={12} />} {run ? 'Tính lại đợt này' : 'Tính đợt này'}
+                    </button>
+                  )}
+                  <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" disabled={!canRec}
+                    title={canRec ? `${def.label}: DRAFT → RECONCILED` : (run ? `Đợt đang ở ${status}` : 'Đợt chưa tính lương')}
+                    onClick={() => payRunAction(run.run_id, 'reconcile')}>Đối soát</button>
+                  <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" disabled={!canApp}
+                    title={canApp ? `${def.label}: RECONCILED → APPROVED` : 'Chỉ duyệt được khi đợt đã Đối soát'}
+                    onClick={() => payRunAction(run.run_id, 'approve')}>Phê duyệt</button>
+                  {financeEditable && canSign && <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => onNavigateTab?.('fin-payslips')}><Send size={11} /> Ký & gửi NV</button>}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 0, flexWrap: 'wrap' }}>
+                  {RUN_STAGES.map((s, i) => {
+                    const done = stageIdx >= 0 && i <= stageIdx;
+                    const cur = stageIdx === i;
+                    const sst = RUN_STATUS_STYLE[s] || RUN_STATUS_STYLE.DRAFT;
+                    return (
+                      <span key={s} style={{ display: 'inline-flex', alignItems: 'center' }}>
+                        <span style={{ padding: '3px 9px', borderRadius: 999, fontSize: 10, fontWeight: 800, background: done ? sst.bg : '#F8FAFC', color: done ? sst.fg : '#9CA3AF', border: `1px solid ${done ? sst.fg + '40' : '#E5E7EB'}`, boxShadow: cur ? '0 0 0 2px rgba(16,185,129,0.15)' : undefined }}>
+                          {done ? '✓ ' : ''}{RUN_STAGE_LABEL[s]}
+                        </span>
+                        {i < RUN_STAGES.length - 1 && <span style={{ width: 14, height: 2, background: stageIdx > i ? '#10B981' : '#E5E7EB', display: 'inline-block' }} />}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
             );
           })}
-          {!latest && <span style={{ fontSize: 11, color: 'var(--fin-muted)' }}>Chưa có kỳ nào — bấm “Tính lương ngay”.</span>}
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '0 16px 14px', alignItems: 'center' }}>
-          {latest && <span style={{ fontSize: 11, fontWeight: 800 }}>Trạng thái kỳ: {String(latest.status || 'DRAFT').toUpperCase()}</span>}
-          <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" disabled={!canReconcile} title={canReconcile ? 'Đánh dấu kỳ đã đối soát (DRAFT → RECONCILED). Bước 1 bắt buộc trước khi duyệt.' : 'Chỉ bấm được khi kỳ đang ở trạng thái DRAFT'} onClick={() => payRunAction(latest.run_id, 'reconcile')}>Đối soát kỳ</button>
-          <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" disabled={!canApprove} title={canApprove ? 'Phê duyệt kỳ (RECONCILED → APPROVED). ADMIN được duyệt kỳ của mình; FINANCE phải dùng tài khoản khác.' : 'Chỉ bấm được khi kỳ đã Đối soát (RECONCILED). Hãy bấm Đối soát kỳ trước.'} onClick={() => payRunAction(latest.run_id, 'approve')}>Phê duyệt kỳ</button>
-          {financeEditable && canGoSign && <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => onNavigateTab?.('fin-payslips')}><Send size={12} /> Sang tab Phiếu lương: ký & gửi NV</button>}
+          <button type="button" className="fin-btn fin-btn-dark fin-btn-sm" disabled={!pendingReconcile.length} onClick={() => runAllBatchAction('reconcile')} title="Đối soát mọi đợt đang ở trạng thái Nháp">
+            Đối soát tất cả ({pendingReconcile.length})
+          </button>
+          <button type="button" className="fin-btn fin-btn-dark fin-btn-sm" disabled={!pendingApprove.length} onClick={() => runAllBatchAction('approve')} title="Phê duyệt mọi đợt đã đối soát">
+            Phê duyệt tất cả ({pendingApprove.length})
+          </button>
           {financeEditable && latest && <button type="button" className="fin-btn fin-btn-amber fin-btn-sm" onClick={() => window.dispatchEvent(new CustomEvent('ubm:rollback-kyluong', { detail: { period: month } }))}>↩ Quay về bước trước</button>}
-          {latest && !canReconcile && !canApprove && !canGoSign && <span style={{ fontSize: 11, color: 'var(--fin-muted)' }}>Kỳ đang ở trạng thái {String(latest.status || '').toUpperCase()} — theo quy trình, phiếu lương phát hành/chi trả TỪNG PHIẾU ở tab 7–8 (đủ chữ ký 3 bên).</span>}
-          {latest && <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Quy trình: DRAFT → Bấm <b>Đối soát kỳ</b> → RECONCILED → Bấm <b>Phê duyệt kỳ</b> → APPROVED → Sang tab Phiếu lương (KT ký → GĐ duyệt → NV ký → KT chuyển khoản).</span>}
+          <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Quy trình mỗi đợt: DRAFT → <b>Đối soát</b> → RECONCILED → <b>Phê duyệt</b> → APPROVED → tab Phiếu lương (KT ký → GĐ duyệt → NV ký → chuyển khoản).</span>
         </div>
       </div>
 
@@ -2215,8 +2426,8 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
             <div style={{ fontWeight: 800, color: 'var(--fin-ink)', marginBottom: 4 }}>Chưa có phiếu lương cho {periodLabel(month)}</div>
             {financeEditable ? (
               <>
-                <div style={{ marginBottom: 12 }}>Bấm “Tính lương ngay” ở góc phải trên — hệ thống sẽ sinh phiếu cho toàn bộ nhân viên.</div>
-                <button type="button" className="fin-btn fin-btn-primary" onClick={runCalculate} disabled={calcBusy}>{calcBusy ? <Loader2 size={15} className="fin-spin" /> : <Calculator size={15} />} TÍNH LƯƠNG NGAY</button>
+                <div style={{ marginBottom: 12 }}>Bấm “Tính cả 2 đợt” ở góc phải trên — hệ thống tính lần lượt Cửa hàng và Tổng hợp. Có thể tính riêng từng đợt ở thẻ phía trên.</div>
+                <button type="button" className="fin-btn fin-btn-primary" onClick={() => runCalculateBoth?.()} disabled={calcBusy}>{calcBusy ? <Loader2 size={15} className="fin-spin" /> : <Calculator size={15} />} TÍNH CẢ 2 ĐỢT</button>
               </>
             ) : (
               <div style={{ marginBottom: 12 }}>Kế toán chưa xuất phiếu lương cho kỳ này. Khi Kế toán xuất phiếu, danh sách sẽ tự hiện ra để ADMIN duyệt.</div>
@@ -2338,18 +2549,25 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
 
       {/* Các kỳ trong tháng (metadata) */}
       <div className="fin-card">
-        <CardHead title="Các kỳ lương trong tháng" icon={<Building2 size={14} color="#E85D92" />} sub="Mỗi lần TÍNH LƯƠNG tạo một kỳ mới — kỳ cũ vẫn giữ nguyên để đối chiếu" />
+        <CardHead title="Các kỳ lương trong tháng" icon={<Building2 size={14} color="#E85D92" />} sub="Mỗi lần TÍNH LƯƠNG 1 ĐỢT tạo một kỳ mới cho đợt đó — kỳ cũ vẫn giữ nguyên để đối chiếu" />
         <div className="fin-table-wrap" style={{ maxHeight: 'none' }}>
           <table className="fin-table">
             <thead>
-              <tr><th>Kỳ</th><th>Phạm vi</th><th>Trạng thái</th><th className="num">NV</th><th className="num">Giờ</th><th className="num">Tổng tiền</th><th>Tạo lúc</th></tr>
+              <tr><th>Kỳ</th><th>Đợt</th><th>Phạm vi</th><th>Trạng thái</th><th className="num">NV</th><th className="num">Giờ</th><th className="num">Tổng tiền</th><th>Tạo lúc</th></tr>
             </thead>
             <tbody>
               {monthRuns.map((r: any) => {
                 const st = RUN_STATUS_STYLE[String(r.status || 'DRAFT')] || RUN_STATUS_STYLE.DRAFT;
+                const bid = batchOfRun(r);
+                const bdef = PAYROLL_BATCHES.find(b => b.id === bid);
                 return (
                   <tr key={r.run_id}>
                     <td className="fin-mono" style={{ fontWeight: 700 }}>{r.run_id}</td>
+                    <td>
+                      <span className="fin-badge" style={{ color: bdef?.color || '#475569', background: bdef?.bg || '#F1F5F9', borderColor: (bdef?.color || '#475569') + '40' }}>
+                        <span className="fin-badge-dot" />{bid ? payrollBatchShortLabel(bid) : 'Gộp (cũ)'}
+                      </span>
+                    </td>
                     <td>{String(r.branch_scope || 'ALL') === 'ALL' ? 'Toàn hệ thống' : branchLabelOf(r.branch_scope)}</td>
                     <td><span className="fin-badge" style={{ color: st.fg, background: st.bg, borderColor: st.fg + '40' }}><span className="fin-badge-dot" />{st.label}</span></td>
                     <td className="num">{r.total_employees ?? 0}</td>
@@ -2359,7 +2577,7 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
                   </tr>
                 );
               })}
-              {monthRuns.length === 0 && <tr><td colSpan={7} className="fin-empty">Chưa có kỳ — danh sách phiếu từng nhân viên ở trên sẽ hiện sau khi tính lương.</td></tr>}
+              {monthRuns.length === 0 && <tr><td colSpan={8} className="fin-empty">Chưa có kỳ — danh sách phiếu từng nhân viên ở trên sẽ hiện sau khi tính lương.</td></tr>}
             </tbody>
           </table>
         </div>

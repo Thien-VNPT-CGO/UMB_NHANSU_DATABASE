@@ -4,6 +4,8 @@ export interface PayrollRun {
   run_id: string;
   period: string; // YYYY-MM
   branch_scope: string; // 'ALL' or specific branch
+  /** Đợt tính lương: STORE | TONG_HOP | ALL (dữ liệu cũ không có = tính gộp). */
+  batch_scope?: string;
   status: PayrollRunStatus;
   total_employees: number;
   total_hours: number;
@@ -92,6 +94,8 @@ export interface PayslipItem {
   employee_code: string;
   full_name: string;
   period: string;
+  /** Đợt tính lương của phiếu (STORE | TONG_HOP | ALL). */
+  batch_scope?: string;
   total_shifts: number;
   /** Số ca vắng không lương (qua 3h không check-in, có/không bản ghi ABSENT). */
   absent_shifts?: number;

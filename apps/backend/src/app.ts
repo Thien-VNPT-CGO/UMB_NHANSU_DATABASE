@@ -7221,13 +7221,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   /** Bước hợp lệ để PHÁT HÀNH PHIẾU: tab Kỳ lương (5) hoặc tab Phiếu lương (6). */
   const PUBLISH_STEPS = ['fin-payroll-periods', 'fin-payslips'];
 
-  // Tính lương theo công thức Excel cho toàn bộ NV (Finance).
+  // Tính lương theo công thức Excel cho 1 ĐỢT của kỳ (Finance).
+  // body.batch: 'STORE' (Cửa hàng) | 'TONG_HOP' (VP+Xưởng+Sales) | 'ALL'/bỏ trống.
   app.post('/payroll/:period/calculate-formula', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollPeriodParams, body: payrollCalculateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       await guardFinanceStep(req, req.params.period, CALC_STEPS, 'Tính lương');
       const branchScope = req.body.branchScope || '*';
-      const result = await payrollService.calculateFormulaPayroll(req.params.period, branchScope, req.user!.id);
-      broadcastUpdate('payroll', { action: 'calculate', period: req.params.period });
+      const batch = String((req.body as any).batch || '').trim() || undefined;
+      const result = await payrollService.calculateFormulaPayroll(req.params.period, branchScope, req.user!.id, { batch });
+      broadcastUpdate('payroll', { action: 'calculate', period: req.params.period, batch });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });

@@ -28,7 +28,9 @@ Web app riêng, phục vụ tại `https://<domain>/violations/`, dùng chung ba
 
 Bộ quy chế gốc bám theo bảng **“QUY CHẾ LÀM VIỆC DÀNH CHO NHÂN VIÊN TẠI CỬA HÀNG”**
 (32 mã lỗi, 2 nhóm `TÁC PHONG` và `VẬN HÀNH`). Mỗi mã có nội dung và mức phạt riêng; khi chọn mã
-ở màn hình **Bắt Lỗi Vi Phạm**, mức phạt được điền tự động và vẫn cho phép điều chỉnh trước khi lưu.
+ở màn hình **Bắt Lỗi Vi Phạm**, mức phạt được điền tự động và có thể sửa lại số tiền mong muốn ngay
+trong bảng chọn mã hoặc trong danh sách lỗi của phiếu trước khi lưu. Nút khôi phục giúp trả về đúng
+mức phạt gốc của quy chế.
 
 - Mức phạt cố định (VD `VAO TRE 5P` → 30.000đ) điền thẳng vào ô tiền.
 - Mức phạt không quy ra số tiền cố định (VD `10% lương/ tháng`, `Công ty quyết định`,
