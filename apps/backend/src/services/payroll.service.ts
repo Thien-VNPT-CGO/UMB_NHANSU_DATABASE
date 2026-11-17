@@ -632,11 +632,21 @@ export class PayrollService {
     // Bảng công/BCC lấy đúng nguồn 2 tab Finance đang hiển thị. Cache 45s của
     // getFinanceTimesheet được xóa ngay khi có ghi công/ca/lương (app.ts +
     // server.ts) nên số liệu luôn là thời điểm hiện tại, không trễ 60s.
-    const [timesheet, periodData, runsAll, settings] = await Promise.all([
+    const [timesheet, periodData, runsAll, settings, employeesAll] = await Promise.all([
       this.getFinanceTimesheet(period, '*').catch(() => null as any),
       this.getPeriodSlips(period).catch(() => ({ run: null, slips: [] } as any)),
       this.repo.listPayrollRuns().catch(() => [] as any[]),
       (this.repo as any)?.getSystemSettings?.().catch(() => ({})),
+      // Repo test/legacy có thể chưa cài listEmployees — thiếu danh sách nhân sự
+      // thì vẫn chạy được (chỉ dựa vào dòng chấm công như trước).
+      (async () => {
+        const fn = (this.repo as any)?.listEmployees;
+        if (typeof fn !== 'function') return [] as any[];
+        try {
+          const rows = await fn.call(this.repo, { branch: '*' });
+          return Array.isArray(rows) ? rows : [];
+        } catch { return [] as any[]; }
+      })(),
     ]);
 
     const totals: any = (timesheet as any)?.totals || {};
@@ -668,8 +678,18 @@ export class PayrollService {
     // chấm công). Đợt đã tính = có run/phiếu của đợt đó. Run cũ tính gộp (không
     // có batch_scope) được coi là phủ toàn bộ đợt bắt buộc — không phá dữ liệu cũ.
     const tsRows: any[] = ((timesheet as any)?.rows || []) as any[];
+    // Đợt bắt buộc phải dựa trên NHÂN SỰ của kỳ, không chỉ dòng chấm công:
+    // khối Văn phòng/Xưởng/Sales hưởng lương THÁNG có thể không có ca nào
+    // nhưng vẫn phải trả lương. Chỉ tính NV đã vào làm trong/trước kỳ và chưa nghỉ.
+    const { toDate: periodEnd } = monthRange(period);
+    const periodEmployees = ((employeesAll || []) as any[]).filter((e: any) => {
+      if (String(e?.employment_status || '').toUpperCase() === 'TERMINATED') return false;
+      const start = String(e?.start_date || e?.official_date || '').slice(0, 10);
+      return !start || start <= periodEnd;
+    });
     const requiredBatches = PAYROLL_BATCHES
-      .filter(b => tsRows.some((r: any) => employeeInBatch(r?.group, b.id)))
+      .filter(b => periodEmployees.some((e: any) => employeeInBatch(e?.group, b.id))
+        || tsRows.some((r: any) => employeeInBatch(r?.group, b.id)))
       .map(b => b.id);
     const coveredBatches = new Set<string>();
     const batchRunOf = new Map<string, any>();
@@ -677,9 +697,11 @@ export class PayrollService {
       if (slipRunIds.size > 0 && !slipRunIds.has(String(r?.run_id))) continue;
       const bid = String(batchOfRun(r) || 'ALL');
       if (bid === 'ALL') {
-        for (const rb of requiredBatches) {
-          coveredBatches.add(rb);
-          if (!batchRunOf.has(rb)) batchRunOf.set(rb, r);
+        // Kỳ cũ tính gộp toàn công ty phủ MỌI đợt (kể cả đợt không có ca chấm
+        // công như khối lương tháng) — không để đợt đó hiện "chưa tính" oan.
+        for (const b of PAYROLL_BATCHES) {
+          coveredBatches.add(b.id);
+          if (!batchRunOf.has(b.id)) batchRunOf.set(b.id, r);
         }
       } else if (requiredBatches.includes(bid as any)) {
         coveredBatches.add(bid);
@@ -691,6 +713,15 @@ export class PayrollService {
     // Số NV + tiền từng đợt để tab Kỳ lương hiển thị/điều khiển riêng từng đợt.
     const batchEmployeeIds = new Map<string, Set<string>>();
     for (const b of PAYROLL_BATCHES) batchEmployeeIds.set(b.id, new Set<string>());
+    // Nguồn 1: nhân sự của kỳ (kể cả NV lương tháng không có ca).
+    for (const e of periodEmployees) {
+      const empId = String((e as any)?.employee_id || '');
+      if (!empId) continue;
+      for (const b of PAYROLL_BATCHES) {
+        if (employeeInBatch((e as any)?.group, b.id)) batchEmployeeIds.get(b.id)!.add(empId);
+      }
+    }
+    // Nguồn 2: dòng chấm công (bù NV đã rời hệ thống nhưng còn công trong kỳ).
     for (const r of tsRows) {
       const empId = String((r as any)?.employeeId || '');
       if (!empId) continue;
@@ -1310,15 +1341,23 @@ export class PayrollService {
         const inputsArr = await this.repo.getPayrollInputs(period).catch(() => []);
         const inputs = new Map((inputsArr || []).map((x: any) => [x.employee_id, x]));
         const allEmployees = await this.repo.listEmployees({ branch: branchScope });
+        const { fromDate, toDate } = monthRange(period);
+        // Chỉ tính NV đã vào làm TRONG hoặc TRƯỚC kỳ. NV có start_date sau ngày
+        // cuối kỳ (VD vừa tuyển tháng 11) KHÔNG được sinh phiếu lương tháng 10 —
+        // trước đây họ vẫn bị tạo phiếu (lương tháng đầy đủ) làm sai tổng chi.
+        const employedInPeriod = (emp: any): boolean => {
+          const start = String((emp as any)?.start_date || (emp as any)?.official_date || '').slice(0, 10);
+          return !start || start <= toDate;
+        };
         // Lọc theo ĐỢT: chỉ những NV thuộc khối của đợt này được tính.
-        const employees = batch === 'ALL'
-          ? allEmployees
-          : (allEmployees || []).filter((emp: any) => employeeInBatch((emp as any)?.group, batch));
+        const employees = (batch === 'ALL'
+          ? (allEmployees || [])
+          : (allEmployees || []).filter((emp: any) => employeeInBatch((emp as any)?.group, batch)))
+          .filter(employedInPeriod);
         if (batch !== 'ALL' && employees.length === 0) {
           throw new Error(`EMPTY_BATCH: không có nhân viên nào thuộc ${batch === 'STORE' ? 'Khối Cửa hàng' : 'Khối Tổng hợp (Văn phòng + Xưởng + Sales)'} — kiểm tra lại khối nhân sự trước khi tính!`);
         }
         const salaryConfigs: any = await this.salaryConfig?.getAll().catch(() => ({})) || {};
-        const { fromDate, toDate } = monthRange(period);
 
         const payslipItems: Omit<PayslipItem, 'created_at' | 'updated_at'>[] = [];
         let totalHours = 0;

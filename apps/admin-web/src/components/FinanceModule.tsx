@@ -415,7 +415,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
     loadWorkflow();
     if (['fin-timesheet', 'fin-bcc', 'fin-dashboard', 'fin-calculate', 'fin-payroll-sheet'].includes(activeTab)) loadFinSheet();
     if (['fin-payslips', 'fin-payment', 'fin-payroll-periods', 'fin-signatures'].includes(activeTab)) loadSlips();
-    if (['fin-payroll-periods', 'fin-dashboard'].includes(activeTab)) loadRuns();
+    if (['fin-payroll-periods', 'fin-dashboard', 'fin-calculate'].includes(activeTab)) loadRuns();
     if (activeTab === 'fin-calculate') { loadFormula(); if (!isUserEditing()) loadInputs(); }
     if (activeTab === 'fin-payment') loadSlips();
     // KHÔNG gọi onRefreshData (loadAllData 10 API của App) trong realtime nữa;
@@ -467,7 +467,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
     loadColVis();
     switch (activeTab) {
       case 'fin-dashboard': loadFinSheet(); loadRuns(); break;
-      case 'fin-timesheet': case 'fin-bcc': case 'fin-calculate': case 'fin-payroll-sheet': loadFinSheet(); if (activeTab === 'fin-calculate') { loadFormula(); loadInputs(); } break;
+      case 'fin-timesheet': case 'fin-bcc': case 'fin-calculate': case 'fin-payroll-sheet': loadFinSheet(); if (activeTab === 'fin-calculate') { loadFormula(); loadInputs(); loadRuns(); } break;
       case 'fin-payroll-periods': loadRuns(); loadSlips(); break;
       case 'fin-payslips': case 'fin-payment': case 'fin-signatures': loadSlips(); break;
     }

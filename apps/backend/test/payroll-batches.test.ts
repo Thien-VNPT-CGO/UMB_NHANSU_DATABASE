@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PayrollService } from '../src/services/payroll.service.js';
+import { normalizeSheetPeriod } from '../src/services/google-sheets-sync.service.js';
 import { PAYROLL_BATCHES, employeeInBatch } from '@ubm/shared';
 
 /**
@@ -215,4 +216,65 @@ test('kỳ lương cũ tính gộp (ALL) vẫn được coi là phủ cả 2 đ�
     assert.equal(info.employeeCount, expected);
     assert.equal(info.slipCount, expected);
   }
+});
+
+test('workflow: NV lương THÁNG không có ca chấm công vẫn là đợt bắt buộc + kỳ gộp cũ phủ cả 2 đợt', async () => {
+  // Thực tế tháng 10/2026: chỉ khối Cửa hàng có ca, Văn phòng/Xưởng/Sales
+  // hưởng lương tháng không có ca nào → trước đây đợt Tổng hợp hiện "chưa tính"
+  // dù nhân sự vẫn phải được trả lương.
+  const state = makeState();
+  state.runs.push({
+    run_id: 'PAY_2026_10_1794199425848', period: '2026-10', branch_scope: '*', status: 'APPROVED',
+    total_employees: 2, created_at: '2026-11-09T04:43:45.930Z', updated_at: '2026-11-09T04:43:45.930Z',
+  });
+  for (const empId of ['E1', 'E2']) {
+    state.slips.push({
+      item_id: `SLIP_ALL_${empId}`, run_id: 'PAY_2026_10_1794199425848', employee_id: empId,
+      employee_code: empId, period: '2026-10', standard_hours: 0, net_pay: 100000, status: 'APPROVED',
+      created_at: '2026-11-09T04:43:45.930Z', updated_at: '2026-11-09T04:43:45.930Z',
+    });
+  }
+  const svc: any = new PayrollService(makeRepo(state) as any);
+  svc.getFinanceTimesheet = async () => ({
+    totals: { totalShifts: 1, full: 1, partial: 0, absent: 0 },
+    rows: [{ employeeId: 'E1', group: 'STORE' }],
+  });
+
+  const wf: any = await svc.getWorkflowStatus('2026-10');
+  assert.deepEqual([...wf.requiredBatches].sort(), ['STORE', 'TONG_HOP']);
+  assert.deepEqual(wf.missingBatches, []);
+  assert.equal(wf.allBatchesCalculated, true);
+  const store: any = wf.batches.find((b: any) => b.id === 'STORE');
+  const tongHop: any = wf.batches.find((b: any) => b.id === 'TONG_HOP');
+  assert.equal(store.calculated, true);
+  assert.equal(store.slipCount, 1);
+  assert.equal(tongHop.calculated, true);
+  assert.equal(tongHop.status, 'APPROVED');
+  assert.equal(tongHop.run_id, 'PAY_2026_10_1794199425848');
+  assert.equal(tongHop.slipCount, 1);
+  assert.equal(tongHop.employeeCount, 1);
+});
+
+test('tính lương: NV có start_date SAU kỳ không được sinh phiếu kỳ đó', async () => {
+  const futureHire = {
+    ...EMP_OFFICE, employee_id: 'E3', employee_code: 'NV03',
+    full_name: 'Nhân viên mới tháng 11', start_date: '2026-11-05',
+  };
+  const state = makeState([EMP_STORE, EMP_OFFICE, futureHire]);
+  const svc: any = new PayrollService(makeRepo(state) as any);
+
+  const oct = await calc(svc, '2026-10', 'TONG_HOP');
+  assert.deepEqual(oct.items.map((i: any) => i.employee_id), ['E2']);
+
+  const nov = await calc(svc, '2026-11', 'TONG_HOP');
+  assert.deepEqual(nov.items.map((i: any) => i.employee_id).sort(), ['E2', 'E3']);
+});
+
+test('kỳ lương đọc từ Sheets: số serial Excel 46296/46327 quy về đúng YYYY-MM', () => {
+  assert.equal(normalizeSheetPeriod(46296), '2026-10');
+  assert.equal(normalizeSheetPeriod('46296'), '2026-10');
+  assert.equal(normalizeSheetPeriod(46327), '2026-11');
+  assert.equal(normalizeSheetPeriod('2026-10-01'), '2026-10');
+  assert.equal(normalizeSheetPeriod('2026-10'), '2026-10');
+  assert.equal(normalizeSheetPeriod('01/10/2026'), '2026-10');
 });
