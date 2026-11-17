@@ -11,6 +11,8 @@ import {
   CHECKIN_ACCURACY_MAX_M,
   checkinAllowedMeters,
   haversine,
+  isChargingStop,
+  stopHasGeo,
   type Coords,
 } from './driver-shared';
 
@@ -264,9 +266,11 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
     // Sai số GPS trong cửa hàng/khu phố thường lớn: chỉ chặn khi GPS hỏng hẳn,
     // còn lại dùng dung sai như backend để tài xế đứng tại chi nhánh bấm được.
     // Chế độ Test: chỉ cần có toạ độ, không kiểm tra sai số/khoảng cách.
+    const charging = isChargingStop(stop);
     const c = needCoords('bấm điểm', testMode ? 100000 : CHECKIN_ACCURACY_MAX_M);
     if (!c || !current) return;
-    if (!testMode) {
+    // Trạm sạc không cố định → không kiểm tra khoảng cách tới toạ độ cấu hình.
+    if (!testMode && !charging) {
       const d = haversine(c.lat, c.lng, Number(stop.latitude), Number(stop.longitude));
       const allowed = checkinAllowedMeters(stop, c.accuracy);
       if (d > allowed) {
@@ -276,11 +280,17 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
     }
     setBusy(`ci_${stop.stop_id}`);
     try {
-      await apiRequest('/ev/me/checkins', {
+      const r: any = await apiRequest('/ev/me/checkins', {
         method: 'POST',
         body: JSON.stringify({ shift_id: current.shift_id, stop_id: stop.stop_id, latitude: c.lat, longitude: c.lng, accuracy: c.accuracy }),
       });
-      showToast(`✅ Đã xác nhận ${stop.name}`);
+      if (r?.charging_confirmed) {
+        showToast('✅ Đã ghi nhớ vị trí trạm sạc cho các ca sau.');
+      } else if (Number(r?.charging_pending_count) > 0) {
+        showToast(`📍 Đã lưu tạm vị trí sạc (${r.charging_pending_count}/3). Bấm lại đúng chỗ để xác nhận.`);
+      } else {
+        showToast(`✅ Đã xác nhận ${stop.name}`);
+      }
       await load(true);
     } catch (e: any) { showToast(`⚠️ ${e?.message || 'Xác nhận điểm thất bại.'}`); }
     finally { setBusy(null); }
@@ -377,9 +387,11 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
   const stops: any[] = detail?.stops || [];
   const nextStop = useMemo(() => stops.find((s: any) => {
     if (s.isCompleted) return false;
+    // Trạm sạc không cố định: luôn là điểm bấm được, dù chưa có toạ độ (0,0).
+    if (isChargingStop(s)) return true;
     const lat = Number(s.latitude);
     const lng = Number(s.longitude);
-    // Trạm sạc tùy chọn ghim toạ độ động, seed (0,0) → không phải điểm cần đi tới.
+    // Điểm tùy chọn khác chưa ghim toạ độ → không phải điểm cần đi tới.
     if (!s.is_mandatory && (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0))) return false;
     return true;
   }), [stops]);
@@ -394,7 +406,7 @@ export function useDriverData(showToast: (msg: string) => void, refreshKey = 0, 
     return Math.round((base + Number(nextStop.sla_minutes || 0) * 60000 - nowMs) / 1000);
   }, [stops, nextStop, current, nowMs]);
 
-  const distToNext = coords && nextStop
+  const distToNext = coords && nextStop && stopHasGeo(nextStop)
     ? haversine(coords.lat, coords.lng, Number(nextStop.latitude), Number(nextStop.longitude))
     : null;
 

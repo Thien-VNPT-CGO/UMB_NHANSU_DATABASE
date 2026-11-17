@@ -1350,17 +1350,41 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         stopId: stop.stop_id,
         driverLocation: { latitude: req.body.latitude, longitude: req.body.longitude, accuracy: req.body.accuracy },
       });
-      ev.realtime.broadcastCheckin(shift.shift_id, shift.driver_id, {
-        stopId: stop.stop_id,
-        stopOrder: checkin.stop_order,
-        stopName: stop.name,
-        checkedInAt: checkin.checked_in_at,
-        isLate: !!checkin.is_late,
-        lateMinutes: Number(checkin.late_minutes || 0),
-        penaltyAmount: Number(checkin.penalty_amount || 0),
-      });
-      broadcastUpdate('evShiftCheckin', { action: 'create', shiftId: shift.shift_id });
-      res.status(201).json(checkin);
+      // Trạm sạc: lần bấm 1/3, 2/3 chỉ lưu tạm GPS, KHÔNG phát check-in realtime
+      // (tránh báo "đã hoàn tất điểm" khi chưa đủ 3 lần trùng toạ độ).
+      if (!checkin.is_repeat) {
+        ev.realtime.broadcastCheckin(shift.shift_id, shift.driver_id, {
+          stopId: stop.stop_id,
+          stopOrder: checkin.stop_order,
+          stopName: stop.name,
+          checkedInAt: checkin.checked_in_at,
+          isLate: !!checkin.is_late,
+          lateMinutes: Number(checkin.late_minutes || 0),
+          penaltyAmount: Number(checkin.penalty_amount || 0),
+        });
+        broadcastUpdate('evShiftCheckin', { action: 'create', shiftId: shift.shift_id });
+      }
+      // Đủ 3 lần GPS trùng toạ độ → trạm sạc được ghi nhớ, đẩy ngay lên Live Map.
+      if (checkin.charging_confirmed) {
+        const tickets = await ev.charging.getChargingTicketsByShift(shift.shift_id).catch(() => []);
+        const ticket = tickets
+          .slice()
+          .sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))[0];
+        const stationPayload = {
+          ticketId: ticket?.ticket_id || '',
+          shiftId: shift.shift_id,
+          driverId: shift.driver_id,
+          routeId: shift.route_id,
+          stopId: stop.stop_id,
+          stopName: stop.name,
+          latitude: Number(req.body.latitude),
+          longitude: Number(req.body.longitude),
+          address: `Trạm sạc tại ${Number(req.body.latitude).toFixed(6)}, ${Number(req.body.longitude).toFixed(6)}`,
+        };
+        ev.realtime.broadcastChargingStationUpdated(stationPayload);
+        broadcastUpdate('ev', { area: 'charging-station', ...stationPayload });
+      }
+      res.status(checkin.is_repeat ? 200 : 201).json(checkin);
     } catch (err: any) { evErr(res, err); }
   });
 

@@ -90,6 +90,16 @@ export const checkinAllowedMeters = (stop: any, accuracy?: number | null) =>
 export const isCheckinDistanceOk = (stop: any, distance: number | null, accuracy?: number | null) =>
   distance != null && distance <= checkinAllowedMeters(stop, accuracy);
 
+/** Trạm sạc không cố định: cho phép bấm điểm dù chưa có toạ độ cấu hình. */
+export const isChargingStop = (stop: any) => String(stop?.stop_type || '') === 'CHARGING';
+
+/** Điểm dừng đã có toạ độ dùng được (loại trừ seed 0,0). */
+export const stopHasGeo = (stop: any) => {
+  const lat = Number(stop?.latitude);
+  const lng = Number(stop?.longitude);
+  return Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0);
+};
+
 export const fmtClock = (sec: number) => {
   const s = Math.max(0, Math.floor(sec));
   const h = Math.floor(s / 3600);

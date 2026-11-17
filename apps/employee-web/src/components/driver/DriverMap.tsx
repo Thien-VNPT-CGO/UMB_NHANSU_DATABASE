@@ -3,12 +3,14 @@
  * Dùng Leaflet + OpenStreetMap (không cần API key, chạy trên điện thoại).
  */
 import { useEffect, useMemo, useRef } from 'react';
+import { CHARGING_POINT_CONFIRM_HITS } from '@ubm/shared';
 import * as LeafletModule from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { CheckCircle2, LocateFixed, MapPin, Navigation } from 'lucide-react';
 import {
   BigButton, Card, CHECKIN_ACCURACY_MAX_M, DC, Pill, ScreenTitle,
-  checkinAllowedMeters, checkinRadius, checkinTolerance, fmtMin, isCheckinDistanceOk, openDirections,
+  checkinAllowedMeters, checkinRadius, checkinTolerance, fmtMin, isCheckinDistanceOk, isChargingStop, openDirections,
+  stopHasGeo,
 } from './driver-shared';
 import type { DriverData } from './useDriverData';
 
@@ -108,6 +110,10 @@ export function DriverMap({ d }: { d: DriverData }) {
   };
 
   const next = d.nextStop;
+  const nextIsCharging = isChargingStop(next);
+  const nextHasGeo = stopHasGeo(next);
+  const nextChargingCount = Number(next?.chargingPendingCount || 0);
+  const nextChargingConfirmed = !!next?.chargingConfirmed;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -165,20 +171,34 @@ export function DriverMap({ d }: { d: DriverData }) {
           <div style={{ fontSize: 11.5, color: DC.muted, fontWeight: 700, marginTop: 5 }}>
             {d.testMode
               ? 'Chế độ Test: xác nhận được mọi điểm, không giới hạn khoảng cách.'
-              : d.distToNext == null
-                ? 'Chưa có GPS để tính khoảng cách'
-                : `Còn cách ${Math.round(d.distToNext)}m • cho phép ≤${Math.round(checkinAllowedMeters(next, d.coords?.accuracy))}m (bán kính ${Math.round(checkinRadius(next))}m + dung sai GPS ${Math.round(checkinTolerance(d.coords?.accuracy))}m)`}
+              : nextIsCharging
+                ? nextChargingConfirmed
+                  ? 'Vị trí trạm sạc đã được ghi nhớ. Bấm lại nếu sạc ở chỗ khác.'
+                  : `Trạm sạc không cố định — bấm gửi GPS tại chỗ đang sạc (${nextChargingCount}/${CHARGING_POINT_CONFIRM_HITS} lần).`
+                : d.distToNext == null
+                  ? 'Chưa có GPS để tính khoảng cách'
+                  : `Còn cách ${Math.round(d.distToNext)}m • cho phép ≤${Math.round(checkinAllowedMeters(next, d.coords?.accuracy))}m (bán kính ${Math.round(checkinRadius(next))}m + dung sai GPS ${Math.round(checkinTolerance(d.coords?.accuracy))}m)`}
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 11 }}>
-            <BigButton tone="ghost" style={{ flex: 1, padding: '11px', fontSize: 12.5 }} onClick={() => openDirections(Number(next.latitude), Number(next.longitude), next.name)}>
-              <Navigation size={14} /> Mở Google Maps
-            </BigButton>
+            {nextHasGeo && (
+              <BigButton tone="ghost" style={{ flex: 1, padding: '11px', fontSize: 12.5 }} onClick={() => openDirections(Number(next.latitude), Number(next.longitude), next.name)}>
+                <Navigation size={14} /> Mở Google Maps
+              </BigButton>
+            )}
             <BigButton
-              style={{ flex: 1, padding: '11px', fontSize: 12.5 }}
-              disabled={!d.isRunning || d.busy === `ci_${next.stop_id}` || (!d.testMode && (!isCheckinDistanceOk(next, d.distToNext, d.coords?.accuracy) || !d.coords || d.coords.accuracy > CHECKIN_ACCURACY_MAX_M))}
+              style={{ flex: nextHasGeo ? 1 : 1.4, padding: '11px', fontSize: 12.5 }}
+              disabled={!d.isRunning || d.busy === `ci_${next.stop_id}` || (!d.testMode && (!d.coords || d.coords.accuracy > CHECKIN_ACCURACY_MAX_M || (!nextIsCharging && !isCheckinDistanceOk(next, d.distToNext, d.coords?.accuracy))))}
               onClick={() => void d.checkin(next)}
             >
-              <CheckCircle2 size={15} /> {d.testMode ? 'Xác nhận (Test)' : 'Xác nhận'}
+              <CheckCircle2 size={15} /> {d.testMode
+                ? 'Xác nhận (Test)'
+                : nextIsCharging
+                  ? nextChargingConfirmed
+                    ? 'Cập nhật vị trí sạc'
+                    : nextChargingCount > 0
+                      ? `Ghi nhận lại (${nextChargingCount}/${CHARGING_POINT_CONFIRM_HITS})`
+                      : 'Ghi nhận vị trí sạc'
+                  : 'Xác nhận'}
             </BigButton>
           </div>
         </Card>

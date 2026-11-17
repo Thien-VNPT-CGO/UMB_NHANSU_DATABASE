@@ -2,6 +2,7 @@
  * Tab "Hôm nay" — ca đang chạy, tiến độ giao, SLA và bấm xác nhận điểm.
  */
 import { useRef, useState } from 'react';
+import { CHARGING_POINT_CONFIRM_HITS } from '@ubm/shared';
 import {
   AlertTriangle, CalendarDays, CheckCircle2, ChevronDown, ChevronUp, Clock, MapPin, Navigation, Play, RefreshCw, Square, Truck,
 } from 'lucide-react';
@@ -9,7 +10,7 @@ import { apiRequest } from '../../services/api';
 import {
   BigButton, Card, CHECKIN_ACCURACY_GOOD_M, CHECKIN_ACCURACY_MAX_M, DC, Empty, Pill, ScreenTitle,
   STATUS_LABEL, Stat, checkinAllowedMeters, checkinRadius, checkinTolerance,
-  fmtDay, fmtMin, fmtTime, haversine, isCheckinDistanceOk, openDirections,
+  fmtDay, fmtMin, fmtTime, haversine, isCheckinDistanceOk, isChargingStop, openDirections, stopHasGeo,
 } from './driver-shared';
 import type { DriverData } from './useDriverData';
 
@@ -62,8 +63,12 @@ export function DriverToday({ d, onOpenExplanation }: { d: DriverData; onOpenExp
   // Chế độ Test (Admin bật): bỏ mọi ràng buộc vị trí/thứ tự.
   const gpsOk = testMode || (!!coords && coords.accuracy <= CHECKIN_ACCURACY_MAX_M);
   const gpsWeak = !!coords && coords.accuracy > CHECKIN_ACCURACY_GOOD_M;
-  const nextAllowed = nextStop ? checkinAllowedMeters(nextStop, coords?.accuracy) : null;
-  const nextWithin = testMode || isCheckinDistanceOk(nextStop, distToNext, coords?.accuracy);
+  const nextIsCharging = isChargingStop(nextStop);
+  const nextHasGeo = stopHasGeo(nextStop);
+  const nextChargingCount = Number(nextStop?.chargingPendingCount || 0);
+  const nextChargingConfirmed = !!nextStop?.chargingConfirmed;
+  const nextAllowed = nextStop && !nextIsCharging ? checkinAllowedMeters(nextStop, coords?.accuracy) : null;
+  const nextWithin = !!nextStop && (testMode || nextIsCharging || isCheckinDistanceOk(nextStop, distToNext, coords?.accuracy));
   const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
   const tomorrow = addDaysIso(today, 1);
   // Luôn hiển thị đủ 7 ngày (kể cả Thứ 7 & Chủ nhật) dù ngày đó chưa có ca.
@@ -301,7 +306,9 @@ export function DriverToday({ d, onOpenExplanation }: { d: DriverData; onOpenExp
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
             <Navigation size={14} color={DC.brand} />
             <div style={{ fontSize: 10.5, fontWeight: 800, color: DC.brand, letterSpacing: 0.4 }}>ĐIỂM KẾ TIẾP</div>
-            {nextWithin && <Pill text={testMode ? 'CHẾ ĐỘ TEST' : 'TRONG BÁN KÍNH'} fg={testMode ? DC.warn : DC.success} bg={testMode ? DC.warnSoft : DC.successSoft} style={{ marginLeft: 'auto' }} />}
+            {nextIsCharging
+              ? <Pill text="GPS ĐỘNG" fg={DC.purple} bg={DC.purpleSoft} style={{ marginLeft: 'auto' }} />
+              : nextWithin && <Pill text={testMode ? 'CHẾ ĐỘ TEST' : 'TRONG BÁN KÍNH'} fg={testMode ? DC.warn : DC.success} bg={testMode ? DC.warnSoft : DC.successSoft} style={{ marginLeft: 'auto' }} />}
           </div>
           <div style={{ fontSize: 16, fontWeight: 900, color: DC.ink }}>{nextStop.name}</div>
           {nextStop.address && (
@@ -310,29 +317,51 @@ export function DriverToday({ d, onOpenExplanation }: { d: DriverData; onOpenExp
           <div style={{ fontSize: 10.5, color: DC.muted, fontWeight: 700, marginTop: 5 }}>
             {testMode
               ? 'Chế độ Test: xác nhận được mọi điểm, không giới hạn khoảng cách.'
-              : distToNext == null
-                ? 'Chưa có GPS để tính khoảng cách'
-                : `Còn cách ${Math.round(distToNext)}m • cho phép ≤${Math.round(nextAllowed || 0)}m (bán kính ${Math.round(checkinRadius(nextStop))}m + dung sai GPS ${Math.round(checkinTolerance(coords?.accuracy))}m)`}
+              : nextIsCharging
+                ? nextChargingConfirmed
+                  ? 'Vị trí trạm sạc đã được ghi nhớ. Bấm lại nếu bạn sạc ở chỗ khác.'
+                  : `Trạm sạc không cố định — bấm gửi GPS tại chỗ đang sạc. Đã ghi nhận ${nextChargingCount}/${CHARGING_POINT_CONFIRM_HITS} lần, đủ ${CHARGING_POINT_CONFIRM_HITS} lần trùng toạ độ hệ thống sẽ ghi nhớ trạm.`
+                : distToNext == null
+                  ? 'Chưa có GPS để tính khoảng cách'
+                  : `Còn cách ${Math.round(distToNext)}m • cho phép ≤${Math.round(nextAllowed || 0)}m (bán kính ${Math.round(checkinRadius(nextStop))}m + dung sai GPS ${Math.round(checkinTolerance(coords?.accuracy))}m)`}
           </div>
+          {nextIsCharging && !nextChargingConfirmed && nextChargingCount > 0 && (
+            <div style={{ display: 'flex', gap: 5, marginTop: 8 }}>
+              {Array.from({ length: CHARGING_POINT_CONFIRM_HITS }, (_, i) => (
+                <div key={i} style={{
+                  flex: 1, height: 6, borderRadius: 999,
+                  backgroundColor: i < nextChargingCount ? DC.purple : '#E2E8F0',
+                }} />
+              ))}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 7, marginTop: 10 }}>
+            {nextHasGeo && (
+              <BigButton
+                tone="ghost"
+                style={{ flex: 1, padding: '11px 10px', fontSize: 12.5 }}
+                onClick={() => openDirections(Number(nextStop.latitude), Number(nextStop.longitude), nextStop.name)}
+              >
+                <Navigation size={14} /> Chỉ đường
+              </BigButton>
+            )}
             <BigButton
-              tone="ghost"
-              style={{ flex: 1, padding: '11px 10px', fontSize: 12.5 }}
-              onClick={() => openDirections(Number(nextStop.latitude), Number(nextStop.longitude), nextStop.name)}
-            >
-              <Navigation size={14} /> Chỉ đường
-            </BigButton>
-            <BigButton
-              style={{ flex: 1.15, padding: '11px 10px', fontSize: 12.5 }}
-              disabled={(!nextWithin || !gpsOk) && !testMode || busy === `ci_${nextStop.stop_id}`}
+              style={{ flex: nextHasGeo ? 1.15 : 1, padding: '11px 10px', fontSize: 12.5 }}
+              disabled={((!nextWithin || !gpsOk) && !testMode) || busy === `ci_${nextStop.stop_id}`}
               onClick={() => void d.checkin(nextStop)}
             >
               <CheckCircle2 size={15} />
               {busy === `ci_${nextStop.stop_id}`
                 ? 'ĐANG GỬI...'
-                : nextWithin
-                  ? 'XÁC NHẬN'
-                  : `${distToNext == null ? '—' : Math.round(distToNext)}m`}
+                : nextIsCharging
+                  ? nextChargingConfirmed
+                    ? 'CẬP NHẬT VỊ TRÍ SẠC'
+                    : nextChargingCount > 0
+                      ? `GHI NHẬN LẠI (${nextChargingCount}/${CHARGING_POINT_CONFIRM_HITS})`
+                      : 'GHI NHẬN VỊ TRÍ SẠC'
+                  : nextWithin
+                    ? 'XÁC NHẬN'
+                    : `${distToNext == null ? '—' : Math.round(distToNext)}m`}
             </BigButton>
           </div>
         </Card>
@@ -353,11 +382,14 @@ export function DriverToday({ d, onOpenExplanation }: { d: DriverData; onOpenExp
             {stops.map((s: any, idx: number) => {
               const done = !!s.isCompleted;
               const isNext = nextStop?.stop_id === s.stop_id;
-              const dist = coords && Number(s.latitude) && Number(s.longitude)
+              const charging = isChargingStop(s);
+              const dist = coords && stopHasGeo(s)
                 ? haversine(coords.lat, coords.lng, Number(s.latitude), Number(s.longitude))
                 : null;
-              const inRange = testMode || isCheckinDistanceOk(s, dist, coords?.accuracy);
-              const canCheck = isRunning && !done && (testMode || (inRange && gpsOk));
+              const inRange = charging || testMode || isCheckinDistanceOk(s, dist, coords?.accuracy);
+              const canCheck = isRunning && (charging ? gpsOk : (!done && (testMode || (inRange && gpsOk))));
+              const chargingCount = Number(s.chargingPendingCount || 0);
+              const chargingConfirmed = !!s.chargingConfirmed;
               const lateCandidate = s.isLate ? issueCandidateOf(s.stop_id) : null;
               const shownPenalty = Number(s.penaltyAmount) > 0
                 ? Number(s.penaltyAmount)
@@ -436,7 +468,39 @@ export function DriverToday({ d, onOpenExplanation }: { d: DriverData; onOpenExp
                         </button>
                       </div>
                     )}
-                    {!done && isRunning && (
+                    {charging && isRunning && (
+                      <div style={{ marginTop: 7 }}>
+                        <div style={{
+                          fontSize: 10.5, fontWeight: 800, lineHeight: 1.55,
+                          color: chargingConfirmed ? DC.success : chargingCount > 0 ? DC.purple : DC.muted,
+                        }}>
+                          {chargingConfirmed
+                            ? '✅ Vị trí trạm sạc đã được ghi nhớ'
+                            : chargingCount > 0
+                              ? `📍 Đã lưu tạm ${chargingCount}/${CHARGING_POINT_CONFIRM_HITS} lần — bấm lại tại đúng chỗ đang sạc`
+                              : 'Trạm sạc không cố định — bấm gửi GPS tại chỗ đang sạc'}
+                        </div>
+                        <button
+                          onClick={() => void d.checkin(s)}
+                          disabled={!canCheck || busy === `ci_${s.stop_id}`}
+                          style={{
+                            marginTop: 6, padding: '7px 12px', borderRadius: 9, fontSize: 11.5, fontWeight: 800,
+                            border: 'none', cursor: canCheck ? 'pointer' : 'not-allowed',
+                            backgroundColor: canCheck ? DC.purple : '#F1F5F9',
+                            color: canCheck ? '#FFF' : DC.muted, opacity: canCheck ? 1 : 0.8,
+                          }}
+                        >
+                          {busy === `ci_${s.stop_id}`
+                            ? '...'
+                            : chargingConfirmed
+                              ? 'CẬP NHẬT VỊ TRÍ SẠC'
+                              : chargingCount > 0
+                                ? `GHI NHẬN LẠI (${chargingCount}/${CHARGING_POINT_CONFIRM_HITS})`
+                                : 'GHI NHẬN VỊ TRÍ SẠC'}
+                        </button>
+                      </div>
+                    )}
+                    {!done && isRunning && !charging && (
                       <button
                         onClick={() => void d.checkin(s)}
                         disabled={!canCheck || busy === `ci_${s.stop_id}`}

@@ -67,6 +67,11 @@ export interface EVRoute {
   version: number;
 }
 
+/** Số lần GPS trùng toạ độ để xác nhận một trạm sạc (trạm không cố định). */
+export const CHARGING_POINT_CONFIRM_HITS = 3;
+/** Bán kính coi là "cùng một toạ độ" khi tài xế bấm lại điểm sạc (m). */
+export const CHARGING_POINT_MATCH_RADIUS_M = 50;
+
 /** Điểm dừng trên lộ trình (có geofence) */
 export interface EVRouteStop {
   stop_id: string;
@@ -93,6 +98,22 @@ export interface EVRouteStop {
   stop_type: 'START' | 'DELIVERY' | 'OFFICE' | 'CHARGING' | 'END';
   is_mandatory: boolean;           // Bắt buộc check-in
   notes?: string;
+  /**
+   * TRẠM SẠC KHÔNG CỐ ĐỊNH — toạ độ ghi tạm từ các lần tài xế bấm nút Điểm.
+   * Mỗi lần bấm gửi GPS hiện tại; khi đủ `CHARGING_POINT_CONFIRM_HITS` lần
+   * trùng toạ độ (trong bán kính `CHARGING_POINT_MATCH_RADIUS_M`) hệ thống mới
+   * ghi nhớ vào `latitude`/`longitude` và thay thế điểm sạc cũ.
+   */
+  charging_pending_latitude?: number;
+  charging_pending_longitude?: number;
+  charging_pending_count?: number;
+  charging_pending_updated_at?: string;
+  /** Điểm sạc đã được xác nhận (đủ 3 lần GPS trùng toạ độ). */
+  charging_confirmed_at?: string;
+  charging_confirmed_latitude?: number;
+  charging_confirmed_longitude?: number;
+  charging_confirmed_address?: string;
+  charging_confirmed_by?: string;
   /**
    * Chỉ có trên điểm dừng HIỆU LỰC (lấy từ phiếu đổi lộ trình đã duyệt):
    * id phiếu + sản phẩm áp dụng. Điểm dừng gốc không có 2 trường này.
@@ -236,6 +257,14 @@ export interface EVShiftCheckin {
   penalty_amount: number;          // Tiền phạt chặng này
   is_missed: boolean;              // Quên không bấm (tự động phát hiện)
   notes?: string;
+  /**
+   * Chỉ trả về ở lần bấm điểm TRẠM SẠC:
+   * số lần GPS trùng toạ độ đã ghi nhận (1..3) và đã đủ để ghi nhớ chưa.
+   */
+  charging_pending_count?: number;
+  charging_confirmed?: boolean;
+  /** true = lần bấm này chỉ lưu tạm GPS, chưa tạo check-in mới. */
+  is_repeat?: boolean;
   created_at: string;
 }
 

@@ -442,6 +442,13 @@ export class EVShiftService {
       slaBaseAt?: string;
       /** Điểm cuối đang áp mốc nào: true = từ trạm sạc, false = từ chi nhánh. */
       slaFromCharging?: boolean;
+      /** Trạm sạc: số lần GPS trùng toạ độ đã ghi nhận (1..3). */
+      chargingPendingCount?: number;
+      /** Trạm sạc: đã đủ 3 lần GPS trùng và ghi nhớ vị trí. */
+      chargingConfirmed?: boolean;
+      chargingPendingLatitude?: number;
+      chargingPendingLongitude?: number;
+      chargingConfirmedAt?: string;
     }>;
   } | null> {
     const shift = await this.getShift(shiftId);
@@ -476,6 +483,26 @@ export class EVShiftService {
           ? new Date(chargingEndAt).toISOString()
           : undefined,
         slaFromCharging: stop.stop_type === 'END' ? hasCharging : undefined,
+        chargingPendingCount: stop.stop_type === 'CHARGING'
+          ? Number(stop.charging_pending_count || 0)
+          : undefined,
+        chargingConfirmed: stop.stop_type === 'CHARGING'
+          ? (!!stop.charging_confirmed_at
+            || (Number(stop.latitude) !== 0 || Number(stop.longitude) !== 0))
+          : undefined,
+        chargingPendingLatitude: stop.stop_type === 'CHARGING'
+          ? (Number.isFinite(Number(stop.charging_pending_latitude))
+            ? Number(stop.charging_pending_latitude)
+            : undefined)
+          : undefined,
+        chargingPendingLongitude: stop.stop_type === 'CHARGING'
+          ? (Number.isFinite(Number(stop.charging_pending_longitude))
+            ? Number(stop.charging_pending_longitude)
+            : undefined)
+          : undefined,
+        chargingConfirmedAt: stop.stop_type === 'CHARGING'
+          ? stop.charging_confirmed_at
+          : undefined,
       };
     });
 

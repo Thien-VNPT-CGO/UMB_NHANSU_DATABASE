@@ -1669,6 +1669,25 @@ export class MockSheetsAdapter implements ISheetsRepository {
       sla_minutes_without_charging: Number(input?.sla_minutes_without_charging) >= 0
         ? Number(input.sla_minutes_without_charging)
         : undefined,
+      charging_pending_latitude: Number.isFinite(Number(input?.charging_pending_latitude))
+        ? Number(input.charging_pending_latitude)
+        : undefined,
+      charging_pending_longitude: Number.isFinite(Number(input?.charging_pending_longitude))
+        ? Number(input.charging_pending_longitude)
+        : undefined,
+      charging_pending_count: Number(input?.charging_pending_count) > 0
+        ? Number(input.charging_pending_count)
+        : undefined,
+      charging_pending_updated_at: input?.charging_pending_updated_at,
+      charging_confirmed_at: input?.charging_confirmed_at,
+      charging_confirmed_latitude: Number.isFinite(Number(input?.charging_confirmed_latitude))
+        ? Number(input.charging_confirmed_latitude)
+        : undefined,
+      charging_confirmed_longitude: Number.isFinite(Number(input?.charging_confirmed_longitude))
+        ? Number(input.charging_confirmed_longitude)
+        : undefined,
+      charging_confirmed_address: input?.charging_confirmed_address,
+      charging_confirmed_by: input?.charging_confirmed_by,
       stop_type: (input?.stop_type as EVRouteStop['stop_type']) || 'DELIVERY',
       is_mandatory: input?.is_mandatory !== false,
       notes: String(input?.notes ?? '').trim() || undefined,
