@@ -103,6 +103,12 @@ import { PayrollService, financeSheetsSyncState } from './services/payroll.servi
 import { NotificationsService } from './services/notifications.service.js';
 import { autoRemindersTick, sendCheckinReminderForShift } from './services/auto-reminders.service.js';
 import {
+  adminPasswordStatusById,
+  markAdminPasswordChanged,
+  saveVpsPasswordMeta,
+  vpsPasswordStatus,
+} from './services/password-rotation.service.js';
+import {
   createAuthMiddleware,
   AuthenticatedRequest,
 } from './middlewares/auth.middleware.js';
@@ -2472,10 +2478,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         return res.status(400).json({ error: 'MISSING_CREDENTIALS' });
       }
       const updated = await authService.changeAdminPassword(req.user!.id, oldPassword, newPassword);
+      // Đếm ngược chu kỳ 6 tháng: ghi nhận mốc vừa đổi (lỗi ghi mốc không được
+      // làm hỏng thao tác đổi mật khẩu đã thành công).
+      await markAdminPasswordChanged(adapter, req.user!.id, new Date(), req.user!.id).catch(() => null);
+      broadcastUpdate('config', { area: 'system-settings' });
       res.json(updated);
     } catch (err: any) {
       const status = err.message === 'WEAK_PASSWORD' ? 400 : 401;
       res.status(status).json({ error: err.message });
+    }
+  });
+
+  /** Đếm ngược đổi mật khẩu định kỳ của CHÍNH tài khoản đang đăng nhập. */
+  app.get('/auth/admin/password-rotation', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const status = await adminPasswordStatusById(adapter, req.user!.id);
+      if (!status) return res.status(404).json({ error: 'ADMIN_NOT_FOUND' });
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -9999,6 +10020,38 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
       broadcastUpdate('config', { area: 'system-settings' });
       res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  /* ---------------------- ĐẾM NGƯỢC MẬT KHẨU VPS/ROOT ---------------------- */
+  // Hệ thống KHÔNG đọc được mật khẩu VPS; admin tự ghi nhận mốc đã đổi để có
+  // đếm ngược 6 tháng + cảnh báo trước 30 ngày.
+  app.get('/admin/vps-password', authMiddleware, requireRole(['ADMIN']), async (_req, res) => {
+    try {
+      res.json(await vpsPasswordStatus(adapter));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/admin/vps-password', authMiddleware, requireRole(['ADMIN']), validate({ body: opaqueConfigBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const status = await saveVpsPasswordMeta(adapter, {
+        changedAt: req.body?.changedAt,
+        cycleMonths: req.body?.cycleMonths,
+        note: req.body?.note,
+      }, req.user!.id);
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: 'VPS_PASSWORD_ROTATION_UPDATED',
+        target_type: 'SETTINGS',
+        target_id: 'VPS_ROOT_PASSWORD',
+        payload_after: status,
+      });
+      broadcastUpdate('config', { area: 'system-settings' });
+      res.json(status);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

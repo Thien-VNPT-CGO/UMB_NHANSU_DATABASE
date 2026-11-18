@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { KeyRound, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { apiRequest } from '../services/api';
 import { getErrorCode, toVietnameseErrorMessage } from '@ubm/shared';
+import { PasswordRotationCard, type PasswordRotationStatus } from './PasswordRotationCard';
 
 /**
  * Đổi mật khẩu tài khoản nội bộ (Giám đốc / IT / các vai trò quản trị).
  * Dùng chung endpoint /auth/admin/change-password (bắt buộc mật khẩu cũ).
+ * Kèm đếm ngược chu kỳ đổi mật khẩu định kỳ 6 tháng (realtime từng giây).
  */
 export const ChangePasswordView: React.FC = () => {
   const [oldPassword, setOldPassword] = useState('');
@@ -14,6 +16,30 @@ export const ChangePasswordView: React.FC = () => {
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [rotation, setRotation] = useState<PasswordRotationStatus | null>(null);
+  const [rotationLoading, setRotationLoading] = useState(true);
+  const [rotationError, setRotationError] = useState<string | null>(null);
+
+  const loadRotation = useCallback(async () => {
+    setRotationLoading(true);
+    try {
+      const data = await apiRequest('/auth/admin/password-rotation');
+      setRotation(data as PasswordRotationStatus);
+      setRotationError(null);
+    } catch (err: any) {
+      setRotationError(toVietnameseErrorMessage(err?.message, 'Không tải được chu kỳ đổi mật khẩu.'));
+    } finally {
+      setRotationLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadRotation();
+    // Đồng bộ khi tab khác/thiết bị khác vừa ghi nhận đổi mật khẩu (realtime config).
+    const onReload = () => { void loadRotation(); };
+    window.addEventListener('ubm:password-rotation-reload', onReload);
+    return () => window.removeEventListener('ubm:password-rotation-reload', onReload);
+  }, [loadRotation]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,6 +66,8 @@ export const ChangePasswordView: React.FC = () => {
       setOldPassword('');
       setNewPassword('');
       setConfirmPassword('');
+      // Reset đếm ngược 6 tháng ngay khi đổi thành công.
+      void loadRotation();
     } catch (err: any) {
       const code = getErrorCode(err);
       setMessage({
@@ -75,6 +103,14 @@ export const ChangePasswordView: React.FC = () => {
           Bảo mật tài khoản nội bộ: nhập mật khẩu hiện tại rồi đặt mật khẩu mới (tối thiểu 6 ký tự).
         </p>
       </div>
+
+      <PasswordRotationCard
+        title="Chu kỳ đổi mật khẩu đăng nhập"
+        subtitle="Định kỳ 6 tháng / lần — đếm ngược theo thời gian thực"
+        status={rotation}
+        loading={rotationLoading}
+        error={rotationError}
+      />
 
       <form
         onSubmit={submit}

@@ -54,6 +54,7 @@ import {
 } from 'lucide-react';
 import { RoleViews } from './components/RoleViews';
 import { ChangePasswordView } from './components/ChangePasswordView';
+import { VpsPasswordCard } from './components/VpsPasswordCard';
 import { DirectorPayrollView } from './components/DirectorPayrollView';
 import { InternalWorkflowView } from './components/InternalWorkflowView';
 import { OfficeApprovalsView } from './components/OfficeApprovalsView';
@@ -161,6 +162,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'backup', label: '14. Sao lưu & Phục hồi', icon: HardDrive },
     { id: 'office-approvals', label: '15. Duyệt Văn Phòng', icon: FileText },
     { id: 'ev-transport', label: '16. Vận chuyển sữa (EV)', icon: Truck },
+    { id: 'change-password', label: '17. Đổi mật khẩu', icon: KeyRound },
     // GỠ khỏi cổng ADMIN (chỉ HR/Kế toán nghiệp vụ): "Chuyển ca hỗ trợ" (hr-support)
     // và "Duyệt đổi STK" (bank-changes). Toàn bộ chức năng KẾ TOÁN (kể cả
     // "Cấu hình Lương CB & Phụ cấp — theo Khối") chỉ hiển thị trên tài khoản FINANCE.
@@ -1874,6 +1876,13 @@ export function App() {
             window.dispatchEvent(new CustomEvent('ubm:ev-live-reload', { detail: payload?.data }));
           } catch { /* non-fatal */ }
         } else if (payload?.entity === 'config' || configChangedOnSheet) {
+          // Đổi mật khẩu / ghi nhận mốc đổi mật khẩu VPS ở thiết bị khác -> thẻ
+          // đếm ngược tự tải lại, không cần F5.
+          if (payload?.data?.area === 'system-settings' || configChangedOnSheet) {
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:password-rotation-reload'));
+            } catch { /* non-fatal */ }
+          }
           loadAllData(currentUser, true);
         } else {
           if (payload?.entity === 'shift-rereg' || payload?.entity === 'all') {
@@ -5549,6 +5558,8 @@ export function App() {
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>Quản Lý Chế Độ Bảo Trì Kỹ Thuật</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Bật/tắt bảo trì toàn hệ thống, Web nhân viên, từng phân hệ — và hẹn giờ giao diện sự kiện cho cổng nhân viên</p>
               </div>
+
+              <VpsPasswordCard />
 
               <div style={{ backgroundColor: 'var(--surface)', padding: '24px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '16px', borderBottom: '1px solid var(--border)' }}>
