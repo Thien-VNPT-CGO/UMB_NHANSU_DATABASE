@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  EV_DRIVE_SCHEMA_VERSION,
   EV_DRIVE_TABS,
   EV_DRIVE_ROOT_FOLDER_ID,
+  EVDriveService,
+  evAutoTabName,
   evDayFolder,
   evDriveSegments,
   evMonthFolder,
@@ -24,7 +27,7 @@ test('EV Drive: cấu trúc thư mục THANG_MM / DD-MM-YYYY / <tab>', () => {
   ]);
 });
 
-test('EV Drive: 6 thư mục tab đúng nhãn giao diện', () => {
+test('EV Drive: đủ thư mục cho 6 tab App Tài Xế + dữ liệu giải trình/hồ sơ/GPS/tổng quan', () => {
   assert.deepEqual([...EV_DRIVE_TABS], [
     'Live Map',
     'Xe & Lộ trình',
@@ -32,7 +35,30 @@ test('EV Drive: 6 thư mục tab đúng nhãn giao diện', () => {
     'Ca vận chuyển',
     'Phiếu sạc',
     'Lương tài xế',
+    'Giải trình',
+    'Hồ sơ tài xế',
+    'Hành trình GPS',
+    'Tổng quan',
   ]);
+  assert.equal(EV_DRIVE_SCHEMA_VERSION, 2);
+});
+
+test('EV Drive: chức năng mới tự sinh tên thư mục tương ứng', () => {
+  assert.equal(evAutoTabName('evNewFeatureItems'), 'Tự động - New Feature Items');
+  assert.equal(evAutoTabName('evBaoCaoSuCo'), 'Tự động - Bao Cao Su Co');
+  assert.equal(evAutoTabName(''), 'Tự động - Chức năng mới');
+});
+
+test('EV Drive: status tự phát hiện mảng ev* mới, không nhân đôi tab đã có', () => {
+  const svc = new EVDriveService({
+    evShifts: [],
+    evVehicles: [],
+    evNewFeatureItems: [],
+  } as any);
+  const status = svc.status();
+  assert.ok(status.tabs.includes('Ca vận chuyển'));
+  assert.ok(status.auto_tabs.includes('Tự động - New Feature Items'));
+  assert.ok(!status.auto_tabs.includes('Tự động - Shifts'));
 });
 
 test('EV Drive: root folder ID mặc định do chủ dự án cấp', () => {

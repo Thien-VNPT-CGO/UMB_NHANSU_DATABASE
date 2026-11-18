@@ -531,7 +531,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // MilkRoute EV Module
   const milkRouteModule = createMilkRouteModule(adapter as any);
-  // Mirror dữ liệu EV lên Google Drive (04. VẬN CHUYỂN SỮA/THANG_MM/DD-MM-YYYY).
+  // Mirror TOÀN BỘ dữ liệu App Tài Xế lên Google Drive — tự tạo mục còn thiếu
+  // và tự sinh mục cho chức năng mới (04. VẬN CHUYỂN SỮA/THANG_MM/DD-MM-YYYY/<tab>).
   try { milkRouteModule.drive.start(); } catch { /* non-fatal */ }
   // Seed default route data (chạy nền, không chặn khởi động)
   setTimeout(() => {
@@ -879,8 +880,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // ---------------------------------------------------------------
-  // ADMIN — Lưu dữ liệu EV lên Google Drive
-  //   04. VẬN CHUYỂN SỮA/THANG_MM/DD-MM-YYYY/<tab>
+  // ADMIN — Lưu TOÀN BỘ dữ liệu App Tài Xế lên Google Drive
+  //   04. VẬN CHUYỂN SỮA/DANH-MUC-CHUC-NANG.json
+  //   04. VẬN CHUYỂN SỮA/THANG_MM/DD-MM-YYYY/<tab>/*
+  //   Tab tự động: chức năng mới có mảng ev* sẽ tự sinh mục trên Drive.
   // ---------------------------------------------------------------
   app.get('/ev/admin/drive/status', authMiddleware, requireRole(EV_ADMIN_ROLES), (req: AuthenticatedRequest, res) => {
     res.json(ev.drive.status());
@@ -896,7 +899,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const end = to || start;
       if (end < start) return res.status(400).json({ error: 'INVALID_DATE_RANGE' });
 
-      // Chặn backfill quá lớn (mỗi ngày 6 file Drive) — tối đa 31 ngày/lần.
+      // Chặn backfill quá lớn (mỗi ngày nhiều tệp Drive) — tối đa 31 ngày/lần.
       const days: string[] = [];
       const cursor = new Date(`${start}T00:00:00Z`);
       const last = new Date(`${end}T00:00:00Z`);
@@ -993,18 +996,31 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.put('/ev/admin/shifts/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evShiftIdParams, body: evShiftUpdateBody }), async (req: AuthenticatedRequest, res) => {
     try {
+      // Giữ ngày ca CŨ để Drive cập nhật cả tệp ngày cũ khi đổi lịch.
+      const before = await ev.shifts.getShift(req.params.id).catch(() => null);
       const s = await ev.shifts.updateShift(req.params.id, req.body);
       if (!s) return res.status(404).json({ error: 'SHIFT_NOT_FOUND' });
-      broadcastUpdate('evShift', { action: 'update', id: req.params.id });
+      broadcastUpdate('evShift', {
+        action: 'update',
+        id: req.params.id,
+        shift_date: s.shift_date,
+        old_shift_date: before?.shift_date,
+      });
       res.json(s);
     } catch (err: any) { evErr(res, err); }
   });
 
   app.delete('/ev/admin/shifts/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evShiftIdParams }), async (req: AuthenticatedRequest, res) => {
     try {
+      const before = await ev.shifts.getShift(req.params.id).catch(() => null);
       const ok = await ev.shifts.deleteShift(req.params.id);
       if (!ok) return res.status(404).json({ error: 'SHIFT_NOT_FOUND' });
-      broadcastUpdate('evShift', { action: 'delete', id: req.params.id });
+      // Ca đã xóa không còn trong kho dữ liệu → gửi kèm ngày để dọn đúng tệp Drive.
+      broadcastUpdate('evShift', {
+        action: 'delete',
+        id: req.params.id,
+        shift_date: before?.shift_date,
+      });
       res.json({ success: true });
     } catch (err: any) { evErr(res, err); }
   });
