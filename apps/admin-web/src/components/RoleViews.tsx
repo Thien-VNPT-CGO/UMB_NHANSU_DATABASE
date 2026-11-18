@@ -11875,6 +11875,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         return getDisplayBranch(bid) || bid;
       } catch { return bid; }
     };
+    // Gom nhân viên theo chi nhánh để dropdown dễ chọn (A và B đều chia nhóm).
+    const groupByBranch = (list: any[]) => {
+      const groups = new Map<string, any[]>();
+      for (const e of list) {
+        const bid = String((e as any)?.default_branch_id || (e as any)?.branch_id || '');
+        const arr = groups.get(bid) || [];
+        arr.push(e);
+        groups.set(bid, arr);
+      }
+      return [...groups.entries()].sort((a, b) =>
+        (branchLabel(a[0]) || 'Chưa rõ chi nhánh').localeCompare(branchLabel(b[0]) || 'Chưa rõ chi nhánh', 'vi')
+      );
+    };
     const shiftLabel = (code: string) =>
       code === 'CA_1' ? 'Ca 1 (07-12)' : code === 'CA_2' ? 'Ca 2 (12-18)' : code === 'CA_3' ? 'Ca 3 (18-23)' : (code || '');
     const statusBadge = (st: string) => {
@@ -11934,10 +11947,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 style={{ width: '100%' }}
               >
                 <option value="">-- Chọn nhân viên A --</option>
-                {activeEmps.map((e: any) => (
-                  <option key={e.employee_id} value={e.employee_id}>
-                    {e.full_name} ({e.employee_code || e.employee_id} • {branchLabel(e.default_branch_id || e.branch_id || '')})
-                  </option>
+                {groupByBranch(activeEmps).map(([bid, list]) => (
+                  <optgroup key={bid || '_unknown'} label={`${branchLabel(bid) || 'Chưa rõ chi nhánh'} (${list.length})`}>
+                    {list.map((e: any) => (
+                      <option key={e.employee_id} value={e.employee_id}>
+                        {e.full_name} ({e.employee_code || e.employee_id})
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </div>
@@ -11960,10 +11977,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>B — nhân viên chính thức nhận làm thay:</label>
               <select value={supportTarget} onChange={(e) => setSupportTarget(e.target.value)} style={{ width: '100%' }}>
                 <option value="">-- Chọn nhân viên B --</option>
-                {officials.map((e: any) => (
-                  <option key={e.employee_id} value={e.employee_id}>
-                    {e.full_name} ({e.employee_code || e.employee_id} • {branchLabel(e.default_branch_id || e.branch_id || '')})
-                  </option>
+                {groupByBranch(officials).map(([bid, list]) => (
+                  <optgroup key={bid || '_unknown'} label={`${branchLabel(bid) || 'Chưa rõ chi nhánh'} (${list.length})`}>
+                    {list.map((e: any) => (
+                      <option key={e.employee_id} value={e.employee_id}>
+                        {e.full_name} ({e.employee_code || e.employee_id})
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </div>
