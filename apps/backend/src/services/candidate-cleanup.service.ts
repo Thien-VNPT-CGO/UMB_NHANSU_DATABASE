@@ -1,26 +1,32 @@
 /**
- * TỰ ĐỘNG XOÁ ỨNG VIÊN QUÁ HẠN CHỜ XẾP LỊCH PHỎNG VẤN
+ * TỰ ĐỘNG ẨN ỨNG VIÊN QUÁ HẠN CHỜ XẾP LỊCH PHỎNG VẤN
  * =====================================================
  * Yêu cầu nghiệp vụ: ứng viên đăng ký qua Google Form quá N ngày (mặc định 20)
- * mà HR CHƯA gửi lịch phỏng vấn thì tự động xoá khỏi hệ thống + Google Sheet.
+ * mà HR CHƯA đặt lịch phỏng vấn thì tự động ẩn khỏi hệ thống. Dòng dữ liệu trên
+ * Google Sheet (form gốc + master) PHẢI GIỮ NGUYÊN, không xoá/không ghi đè.
+ *
+ * Cách làm:
+ * - Gắn cờ `auto_hidden_at` cho hồ sơ trong bộ nhớ/PostgreSQL. API danh sách
+ *   ứng viên lọc bỏ hồ sơ đã gắn cờ nên HR không còn thấy trên tab.
+ * - KHÔNG gọi deleteCandidate / pushCandidatesTab: mọi thao tác ghi Google Sheet
+ *   đều bị bỏ qua, nhờ vậy Sheet giữ nguyên lịch sử ứng viên.
  *
  * Vì sao cần tombstone?
  * - Nguồn sự thật của danh sách ứng viên là Spreadsheet FORM GỐC
- *   (CANDIDATE_SPREADSHEET_ID / tab FROM_NHAN_VIEN). Nếu chỉ xoá trong bộ nhớ +
- *   master Sheet, lượt pull nền kế tiếp (~10 giây) sẽ đọc lại dòng form cũ và
- *   hồi sinh ứng viên.
+ *   (CANDIDATE_SPREADSHEET_ID / tab FROM_NHAN_VIEN). Pull nền (~10 giây) đọc lại
+ *   dòng form cũ; nếu không có tombstone, hồ sơ vừa ẩn sẽ xuất hiện trở lại.
  * - Tombstone lưu theo khoá nhận diện bền vững (SĐT + họ tên + thời gian gửi)
- *   trong CAU_HINH_HE_THONG. Pull form sẽ BỎ QUA đúng hồ sơ đã xoá, kể cả sau
- *   khi restart container.
+ *   trong CAU_HINH_HE_THONG. Pull form sẽ GẮN LẠI cờ ẩn cho đúng hồ sơ đó, kể cả
+ *   sau khi restart container.
  *
  * An toàn:
- * - Chỉ xoá hồ sơ còn ở trạng thái NEW (chưa xử lý) và KHÔNG có bất kỳ dấu vết
- *   nào của lịch PV/Zalo/điểm/chăm sóc. Thiếu created_at hợp lệ -> không xoá.
- * - Giới hạn số hồ sơ xoá mỗi lượt để không đốt quota ghi Google Sheets.
+ * - Hồ sơ đã được HR đặt lịch PV (có ngày/giờ/điểm/chấm/đề xuất lịch) -> giữ.
+ * - VIP hoặc danh sách đen -> giữ (dữ liệu vận hành quan trọng).
+ * - Thiếu created_at hợp lệ -> không ẩn.
+ * - Giới hạn số hồ sơ xử lý mỗi lượt để không ghi CAU_HINH_HE_THONG quá lớn.
  */
 
 import { canonicalPhone, normSheetDateTime } from './employees.service.js';
-import { ZALO_INVITE_STATUSES } from './candidate-form-map.js';
 
 export const CANDIDATE_AUTO_DELETE_DAYS = 20;
 export const CANDIDATE_AUTO_DELETE_SETTING_KEY = 'candidateAutoDeleteTombstones';
@@ -45,30 +51,27 @@ export interface CandidateCleanupTombstoneStore {
 
 const hasValue = (v: unknown): boolean => v !== undefined && v !== null && String(v).trim() !== '';
 
-const ZALO_STATUS_SET = new Set<string>(
-  (ZALO_INVITE_STATUSES as readonly string[]).map(s => s.toUpperCase()),
-);
+/** Trạng thái chứng minh hồ sơ đã/đang được HR xử lý lịch PV hoặc đã phỏng vấn.
+ *  Có 1 trạng thái trong danh sách này là KHÔNG tự ẩn. */
+const INTERVIEW_HANDLED_STATUSES = new Set<string>([
+  'INVITED_INTERVIEW',
+  'CONFIRMED',
+  'RESCHEDULE_REQUESTED',
+  'RESCHEDULE_PROPOSED',
+  'INTERVIEWED',
+  'SCORED',
+  'ACCEPTED',
+  'BLACKLIST',
+]);
 
-/** Chỉ coi là "HR đã gửi Zalo" khi giá trị là MÃ TRẠNG THÁI hợp lệ.
- *  Dữ liệu cũ trên Sheet từng ghi SĐT/Zalo phụ vào cột "Zalo Thư Mời" và bị nạp
- *  vào `zalo_invite_status` (vd "346635827"). Nếu tin tuyệt đối giá trị này thì
- *  mọi hồ sơ đều bị chặn tự xoá vĩnh viễn — đúng lỗi đã gặp trên production. */
-function isRealZaloInviteStatus(v: unknown): boolean {
-  const s = String(v ?? '').trim().toUpperCase();
-  return !!s && ZALO_STATUS_SET.has(s);
-}
-
-/** Các cột chứng minh HR đã chăm sóc/lên lịch/chấm điểm hồ sơ — có 1 cột là
- *  KHÔNG được tự xoá, kể cả khi trạng thái còn NEW do dữ liệu cũ.
+/** Cột chứng minh HR đã đặt lịch / phỏng vấn / chấm điểm hồ sơ — có 1 cột là
+ *  KHÔNG được tự ẩn, kể cả khi trạng thái còn NEW do dữ liệu cũ.
  *
  *  LƯU Ý: KHÔNG đưa `zalo_invite_note` / `zalo_invite_error` vào đây. Cột
  *  "Zalo Thư Mời" trên Google Form thực tế chứa SỐ ĐIỆN THOẠI (hoặc câu trả lời
  *  thô), nên `parseZaloInviteCell` biến nó thành `zalo_invite_note` cho gần như
- *  mọi hồ sơ. Nếu chặn theo ghi chú này thì tính năng tự xoá không bao giờ chạy
- *  (đã kiểm chứng trên production: 143 hồ sơ quá hạn NEW bị chặn oan).
- *  `zalo_invite_status` được kiểm tra RIÊNG bằng `isRealZaloInviteStatus()` —
- *  dữ liệu cũ từng ghi SĐT vào cột này */
-const SCHEDULE_OR_CARE_FIELDS = [
+ *  mọi hồ sơ. Nếu chặn theo ghi chú này thì tính năng tự ẩn không bao giờ chạy. */
+const INTERVIEW_HANDLED_FIELDS = [
   'interview_date',
   'interview_time_slot',
   'interviewer_id',
@@ -79,19 +82,22 @@ const SCHEDULE_OR_CARE_FIELDS = [
   'interview_proposed_date',
   'interview_proposed_time_slot',
   'interview_proposed_note',
+  'interview_proposed_at',
   'interview_decline_reason',
-  'zalo_invite_at',
-  'zalo_uid',
-  'vip_at',
-  'vip_by',
-  'blacklist_reason',
+  'interview_reminder_at',
+  'interview_reminder_count',
+  'interview_reminder_key',
 ] as const;
+
+/** Dữ liệu vận hành phải giữ vĩnh viễn (không phải lịch PV nhưng không được mất). */
+const KEEP_ALWAYS_FIELDS = ['vip_at', 'vip_by', 'blacklist_reason', 'blacklist_at'] as const;
+
 
 /**
  * Chuẩn hoá thời điểm đăng ký về ms. Hỗ trợ:
  * - ISO / serial Google Sheets / 'dd/MM/yyyy HH:mm:ss' (giờ VN) qua normSheetDateTime.
  * - Chuỗi lạ: thử Date.parse lần cuối.
- * Trả null nếu không xác định được (KHÔNG xoá hồ sơ thiếu ngày).
+ * Trả null nếu không xác định được (KHÔNG ẩn hồ sơ thiếu ngày).
  */
 export function parseCandidateRegisteredAtMs(raw: unknown): number | null {
   const iso = normSheetDateTime(raw);
@@ -113,21 +119,27 @@ export function candidateCleanupKey(c: any): string {
   return `${phone}|${name}|${created}`;
 }
 
-/** Hồ sơ đủ điều kiện tự xoá? Chỉ NEW + không có lịch/chăm sóc + đủ tuổi. */
+/** Hồ sơ đã được HR xếp lịch / phỏng vấn / chấm điểm? Có dấu vết là KHÔNG tự ẩn. */
+export function isCandidateInterviewHandled(c: any): boolean {
+  const status = String(c?.status ?? '').trim().toUpperCase();
+  if (INTERVIEW_HANDLED_STATUSES.has(status)) return true;
+  return INTERVIEW_HANDLED_FIELDS.some(f => hasValue(c?.[f]));
+}
+
+/** Hồ sơ đủ điều kiện tự ẩn? Chỉ hồ sơ quá hạn và CHƯA được HR đặt lịch PV. */
 export function isCandidateEligibleForAutoDelete(
   c: any,
   nowMs: number = Date.now(),
   days: number = CANDIDATE_AUTO_DELETE_DAYS,
 ): boolean {
-  const status = String(c?.status ?? '').trim().toUpperCase();
-  // Chỉ hồ sơ chưa xử lý. NEED_INFO/INVITED/CONFIRMED/REJECTED... giữ nguyên.
-  if (status && status !== 'NEW') return false;
-  // HR đã đánh dấu ưu tiên -> không tự xoá.
+  // Đã ẩn trước đó -> không xử lý lặp (tránh ghi tombstone/audit mỗi lượt quét).
+  if (hasValue(c?.auto_hidden_at)) return false;
+  // HR đã đánh dấu ưu tiên / danh sách đen -> không tự ẩn.
   if (c?.vip === true) return false;
-  // Đã gửi Zalo THẬT (mã trạng thái hợp lệ) -> giữ lại. Giá trị rác kiểu SĐT
-  // (dữ liệu cũ) không được tính, nếu không sẽ chặn xoá vĩnh viễn.
-  if (isRealZaloInviteStatus(c?.zalo_invite_status)) return false;
-  if (SCHEDULE_OR_CARE_FIELDS.some(f => hasValue(c?.[f]))) return false;
+  if (KEEP_ALWAYS_FIELDS.some(f => hasValue(c?.[f]))) return false;
+
+  // Đã được HR đặt lịch / phỏng vấn / chấm điểm -> giữ lại.
+  if (isCandidateInterviewHandled(c)) return false;
 
   const createdMs = parseCandidateRegisteredAtMs(c?.created_at);
   if (createdMs === null) return false;
@@ -174,14 +186,15 @@ export interface CandidateCleanupOptions {
 export interface CandidateCleanupResult {
   checked: number;
   eligible: number;
+  /** ID hồ sơ vừa được ẩn khỏi hệ thống (KHÔNG xoá khỏi Google Sheet). */
   deletedIds: string[];
   failedIds: string[];
   deleted: Array<{ id: string; name: string; created_at?: string }>;
 }
 
 /**
- * Một lượt quét tự động. Gọi từ server theo interval; trả về danh sách đã xoá
- * để server bắn realtime `data:updated(entity='candidates')`.
+ * Một lượt quét tự động. Gọi từ server theo interval; trả về danh sách hồ sơ
+ * vừa được ẩn để server bắn realtime `data:updated(entity='candidates')`.
  */
 export async function candidateCleanupTick(
   adapter: any,
@@ -197,11 +210,19 @@ export async function candidateCleanupTick(
     ? Math.max(1, Number(opts.maxPerRun))
     : (Number.isFinite(envMax) && envMax > 0 ? Math.min(envMax, 100) : CANDIDATE_AUTO_DELETE_MAX_PER_RUN);
 
+  const nowIso = new Date(now).toISOString();
+  const reason = `Quá ${days} ngày chưa được HR xếp lịch phỏng vấn`;
+  const keysOf = (c: any) => candidateCleanupKey(c);
+
   const candidates = await adapter.listCandidates();
   const list = Array.isArray(candidates) ? candidates : [];
+  let settings: any = {};
+  try { settings = (await adapter.getSystemSettings?.()) || {}; } catch { settings = {}; }
+  const tombstoneStore = getCandidateCleanupTombstones(settings);
   const eligible = list
+    .filter((c: any) => !isCandidateTombstoned(tombstoneStore, keysOf(c)))
     .filter((c: any) => isCandidateEligibleForAutoDelete(c, now, days))
-    // Xoá hồ sơ cũ nhất trước (giữ đúng thứ tự chờ).
+    // Hồ sơ cũ nhất trước (giữ đúng thứ tự chờ).
     .sort((a: any, b: any) => {
       const ta = parseCandidateRegisteredAtMs(a.created_at) ?? 0;
       const tb = parseCandidateRegisteredAtMs(b.created_at) ?? 0;
@@ -219,48 +240,59 @@ export async function candidateCleanupTick(
   if (eligible.length === 0 || opts.dryRun) return result;
 
   const syncSvc = adapter?.syncService;
-  const keysOf = (c: any) => candidateCleanupKey(c);
-  // Đánh dấu "đang xoá" NGAY trong bộ nhớ sync để pull nền không hồi sinh
-  // trong khoảng thời gian giữa xoá và ghi tombstone bền vững.
+  // Đánh dấu NGAY trong bộ nhớ sync để pull nền (nếu chen ngang) gắn cờ ẩn,
+  // không làm hồ sơ hiện lại trước khi kịp ghi tombstone bền vững.
   try { syncSvc?.markCandidateDeleted?.(eligible.map(keysOf)); } catch { /* best-effort */ }
 
-  const ids = eligible.map((c: any) => String(c.submission_id)).filter(Boolean);
-  let deletedIds: string[] = [];
+  const entries = eligible.map((c: any) => ({
+    id: String(c.submission_id),
+    key: keysOf(c),
+    at: nowIso,
+    reason,
+  })).filter((e: any) => !!e.id);
+
+  let hiddenIds: string[] = [];
   let failedIds: string[] = [];
 
   try {
-    if (typeof adapter.deleteCandidatesBatch === 'function') {
-      const r = await adapter.deleteCandidatesBatch(ids);
-      deletedIds = Array.isArray(r?.deleted) ? r.deleted.map(String) : [];
+    if (typeof adapter.hideCandidatesFromSystem === 'function') {
+      // Adapter hiện đại: chỉ ẩn trong hệ thống, KHÔNG ghi/xoá Google Sheet.
+      const r = await adapter.hideCandidatesFromSystem(entries);
+      hiddenIds = Array.isArray(r?.hidden) ? r.hidden.map(String) : [];
       failedIds = Array.isArray(r?.failed) ? r.failed.map(String) : [];
-      // Adapter cũ/không trả chi tiết -> coi mọi id không báo lỗi là đã xoá.
-      if (deletedIds.length === 0 && failedIds.length === 0) deletedIds = ids.slice();
+      // Adapter cũ/không trả chi tiết -> coi mọi id không báo lỗi là đã ẩn.
+      if (hiddenIds.length === 0 && failedIds.length === 0) hiddenIds = entries.map((e: any) => e.id);
     } else {
-      for (const id of ids) {
+      // Fallback cho adapter test/mock cũ. updateCandidate chỉ đổi bộ nhớ/DB,
+      // không đụng tới dòng ứng viên trên Google Sheet.
+      for (const e of entries) {
         try {
-          const ok = await adapter.deleteCandidate(id);
-          (ok ? deletedIds : failedIds).push(id);
+          await adapter.updateCandidate(e.id, {
+            auto_hidden_at: nowIso,
+            auto_hidden_reason: reason,
+          });
+          hiddenIds.push(e.id);
         } catch (err: any) {
-          console.warn(`[candidate-cleanup] Xoá ${id} thất bại:`, err?.message || err);
-          failedIds.push(id);
+          console.warn(`[candidate-cleanup] Ẩn ${e.id} thất bại:`, err?.message || err);
+          failedIds.push(e.id);
         }
       }
     }
   } catch (err: any) {
-    console.warn('[candidate-cleanup] Lô xoá thất bại:', err?.message || err);
-    failedIds = ids.slice();
-    deletedIds = [];
+    console.warn('[candidate-cleanup] Lô ẩn ứng viên thất bại:', err?.message || err);
+    failedIds = entries.map((e: any) => e.id);
+    hiddenIds = [];
   }
 
-  const deletedSet = new Set(deletedIds);
-  const success = eligible.filter((c: any) => deletedSet.has(String(c.submission_id)));
-  const failed = eligible.filter((c: any) => !deletedSet.has(String(c.submission_id)));
+  const hiddenSet = new Set(hiddenIds);
+  const success = eligible.filter((c: any) => hiddenSet.has(String(c.submission_id)));
+  const failed = eligible.filter((c: any) => !hiddenSet.has(String(c.submission_id)));
 
-  // Hoàn tác đánh dấu cho hồ sơ xoá lỗi để không che hồ sơ còn sống.
+  // Hoàn tác đánh dấu cho hồ sơ ẩn lỗi để không che hồ sơ còn sống.
   try { syncSvc?.unmarkCandidateDeleted?.(failed.map(keysOf)); } catch { /* best-effort */ }
 
   result.eligible = eligible.length;
-  result.deletedIds = sortedUnique(deletedIds);
+  result.deletedIds = sortedUnique(hiddenIds);
   result.failedIds = sortedUnique(failedIds);
   result.deleted = success.map((c: any) => ({
     id: String(c.submission_id),
@@ -269,11 +301,11 @@ export async function candidateCleanupTick(
   }));
 
   if (success.length > 0) {
-    const nowIso = new Date(now).toISOString();
-    // 1) Ghi tombstone bền vững (sống qua restart + chặn pull form hồi sinh).
+    // 1) Ghi tombstone bền vững (sống qua restart + pull form gắn lại cờ ẩn).
     try {
-      const settings = await adapter.getSystemSettings().catch(() => ({}));
-      const store = getCandidateCleanupTombstones(settings);
+      const store = getCandidateCleanupTombstones(
+        await adapter.getSystemSettings().catch(() => settings),
+      );
       for (const c of success) {
         const key = keysOf(c);
         if (!key) continue;
@@ -284,7 +316,7 @@ export async function candidateCleanupTick(
           phone: String(c.phone_normalized || c.phone || ''),
           created_at: c.created_at ? String(c.created_at) : '',
           deleted_at: nowIso,
-          reason: `Quá ${days} ngày chưa gửi lịch phỏng vấn`,
+          reason,
         };
       }
       store.updated_at = nowIso;
@@ -292,12 +324,12 @@ export async function candidateCleanupTick(
       await adapter.updateSystemSettings({ [CANDIDATE_AUTO_DELETE_SETTING_KEY]: store });
       try { await adapter.pushSystemSettingsNow?.(); } catch { /* nền sẽ đẩy lại */ }
     } catch (err: any) {
-      // Không chặn xoá: tombstone in-memory vẫn bảo vệ phiên hiện tại; lần quét
-      // sau sẽ ghi lại (hồ sơ đã biến mất nên không còn eligible để ghi hộ).
+      // Không chặn ẩn: mark in-memory vẫn bảo vệ phiên hiện tại; lần quét sau
+      // hồ sơ đã có cờ auto_hidden_at nên không lặp lại.
       console.warn('[candidate-cleanup] Không ghi được tombstone:', err?.message || err);
     }
 
-    // 2) Audit log MỘT dòng cho cả lô (tránh 25 lượt ghi Sheet làm cháy quota).
+    // 2) Audit log MỘT dòng cho cả lô (tránh ghi Sheet nhiều lần).
     try {
       const names = success
         .map((c: any) => `${c.full_name || c.submission_id} (${c.submission_id})`)
@@ -306,31 +338,12 @@ export async function candidateCleanupTick(
       await adapter.recordAuditLog({
         actor_id: 'SYSTEM',
         actor_role: 'SYSTEM',
-        action: 'CANDIDATE_AUTO_DELETED',
+        action: 'CANDIDATE_AUTO_HIDDEN',
         target_entity: 'UNG_VIEN',
         target_id: success.map((c: any) => String(c.submission_id || '')).filter(Boolean).join(',').slice(0, 500),
-        details: `Tự động xoá ${success.length} ứng viên quá ${days} ngày chưa gửi lịch phỏng vấn: ${names}`,
+        details: `Tự động ẩn ${success.length} ứng viên quá ${days} ngày chưa được HR xếp lịch phỏng vấn (giữ nguyên dữ liệu trên Google Sheet): ${names}`,
       } as any).catch(() => null);
-    } catch { /* audit không được chặn xoá */ }
-
-    // 3) Chống race: nếu pull nền chen ngang vừa dựng lại hồ sơ vừa xoá, xoá lại
-    //    lần nữa + đẩy master để Sheet chắc chắn không còn dòng đó.
-    try {
-      const keys = new Set(success.map(keysOf));
-      const after = await adapter.listCandidates().catch(() => []);
-      const resurrected = (Array.isArray(after) ? after : [])
-        .filter((c: any) => keys.has(keysOf(c)))
-        .map((c: any) => String(c.submission_id));
-      if (resurrected.length > 0) {
-        if (typeof adapter.deleteCandidatesBatch === 'function') {
-          await adapter.deleteCandidatesBatch(resurrected).catch(() => null);
-        } else {
-          for (const id of resurrected) await adapter.deleteCandidate(id).catch(() => null);
-        }
-        await adapter.pushCandidatesNow?.().catch(() => null);
-        console.warn(`[candidate-cleanup] Đã xoá lại ${resurrected.length} hồ sơ bị pull hồi sinh.`);
-      }
-    } catch { /* tick sau xử lý tiếp */ }
+    } catch { /* audit không được chặn xử lý */ }
   }
 
   return result;

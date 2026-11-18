@@ -39,7 +39,7 @@ import {
 import {
   candidateCleanupKey,
   getCandidateCleanupTombstones,
-  isCandidateTombstoned,
+  isCandidateInterviewHandled,
 } from './candidate-cleanup.service.js';
 import { buildZipStore, ZipEntry } from '../utils/zip-store.js';
 import { contractDocsCell, parseContractDocs } from '../utils/contracts.js';
@@ -4765,17 +4765,17 @@ export class GoogleSheetsSyncService {
             const hometown = getVal(colHometown) || 'TP. Hồ Chí Minh';
             const phone = getVal(colPhone) || '';
             const phoneNormalized = canonicalPhone(phone);
-            // Hồ sơ đã bị hệ thống tự xoá (quá hạn chờ lịch PV): bỏ qua dòng form,
-            // không dựng lại vào bộ nhớ/master.
+            // Hồ sơ đã bị hệ thống tự ẩn (quá hạn chờ lịch PV): vẫn giữ dòng form
+            // trong bộ nhớ (để lần push sau không xoá dòng trên Sheet) nhưng gắn
+            // cờ ẩn — API danh sách ứng viên sẽ lọc bỏ.
             const cleanupKey = candidateCleanupKey({
               phone_normalized: phoneNormalized,
               full_name: fullName,
               created_at: rawCreatedAt,
             });
-            if (isCandidateTombstoned(candidateTombstones, cleanupKey)
-              || this.isCandidateDeletedRecently(cleanupKey)) {
-              return null as any;
-            }
+            const hiddenEntry = candidateTombstones.entries?.[cleanupKey];
+            const hiddenByRecentMark = this.isCandidateDeletedRecently(cleanupKey);
+            const autoHiddenAt = hiddenEntry?.deleted_at || (hiddenByRecentMark ? new Date().toISOString() : undefined);
             const registeredShift = getVal(colShift) || 'Ca sáng / Ca chiều';
             const branchName = getVal(colBranch) || 'CN130 - Lê Văn Sỹ';
             const experience = getVal(colExperience) || 'Chưa có kinh nghiệm (sẵn sàng đào tạo)';
@@ -4896,9 +4896,15 @@ export class GoogleSheetsSyncService {
               status,
               source_code: sourceCode,
               created_at: rawCreatedAt,
+              // Ẩn tự động (quá 20 ngày chưa xếp lịch PV): giữ cờ qua các lần pull.
+              // Không xoá dòng Sheet — chỉ lọc khỏi API danh sách ứng viên.
+              auto_hidden_at: autoHiddenAt || (prev as any).auto_hidden_at || undefined,
+              auto_hidden_reason: autoHiddenAt
+                ? (hiddenEntry?.reason || 'Quá hạn chờ xếp lịch phỏng vấn')
+                : ((prev as any).auto_hidden_reason || undefined),
             };
           })
-          // Bỏ các dòng trả null do tombstone xoá tự động.
+          // Bỏ các dòng rỗng (mapping giờ luôn trả object).
           .filter((c: any) => !!c);
         // Phủ dữ liệu vận hành (lịch PV + Zalo + trạng thái) từ master FROM_NHAN_VIEN:
         // restart/sửa code làm bộ nhớ trắng, Sheet form gốc không có các cột này —
@@ -5051,6 +5057,15 @@ export class GoogleSheetsSyncService {
                 if (mPropNote) (c as any).interview_proposed_note = mPropNote;
                 const mBlacklist = nz(mr[30]);
                 if (mBlacklist) (c as any).blacklist_reason = mBlacklist;
+              }
+              // Hồ sơ đã bị ẩn tự động nhưng sau đó HR đã xếp lịch/chấm điểm:
+              // bỏ cờ ẩn để hồ sơ hiện lại (tombstone không còn hiệu lực).
+              for (const c of fallback.candidates as any[]) {
+                if (!c?.auto_hidden_at) continue;
+                if (isCandidateInterviewHandled(c)) {
+                  delete (c as any).auto_hidden_at;
+                  delete (c as any).auto_hidden_reason;
+                }
               }
             }
           }

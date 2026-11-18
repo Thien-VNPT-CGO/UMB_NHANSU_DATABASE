@@ -57,6 +57,10 @@ export interface ISheetsRepository {
   createCandidate(data: Omit<CandidateApplication, 'created_at'>): Promise<CandidateApplication>;
   updateCandidate(submissionId: string, updates: Partial<CandidateApplication>): Promise<CandidateApplication>;
   deleteCandidate(submissionId: string): Promise<boolean>;
+  /** Ẩn hồ sơ khỏi hệ thống (quá hạn chờ lịch PV) nhưng KHÔNG xoá dòng trên Google Sheet. */
+  hideCandidatesFromSystem?(
+    entries: Array<{ id: string; key?: string; at: string; reason?: string }>,
+  ): Promise<{ hidden: string[]; failed: string[] }>;
 
   // Schedules
   getShiftsForWeek(branchId: string, weekStartDate: string): Promise<ShiftAssignment[]>;

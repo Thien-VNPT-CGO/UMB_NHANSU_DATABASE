@@ -1635,7 +1635,10 @@ export class EmployeesService {
 
   // Candidates & Recruitment
   async listCandidates() {
-    return this.repo.listCandidates();
+    const list = await this.repo.listCandidates();
+    // Hồ sơ quá 20 ngày chưa được HR xếp lịch PV bị hệ thống tự ẩn. Vẫn giữ
+    // nguyên bản ghi + dòng Google Sheet, chỉ không trả về giao diện vận hành.
+    return (list || []).filter((c: any) => !c?.auto_hidden_at);
   }
 
   async importCandidate(candidateData: Omit<CandidateApplication, 'submission_id' | 'created_at'>) {

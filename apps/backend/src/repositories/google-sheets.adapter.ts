@@ -1221,6 +1221,28 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return ok;
   }
 
+  /** Ẩn hồ sơ khỏi hệ thống nhưng GIỮ NGUYÊN dòng trên Google Sheet (form gốc +
+   *  master FROM_NHAN_VIEN). Không lên lịch full-sync để tránh ghi đè Sheet. */
+  async hideCandidatesFromSystem(
+    entries: Array<{ id: string; key?: string; at: string; reason?: string }>,
+  ): Promise<{ hidden: string[]; failed: string[] }> {
+    const hidden: string[] = [];
+    const failed: string[] = [];
+    const cands: any[] = (this.fallbackAdapter as any).candidates || [];
+    for (const entry of entries || []) {
+      const id = String(entry?.id || '').trim();
+      if (!id) continue;
+      const cand = cands.find(c => String(c.submission_id) === id);
+      if (!cand) { failed.push(id); continue; }
+      cand.auto_hidden_at = entry.at || new Date().toISOString();
+      cand.auto_hidden_reason = entry.reason || undefined;
+      hidden.push(id);
+    }
+    // Chỉ lưu snapshot cục bộ (không đẩy Google Sheets).
+    if (hidden.length > 0) this.scheduleRuntimeSnapshot(0);
+    return { hidden, failed };
+  }
+
   /** Xóa NHIỀU ứng viên rồi đẩy master FROM_NHAN_VIEN MỘT LẦN — dùng cho lượt
    *  tự động dọn hồ sơ quá hạn, tránh mỗi hồ sơ một lần ghi cả bảng (cháy quota). */
   async deleteCandidatesBatch(submissionIds: string[]): Promise<{ deleted: string[]; failed: string[] }> {

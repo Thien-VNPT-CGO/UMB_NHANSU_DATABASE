@@ -611,6 +611,12 @@ export class MockSheetsAdapter implements ISheetsRepository {
     this.checkErrors();
     const cand = this.candidates.find(c => c.submission_id === submissionId);
     if (!cand) throw new Error('CANDIDATE_NOT_FOUND');
+    // HR vừa thao tác trên hồ sơ (đặt lịch/chấm điểm/duyệt...) -> bỏ cờ ẩn tự
+    // động để hồ sơ hiện lại. Lượt ẩn tự động luôn truyền auto_hidden_at rõ ràng.
+    if (!Object.prototype.hasOwnProperty.call(updates || {}, 'auto_hidden_at')) {
+      delete (cand as any).auto_hidden_at;
+      delete (cand as any).auto_hidden_reason;
+    }
     Object.assign(cand, updates);
     return { ...cand };
   }
@@ -621,6 +627,25 @@ export class MockSheetsAdapter implements ISheetsRepository {
     if (idx < 0) return false;
     this.candidates.splice(idx, 1);
     return true;
+  }
+
+  /** Ẩn hồ sơ khỏi danh sách vận hành nhưng vẫn giữ nguyên bản ghi (và dòng Sheet). */
+  async hideCandidatesFromSystem(
+    entries: Array<{ id: string; key?: string; at: string; reason?: string }>,
+  ): Promise<{ hidden: string[]; failed: string[] }> {
+    this.checkErrors();
+    const hidden: string[] = [];
+    const failed: string[] = [];
+    for (const entry of entries || []) {
+      const id = String(entry?.id || '').trim();
+      if (!id) continue;
+      const cand: any = this.candidates.find(c => c.submission_id === id);
+      if (!cand) { failed.push(id); continue; }
+      cand.auto_hidden_at = entry.at || new Date().toISOString();
+      cand.auto_hidden_reason = entry.reason || undefined;
+      hidden.push(id);
+    }
+    return { hidden, failed };
   }
 
   // --- Schedules ---

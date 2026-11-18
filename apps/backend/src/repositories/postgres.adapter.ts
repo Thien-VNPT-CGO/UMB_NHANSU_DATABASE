@@ -325,6 +325,33 @@ export class PostgresAdapter {
     return 0;
   }
 
+  /** Ẩn hồ sơ khỏi hệ thống (quá hạn chờ lịch PV) nhưng vẫn giữ bản ghi trong
+   *  PostgreSQL + dòng trên Google Sheet. Ghi qua updateCandidate để persist
+   *  ngay, không gọi deleteCandidate (tránh xoá dữ liệu nguồn). */
+  public async hideCandidatesFromSystem(
+    entries: Array<{ id: string; key?: string; at: string; reason?: string }>,
+  ): Promise<{ hidden: string[]; failed: string[] }> {
+    const hidden: string[] = [];
+    const failed: string[] = [];
+    for (const entry of entries || []) {
+      const id = String(entry?.id || '').trim();
+      if (!id) continue;
+      const cand: any = this.inner.candidates.find(c => c.submission_id === id);
+      if (!cand) { failed.push(id); continue; }
+      try {
+        await this.executeWrite('updateCandidate', [id, {
+          auto_hidden_at: entry.at || new Date().toISOString(),
+          auto_hidden_reason: entry.reason || undefined,
+        }]);
+        hidden.push(id);
+      } catch (err: any) {
+        console.warn(`[PostgresAdapter] Ẩn ứng viên ${id} thất bại:`, err?.message || err);
+        failed.push(id);
+      }
+    }
+    return { hidden, failed };
+  }
+
   private buildOverrides(): Record<string, any> {
     const self = this;
     return {
@@ -347,6 +374,7 @@ export class PostgresAdapter {
       ensureFreshData: (opts?: any) => self.ensureFreshData(opts),
       scheduleFullSync: (reason?: string) => self.scheduleFullSync(reason),
       pushCandidatesNow: () => self.pushCandidatesNow(),
+      hideCandidatesFromSystem: (entries: any[]) => self.hideCandidatesFromSystem(entries),
     };
   }
 

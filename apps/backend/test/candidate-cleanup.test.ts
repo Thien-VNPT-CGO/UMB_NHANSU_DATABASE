@@ -5,9 +5,11 @@ import {
   candidateCleanupTick,
   getCandidateCleanupTombstones,
   isCandidateEligibleForAutoDelete,
+  isCandidateInterviewHandled,
   isCandidateTombstoned,
   parseCandidateRegisteredAtMs,
 } from '../src/services/candidate-cleanup.service.js';
+import { MockSheetsAdapter } from '../src/repositories/mock-sheets.adapter.js';
 
 const DAY = 86_400_000;
 const NOW = Date.UTC(2026, 10, 17, 0, 0, 0); // 17/11/2026 00:00 UTC
@@ -31,7 +33,7 @@ test('parseCandidateRegisteredAtMs: hiểu giờ VN dd/MM/yyyy, ISO và serial S
   assert.equal(parseCandidateRegisteredAtMs('không phải ngày'), null);
 });
 
-test('chỉ hồ sơ NEW quá 20 ngày, chưa có lịch/chăm sóc mới bị xoá', () => {
+test('chỉ hồ sơ quá 20 ngày và CHƯA được HR đặt lịch PV mới bị ẩn', () => {
   const base = { submission_id: 'CAND_0001', full_name: 'Nguyễn A', status: 'NEW' };
 
   assert.equal(isCandidateEligibleForAutoDelete({ ...base, created_at: daysAgoIso(21) }, NOW), true);
@@ -39,23 +41,33 @@ test('chỉ hồ sơ NEW quá 20 ngày, chưa có lịch/chăm sóc mới bị x
   // Đúng 20 ngày: tính là quá hạn (>= 20).
   assert.equal(isCandidateEligibleForAutoDelete({ ...base, created_at: daysAgoIso(20) }, NOW), true);
 
-  // Thiếu/không đọc được ngày đăng ký -> tuyệt đối không xoá.
+  // Thiếu/không đọc được ngày đăng ký -> tuyệt đối không ẩn.
   assert.equal(isCandidateEligibleForAutoDelete({ ...base }, NOW), false);
   assert.equal(isCandidateEligibleForAutoDelete({ ...base, created_at: '???' }, NOW), false);
 
-  // Đã lên lịch / đã chăm sóc / trạng thái khác NEW -> giữ lại.
+  // Đã ẩn trước đó -> không xử lý lặp.
+  assert.equal(
+    isCandidateEligibleForAutoDelete({ ...base, created_at: daysAgoIso(30), auto_hidden_at: daysAgoIso(1) }, NOW),
+    false,
+  );
+
+  // Đã được HR đặt lịch / phỏng vấn / chấm điểm -> giữ lại.
   for (const patch of [
     { interview_date: '2026-11-20' },
     { interview_time_slot: '08:00-09:00' },
+    { interviewer_id: 'HR01' },
     { interview_score: 0 },
     { interview_score_detail: '{"total":8}' },
     { interview_proposed_date: '2026-11-21' },
-    { zalo_invite_at: '2026-11-01T02:00:00.000Z' },
-    { zalo_invite_status: 'SENT' },
+    { interview_reminder_at: '2026-11-20T01:00:00.000Z' },
     { interview_decline_reason: 'Bận việc' },
     { vip: true },
+    { blacklist_reason: 'Không đến PV' },
+    { status: 'INVITED_INTERVIEW' },
     { status: 'CONFIRMED' },
-    { status: 'REJECTED' },
+    { status: 'SCORED' },
+    { status: 'ACCEPTED' },
+    { status: 'BLACKLIST' },
   ]) {
     assert.equal(
       isCandidateEligibleForAutoDelete({ ...base, created_at: daysAgoIso(30), ...patch }, NOW),
@@ -64,44 +76,44 @@ test('chỉ hồ sơ NEW quá 20 ngày, chưa có lịch/chăm sóc mới bị x
     );
   }
 
-  // HỒI QUY production: cột "Zalo Thư Mời" trên form chứa SĐT nên bị map thành
-  // zalo_invite_note. Ghi chú này KHÔNG được chặn tự xoá (nếu chặn, 143 hồ sơ
-  // quá hạn NEW bị giữ oan và tính năng không bao giờ chạy).
+  // Không có lịch PV -> ẩn dù trạng thái khác NEW (đúng yêu cầu "chỉ giữ người
+  // đã được HR đặt lịch phỏng vấn").
+  for (const status of ['NEW', 'NEED_INFO', 'DECLINED', 'REJECTED']) {
+    assert.equal(
+      isCandidateEligibleForAutoDelete({ ...base, created_at: daysAgoIso(30), status }, NOW),
+      true,
+      `trạng thái ${status} chưa có lịch PV phải được ẩn`,
+    );
+  }
+
+  // Dữ liệu cột "Zalo Thư Mời" (SĐT/ghi chú) không được chặn ẩn.
   assert.equal(
     isCandidateEligibleForAutoDelete(
       { ...base, created_at: daysAgoIso(30), zalo_invite_note: '0378445598' },
       NOW,
     ),
     true,
-    'ghi chú Zalo (SĐT) không được chặn tự xoá',
+    'ghi chú Zalo (SĐT) không được chặn tự ẩn',
   );
   assert.equal(
     isCandidateEligibleForAutoDelete(
-      { ...base, created_at: daysAgoIso(30), zalo_invite_error: 'invalid phone' },
+      { ...base, created_at: daysAgoIso(30), zalo_invite_status: 'SENT' },
       NOW,
     ),
     true,
-    'lỗi Zalo không được chặn tự xoá',
+    'chỉ trạng thái đã gửi Zalo (chưa có lịch PV) vẫn được ẩn',
   );
+});
 
-  // HỒI QUY production: cột "Zalo Thư Mời" từng ghi SĐT và bị nạp vào
-  // zalo_invite_status ("346635827") -> mọi hồ sơ bị coi là đã gửi Zalo.
-  // Chỉ mã trạng thái hợp lệ mới được chặn.
+test('isCandidateInterviewHandled: nhận diện hồ sơ HR đã xử lý để bỏ cờ ẩn', () => {
+  assert.equal(isCandidateInterviewHandled({ status: 'NEW' }), false);
+  assert.equal(isCandidateInterviewHandled({ status: 'invited_interview' }), true);
+  assert.equal(isCandidateInterviewHandled({ interview_date: '2026-11-20' }), true);
+  assert.equal(isCandidateInterviewHandled({ interview_score: 0 }), true);
+  // Đang bị ẩn nhưng sau đó HR đặt lịch -> vẫn phải nhận là đã xử lý để gỡ ẩn.
   assert.equal(
-    isCandidateEligibleForAutoDelete(
-      { ...base, created_at: daysAgoIso(30), zalo_invite_status: '346635827' },
-      NOW,
-    ),
+    isCandidateInterviewHandled({ auto_hidden_at: daysAgoIso(1), interview_time_slot: '09:00-10:00' }),
     true,
-    'zalo_invite_status rác (SĐT) không được chặn tự xoá',
-  );
-  assert.equal(
-    isCandidateEligibleForAutoDelete(
-      { ...base, created_at: daysAgoIso(30), zalo_invite_status: '  sent ' },
-      NOW,
-    ),
-    false,
-    'mã SENT hợp lệ (kể cả khác hoa/thường) phải chặn tự xoá',
   );
 });
 
@@ -130,7 +142,7 @@ test('khoá tombstone ổn định giữa giờ VN và ISO + chặn hồ sơ đ�
   assert.equal(isCandidateTombstoned(store, '0912345678|người khác|'), false);
 });
 
-test('candidateCleanupTick: xoá lô, ghi tombstone + audit, không đụng hồ sơ đã xếp lịch', async () => {
+test('candidateCleanupTick: ẩn hồ sơ quá hạn, ghi tombstone + audit, KHÔNG xoá/ghi Sheet', async () => {
   let list: any[] = [
     { submission_id: 'CAND_0001', full_name: 'Quá hạn', phone_normalized: '0912345678', status: 'NEW', created_at: daysAgoIso(25) },
     { submission_id: 'CAND_0002', full_name: 'Đã có lịch', phone_normalized: '0912345679', status: 'NEW', created_at: daysAgoIso(25), interview_date: '2026-11-20' },
@@ -148,10 +160,17 @@ test('candidateCleanupTick: xoá lô, ghi tombstone + audit, không đụng hồ
       unmarkCandidateDeleted: () => undefined,
     },
     listCandidates: async () => list.map(c => ({ ...c })),
-    deleteCandidatesBatch: async (ids: string[]) => {
-      const wanted = new Set(ids);
-      list = list.filter(c => !wanted.has(c.submission_id));
-      return { deleted: ids.filter(id => wanted.has(id)), failed: [] };
+    hideCandidatesFromSystem: async (entries: Array<{ id: string; at: string; reason?: string }>) => {
+      const hidden: string[] = [];
+      const failed: string[] = [];
+      for (const e of entries) {
+        const c = list.find(x => x.submission_id === e.id);
+        if (!c) { failed.push(e.id); continue; }
+        c.auto_hidden_at = e.at;
+        c.auto_hidden_reason = e.reason;
+        hidden.push(e.id);
+      }
+      return { hidden, failed };
     },
     getSystemSettings: async () => settings,
     updateSystemSettings: async (patch: any) => { settings = { ...settings, ...patch }; return settings; },
@@ -163,16 +182,56 @@ test('candidateCleanupTick: xoá lô, ghi tombstone + audit, không đụng hồ
   const r = await candidateCleanupTick(adapter, { now: NOW, days: 20 });
   assert.deepEqual(r.deletedIds, ['CAND_0001']);
   assert.equal(r.failedIds.length, 0);
-  assert.equal(list.length, 2);
+  // Không xoá bản ghi: hồ sơ quá hạn vẫn còn trong kho (và trên Sheet),
+  // chỉ được gắn cờ ẩn khỏi giao diện.
+  assert.equal(list.length, 3);
+  assert.ok(list[0].auto_hidden_at);
+  assert.equal(list[1].auto_hidden_at, undefined);
   assert.equal(liveMarks[0].length, 1);
   assert.equal(pushedSettings, 1);
+  // Tuyệt đối không đẩy/ghi lại tab ứng viên lên Google Sheets.
+  assert.equal(pushedCandidates, 0);
   assert.equal(audits.length, 1);
-  assert.equal(audits[0].action, 'CANDIDATE_AUTO_DELETED');
+  assert.equal(audits[0].action, 'CANDIDATE_AUTO_HIDDEN');
   assert.match(String(audits[0].details), /Quá hạn/);
+  assert.match(String(audits[0].details), /giữ nguyên dữ liệu trên Google Sheet/);
 
   const store = getCandidateCleanupTombstones(settings);
   const key = candidateCleanupKey({ phone_normalized: '0912345678', full_name: 'Quá hạn', created_at: daysAgoIso(25) });
   assert.equal(isCandidateTombstoned(store, key), true);
-  assert.ok(pushedCandidates >= 0);
+
+  // Lượt quét kế tiếp không xử lý lặp lại hồ sơ đã ẩn.
+  const r2 = await candidateCleanupTick(adapter, { now: NOW + 60_000, days: 20 });
+  assert.equal(r2.deletedIds.length, 0);
+  assert.equal(audits.length, 1);
+});
+
+test('hồ sơ đã ẩn sẽ hiện lại khi HR thao tác (đặt lịch/chấm điểm/cập nhật)', async () => {
+  const repo = new MockSheetsAdapter();
+  await repo.createCandidate({
+    submission_id: 'CAND_9001',
+    full_name: 'Ứng viên cũ',
+    phone_normalized: '0900000001',
+    status: 'NEW',
+    created_at: daysAgoIso(30),
+    apply_position: 'Nhân viên Bán hàng',
+    birth_year: 2002,
+    preferred_branch_id: 'CN130',
+  } as any);
+
+  const hidden = await repo.hideCandidatesFromSystem([
+    { id: 'CAND_9001', at: daysAgoIso(1), reason: 'Quá hạn' },
+  ]);
+  assert.deepEqual(hidden.hidden, ['CAND_9001']);
+  assert.ok((repo.candidates[0] as any).auto_hidden_at);
+
+  // HR đặt lịch PV -> updateCandidate không truyền auto_hidden_at => tự bỏ cờ ẩn.
+  await repo.updateCandidate('CAND_9001', {
+    status: 'INVITED_INTERVIEW',
+    interview_date: '2026-11-25',
+    interview_time_slot: '09:00-09:30',
+  } as any);
+  assert.equal((repo.candidates[0] as any).auto_hidden_at, undefined);
+  assert.equal((repo.candidates[0] as any).auto_hidden_reason, undefined);
 });
 
