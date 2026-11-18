@@ -268,7 +268,7 @@ import {
   requireRole,
   enforceBranchScope,
 } from './middlewares/rbac.middleware.js';
-import { BRANCHES, ERROR_CODES, SHIFT_TEMPLATES, toVietnameseErrorMessage } from '@ubm/shared';
+import { BRANCHES, ERROR_CODES, SHIFT_TEMPLATES, isBranchScheduleHidden, toVietnameseErrorMessage } from '@ubm/shared';
 import { SHEETS_DEFINITIONS } from './services/google-sheets-sync.service.js';
 import {
   addDaysIso,
@@ -568,6 +568,40 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       }
     } catch { /* cache invalidation không được làm hỏng nghiệp vụ */ }
   };
+
+  // ---------------------------------------------------------------------
+  // ẨN LỊCH CHI NHÁNH ĐÃ NGỪNG HOẠT ĐỘNG (ADMIN áp dụng → toàn hệ thống)
+  //  - Chi nhánh CLOSED (hoặc schedule_visible=false) bị ẩn khỏi mọi lịch.
+  //  - Tài khoản thuộc chi nhánh đó không xem được lịch (/me/schedule...).
+  //  - Cache ngắn 2s để các route lịch gọi liên tục không đọc Sheet nhiều lần.
+  // ---------------------------------------------------------------------
+  let branchVisibilityCache: { at: number; ids: Set<string> } | null = null;
+  const hiddenBranchIdSet = async (): Promise<Set<string>> => {
+    if (branchVisibilityCache && Date.now() - branchVisibilityCache.at < 2000) {
+      return branchVisibilityCache.ids;
+    }
+    const rows = await adapter.getBranches().catch(() => [] as any[]);
+    const ids = new Set<string>(
+      (rows || [])
+        .filter((b: any) => isBranchScheduleHidden(b))
+        .map((b: any) => canonicalBranchId(b?.id || b?.branch_id))
+        .filter(Boolean)
+    );
+    branchVisibilityCache = { at: Date.now(), ids };
+    return ids;
+  };
+  const isBranchScheduleHiddenById = async (branchId?: string): Promise<boolean> => {
+    const id = canonicalBranchId(branchId);
+    if (!id || id === '*') return false;
+    return (await hiddenBranchIdSet()).has(id);
+  };
+  const isEmployeeScheduleHidden = async (employeeId?: string): Promise<boolean> => {
+    if (!employeeId) return false;
+    const emp: any = await employeesService.getEmployee(employeeId).catch(() => null);
+    const branchId = canonicalBranchId(emp?.default_branch_id || emp?.branch_id || '');
+    return branchId ? isBranchScheduleHiddenById(branchId) : false;
+  };
+  const invalidateBranchVisibilityCache = () => { branchVisibilityCache = null; };
 
   // =====================================================================
   // MILKROUTE EV — QUẢN LÝ TÀI XẾ GIAO SỮA + ĐỊNH VỊ GPS (BETA)
@@ -2488,6 +2522,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         radius_meters: Number(branch.radius_meters) || 300,
         gps_enabled: (branch as any).gps_enabled !== false,
         status: branch.status || 'ACTIVE',
+        // Cờ ẩn lịch: cổng NV dùng để khóa màn hình Lịch + hiện thông báo.
+        schedule_visible: !isBranchScheduleHidden(branch),
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -2566,6 +2602,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.get('/me/office/schedule', authMiddleware, async (req: AuthenticatedRequest, res) => {
     try {
       if (req.user?.role !== 'EMPLOYEE' || !req.user.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      if (await isEmployeeScheduleHidden(req.user.employeeId)) {
+        res.setHeader('Cache-Control', 'no-store');
+        return res.status(403).json({
+          error: 'BRANCH_SCHEDULE_HIDDEN',
+          message: 'Chi nhánh đã ngừng hoạt động — lịch làm việc đã được Admin ẩn.',
+        });
+      }
       res.json(await officeService.getSchedule(req.user.employeeId, String(req.query.fromDate || ''), String(req.query.toDate || '')));
     } catch (err: any) { officeErr(res, err); }
   });
@@ -4711,7 +4754,22 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         const week =
           (req.query.week as string) ||
           weekRangeOf(new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)).mon;
-        const shifts = await schedulesService.getShiftsForWeek(branchId, week);
+        // Chi nhánh ngừng hoạt động: chặn xem lịch của chi nhánh đó.
+        if (branchId && branchId !== '*' && await isBranchScheduleHiddenById(branchId)) {
+          res.setHeader('Cache-Control', 'no-store');
+          return res.status(403).json({
+            error: 'BRANCH_SCHEDULE_HIDDEN',
+            message: `Chi nhánh ${branchId} đã ngừng hoạt động — lịch làm việc đã bị ẩn.`,
+          });
+        }
+        let shifts = await schedulesService.getShiftsForWeek(branchId, week);
+        // Xem tổng hợp (branchId='*'): loại bỏ ca của chi nhánh đã ẩn.
+        if (branchId === '*') {
+          const hidden = await hiddenBranchIdSet();
+          if (hidden.size > 0) {
+            shifts = (shifts || []).filter((s: any) => !hidden.has(canonicalBranchId(s?.branch_id)));
+          }
+        }
         res.json(shifts);
       } catch (err: any) {
         res.status(500).json({ error: err.message });
@@ -4723,6 +4781,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const employeeId = req.user?.employeeId;
       if (!employeeId) return res.status(400).json({ error: 'NOT_AN_EMPLOYEE' });
+      // Chi nhánh ngừng hoạt động: trả rỗng (không lộ lịch) — cổng NV hiện banner
+      // "lịch đã ẩn" dựa trên /me/branch.schedule_visible.
+      if (await isEmployeeScheduleHidden(employeeId)) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('X-Branch-Schedule-Hidden', '1');
+        return res.json([]);
+      }
       const fromDate = (req.query.fromDate as string) || vnTodayISO();
       const toDate = (req.query.toDate as string) || '2030-12-31';
       const shifts = await schedulesService.getEmployeeShifts(employeeId, fromDate, toDate);
@@ -4740,6 +4805,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const requesterId = req.user?.employeeId;
       if (req.user?.role !== 'EMPLOYEE' || !requesterId) {
         return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      }
+      if (await isEmployeeScheduleHidden(requesterId)) {
+        return res.status(403).json({
+          error: 'BRANCH_SCHEDULE_HIDDEN',
+          message: 'Chi nhánh đã ngừng hoạt động — lịch làm việc đã bị ẩn, không thể đổi ca.',
+        });
       }
       const targetId = String(req.query.employeeId || '').trim();
       if (!targetId) return res.status(400).json({ error: 'MISSING_EMPLOYEE' });
@@ -4780,6 +4851,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     enforceBranchScope(req => req.body.branchId),
     async (req: AuthenticatedRequest, res) => {
       try {
+        // Chi nhánh đã ngừng hoạt động: không cho xếp thêm ca mới.
+        if (await isBranchScheduleHiddenById((req.body as any)?.branchId)) {
+          return res.status(403).json({
+            error: 'BRANCH_SCHEDULE_HIDDEN',
+            message: 'Chi nhánh đã ngừng hoạt động — lịch làm việc đã bị ẩn, không thể xếp ca.',
+          });
+        }
         const result = await schedulesService.createShift({
           ...req.body,
           actorId: req.user!.id,
@@ -5019,6 +5097,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     async (req: AuthenticatedRequest, res) => {
       try {
         const branchId = req.body.branchId || req.user?.branchScope;
+        if (await isBranchScheduleHiddenById(branchId)) {
+          return res.status(403).json({
+            error: 'BRANCH_SCHEDULE_HIDDEN',
+            message: 'Chi nhánh đã ngừng hoạt động — lịch làm việc đã bị ẩn, không thể phát hành.',
+          });
+        }
         const auto = req.body.auto === true || req.body.auto === 'true' || req.body.auto === '1';
         let autoSummary: any = null;
         if (auto) {
@@ -5085,6 +5169,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     async (req: AuthenticatedRequest, res) => {
       try {
         const branchId = req.body.branchId || req.user?.branchScope || '*';
+        if (await isBranchScheduleHiddenById(branchId)) {
+          return res.status(403).json({
+            error: 'BRANCH_SCHEDULE_HIDDEN',
+            message: 'Chi nhánh đã ngừng hoạt động — lịch làm việc đã bị ẩn, không thể xếp ca.',
+          });
+        }
         const weekMon = req.body.weekMon || new Date().toISOString().split('T')[0];
         const plan = await autoScheduleService.plan(branchId, weekMon);
         res.json(plan);
@@ -9036,6 +9126,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/admin/branches', authMiddleware, requireRole(['ADMIN']), validate({ body: opaqueConfigBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const created = await adapter.createBranch({ ...(req.body || {}) });
+      invalidateBranchVisibilityCache();
       await adapter.recordAuditLog({
         actor_id: req.user!.id,
         action: 'BRANCH_CREATED',
@@ -9065,7 +9156,22 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         body.map_visible = !(raw === false || raw === 0 || raw === '0' ||
           ['false', 'off', 'no', 'tắt', 'tat', 'không', 'khong', 'ẩn', 'an'].includes(String(raw).trim().toLowerCase()));
       }
+      // Trạng thái hoạt động: CLOSED = ngừng hoạt động → ẩn lịch toàn hệ thống.
+      if (Object.prototype.hasOwnProperty.call(body, 'status')) {
+        const rawStatus = String(body.status ?? '').trim().toUpperCase();
+        body.status = ['ACTIVE', 'MAINTENANCE', 'CLOSED'].includes(rawStatus) ? rawStatus : 'ACTIVE';
+      }
+      // Cờ ẩn lịch riêng (không đổi trạng thái chi nhánh).
+      if (Object.prototype.hasOwnProperty.call(body, 'schedule_visible')) {
+        const raw = body.schedule_visible;
+        body.schedule_visible = !(raw === false || raw === 0 || raw === '0' ||
+          ['false', 'off', 'no', 'tắt', 'tat', 'không', 'khong', 'ẩn', 'an'].includes(String(raw).trim().toLowerCase()));
+      }
+      const visibilityChanged =
+        Object.prototype.hasOwnProperty.call(body, 'status') ||
+        Object.prototype.hasOwnProperty.call(body, 'schedule_visible');
       const updated = await adapter.updateBranch(req.params.id, body);
+      invalidateBranchVisibilityCache();
       // Toạ độ chi nhánh vừa đổi → đồng bộ điểm dừng lộ trình EV để Live Map
       // và geofence check-in của tài xế khớp tab Quản Lý Chi Nhánh.
       try {
@@ -9081,7 +9187,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         payload_after: updated,
       });
       // Realtime: các máy khác tải lại danh sách chi nhánh/GPS ngay.
+      const hiddenNow = isBranchScheduleHidden(updated as any);
       broadcastUpdate('config', { area: 'branches', id: req.params.id });
+      broadcastUpdate('branches', {
+        action: visibilityChanged ? 'visibility' : 'update',
+        id: req.params.id,
+        status: (updated as any)?.status,
+        schedule_visible: (updated as any)?.schedule_visible !== false,
+        hidden: hiddenNow,
+      });
+      // Ẩn/hiện lịch: bắn thêm sự kiện lịch để tab Lịch + cổng NV tải lại ngay
+      // (0ms) thay vì chờ lần tải kế tiếp.
+      if (visibilityChanged) {
+        broadcastUpdate('schedules', {
+          action: 'branch-visibility',
+          branchId: req.params.id,
+          hidden: hiddenNow,
+          status: (updated as any)?.status,
+        });
+      }
       broadcastUpdate('ev', { area: 'branch-coords', id: req.params.id });
       res.json(updated);
     } catch (err: any) {

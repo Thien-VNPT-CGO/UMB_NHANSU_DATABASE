@@ -3765,6 +3765,9 @@ export class GoogleSheetsSyncService {
             status: (r[6] as any) || old.status || 'ACTIVE',
             gps_enabled: parseSheetBoolean(r[7], old.gps_enabled !== false),
             map_visible: parseSheetBoolean(r[8], old.map_visible !== false),
+            // Cờ ẩn lịch không có cột riêng trên Sheet → giữ nguyên trạng thái
+            // trong bộ nhớ để pull không vô tình bật lại lịch đang ẩn.
+            ...(old.schedule_visible === false ? { schedule_visible: false } : {}),
           };
         });
       } else if (branchesInMemory.length === 0) {

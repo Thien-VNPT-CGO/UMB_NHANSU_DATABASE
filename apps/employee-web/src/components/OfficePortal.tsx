@@ -15,6 +15,7 @@ import { apiRequest } from '../services/api';
 import {
   OFFICE_ADJUST_MONTHLY_QUOTA,
   OFFICE_LEAVE_MONTHLY_QUOTA,
+  getErrorCode,
   officeDayHoursLabel,
   officeRuleOfWeekday,
 } from '@ubm/shared';
@@ -164,13 +165,15 @@ export function OfficeScheduleView({ employee, refreshKey }: OfficeViewProps) {
   const [days, setDays] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
+  // Chi nhánh đã ngừng hoạt động → Admin ẩn lịch (backend trả 403).
+  const [branchHidden, setBranchHidden] = useState(false);
   // Mốc giờ SERVER (giờ VN) + đồng hồ nhích 15s → trạng thái "Chưa check-in" tự
   // ĐÓNG đúng 08:30 giờ VN dù điện thoại lệch giờ/múi giờ.
   const [anchor, setAnchor] = useState<{ ms: number; at: number } | null>(null);
   const [tick, setTick] = useState(Date.now());
 
   const load = useCallback(async () => {
-    setLoading(true); setErr('');
+    setLoading(true); setErr(''); setBranchHidden(false);
     try {
       const base = vnToday();
       const monday = addDays(mondayOf(base), sel === 'NEXT' ? 7 : 0);
@@ -180,7 +183,13 @@ export function OfficeScheduleView({ employee, refreshKey }: OfficeViewProps) {
       const serverMs = Number(data?.now_ms) || (data?.now ? Date.parse(data.now) : NaN);
       if (Number.isFinite(serverMs)) setAnchor({ ms: serverMs, at: Date.now() });
     } catch (e: any) {
-      setErr(e?.message || 'Không tải được lịch làm việc.');
+      // Chi nhánh đã ngừng hoạt động → hiện thông báo thân thiện, không phải lỗi.
+      if (getErrorCode(e) === 'BRANCH_SCHEDULE_HIDDEN' || /ngừng hoạt động/i.test(String(e?.message || ''))) {
+        setBranchHidden(true);
+        setDays([]);
+      } else {
+        setErr(e?.message || 'Không tải được lịch làm việc.');
+      }
     } finally { setLoading(false); }
   }, [sel, refreshKey]);
   useEffect(() => { load(); }, [load]);
@@ -206,6 +215,15 @@ export function OfficeScheduleView({ employee, refreshKey }: OfficeViewProps) {
             Thứ 2 – Thứ 6: 08:00 – 17:00 · Thứ 7: 08:00 – 12:00 · Chủ nhật nghỉ
           </div>
 
+          {branchHidden && (
+            <div style={{ padding: '14px 16px', backgroundColor: '#FEF2F2', border: '1.5px solid #FCA5A5', borderRadius: 10, marginBottom: 12 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: '#B91C1C' }}>🚫 Lịch làm việc chi nhánh đã bị ẩn</div>
+              <div style={{ fontSize: 12.5, color: '#991B1B', marginTop: 5, lineHeight: 1.65 }}>
+                Chi nhánh đã ngừng hoạt động. Admin đã ẩn lịch làm việc trên toàn hệ thống nên bạn không xem được lịch.
+                Vui lòng liên hệ Quản lý / Admin nếu cần hỗ trợ.
+              </div>
+            </div>
+          )}
           {err && <Card><ErrorBox msg={err} /></Card>}
           {loading && <Card><div className="fx-skeleton" style={{ height: 60 }} /></Card>}
 

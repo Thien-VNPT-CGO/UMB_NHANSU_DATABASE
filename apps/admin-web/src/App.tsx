@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, tryRefreshSession } from './services/api';
 import { connectRealtime } from './services/realtime';
-import { effectivePayMode, getErrorCode, payModeLabel, toVietnameseErrorMessage } from '@ubm/shared';
+import { effectivePayMode, getErrorCode, isBranchScheduleHidden, payModeLabel, toVietnameseErrorMessage } from '@ubm/shared';
 import { APP_COMMIT } from './app-version';
 import {
   Users,
@@ -779,6 +779,8 @@ export function App() {
   const [branchEditId, setBranchEditId] = useState<string | null>(null);
   const [branchEditForm, setBranchEditForm] = useState<{ latitude: string; longitude: string; radius_meters: string; gps_enabled: boolean }>({ latitude: '', longitude: '', radius_meters: '300', gps_enabled: true });
   const [branchEditBusy, setBranchEditBusy] = useState(false);
+  // Ẩn/hiện lịch chi nhánh (ngừng hoạt động) — áp dụng realtime toàn hệ thống.
+  const [branchVisibilityBusy, setBranchVisibilityBusy] = useState('');
   const [shiftTemplates, setShiftTemplates] = useState<any>({});
   const [policies, setPolicies] = useState<any>({});
   const [systemNotifications, setSystemNotifications] = useState<any[]>([]);
@@ -1951,6 +1953,16 @@ export function App() {
               window.dispatchEvent(new CustomEvent('ubm:employees-reload'));
             } catch { /* non-fatal */ }
           }
+          // Realtime chi nhánh: trạng thái ẩn/hiện lịch (CLOSED/ACTIVE) đổi ở máy
+          // nào là mọi máy + tab Lịch cập nhật ngay.
+          if (payload?.entity === 'branches' || payload?.entity === 'all') {
+            apiRequest('/admin/branches')
+              .then(bList => { if (Array.isArray(bList)) setBranches(bList); })
+              .catch(() => null);
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:branches-reload', { detail: payload?.data }));
+            } catch { /* non-fatal */ }
+          }
           // Realtime nháp lịch mời PV: HR set giờ ở tab/máy nào thì các tab/máy
           // của cùng HR đó cập nhật form ngay (reload không mất giờ đã setup).
           if (payload?.entity === 'interview-draft') {
@@ -2432,6 +2444,41 @@ export function App() {
       setErrorMsg(err?.message || 'Không lưu được toạ độ cửa hàng.');
     } finally {
       setBranchEditBusy(false);
+    }
+  };
+
+  /** Ẩn/hiện lịch làm việc của 1 chi nhánh (Admin). Backend lưu status CLOSED/
+   *  ACTIVE + schedule_visible vào DANH_SACH_CHI_NHANH và broadcast realtime. */
+  const handleToggleBranchSchedule = async (b: any, hide: boolean) => {
+    const branchId = b?.id || b?.branch_id;
+    if (!branchId || branchVisibilityBusy) return;
+    const label = b?.name || getDisplayBranch(branchId);
+    if (hide && !window.confirm(
+      `ẨN LỊCH CHI NHÁNH ${label}?\n\n• Chi nhánh chuyển trạng thái NGỪNG HOẠT ĐỘNG (CLOSED).\n• Toàn bộ lịch làm việc của chi nhánh bị ẩn trên MỌI tài khoản.\n• Nhân viên thuộc chi nhánh KHÔNG xem được lịch.\n• Dữ liệu công/lương cũ vẫn giữ nguyên.\n\nBạn có chắc chắn?`
+    )) return;
+    setBranchVisibilityBusy(branchId);
+    try {
+      const payload = hide
+        ? { status: 'CLOSED', schedule_visible: false }
+        : { status: 'ACTIVE', schedule_visible: true };
+      const updated: any = await apiRequest(`/admin/branches/${encodeURIComponent(branchId)}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+      setBranches(prev => prev.map((x: any) => {
+        const xid = x.id || x.branch_id;
+        return xid === branchId ? { ...x, ...(updated || {}), ...payload } : x;
+      }));
+      try { window.dispatchEvent(new CustomEvent('ubm:branches-reload', { detail: { id: branchId, hidden: hide } })); } catch {}
+      try { window.dispatchEvent(new CustomEvent('ubm:schedule-reload', { detail: { action: 'branch-visibility', branchId, hidden: hide } })); } catch {}
+      setSuccessMsg(hide
+        ? `🙈 Đã ẩn lịch chi nhánh ${label} — mọi tài khoản đã cập nhật realtime!`
+        : `👁 Đã hiện lại lịch chi nhánh ${label} — mọi tài khoản đã cập nhật realtime!`);
+      setTimeout(() => setSuccessMsg(null), 4000);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Không lưu được trạng thái ẩn/hiện lịch chi nhánh.');
+    } finally {
+      setBranchVisibilityBusy('');
     }
   };
 
@@ -4984,28 +5031,32 @@ export function App() {
 
               {/* 6 Branches Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
-                {branches.map((b: any) => (
-                  <div key={b.id} style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-soft)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                {branches.map((b: any) => {
+                  const branchHidden = isBranchScheduleHidden(b);
+                  const branchKey = b.id || b.branch_id;
+                  return (
+                  <div key={branchKey} style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: branchHidden ? '1.5px solid #FCA5A5' : '1px solid var(--border)', boxShadow: 'var(--shadow-soft)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
                       <div>
                         <div style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text)' }}>{b.name}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--brand)', fontWeight: 700 }}>Mã: {b.id}</div>
+                        <div style={{ fontSize: '12px', color: 'var(--brand)', fontWeight: 700 }}>Mã: {b.id || b.branch_id}</div>
                       </div>
                       <span style={{
                         padding: '4px 8px',
                         borderRadius: 'var(--radius-full)',
                         fontSize: '11px',
                         fontWeight: 700,
-                        backgroundColor: 'var(--success-soft)',
-                        color: 'var(--success)',
+                        backgroundColor: branchHidden ? '#FEF2F2' : 'var(--success-soft)',
+                        color: branchHidden ? '#B91C1C' : 'var(--success)',
+                        whiteSpace: 'nowrap',
                       }}>
-                        {b.status}
+                        {branchHidden ? '🚫 NGỪNG HĐ' : (b.status || 'ACTIVE')}
                       </span>
                     </div>
 
                     <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-muted)' }}>
                       <div>📍 {b.address}</div>
-                      {branchEditId === b.id ? (
+                      {branchEditId === branchKey ? (
                         <div style={{ marginTop: '8px', padding: '10px', borderRadius: '8px', border: '1px dashed var(--brand)', backgroundColor: 'var(--brand-soft)' }}>
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                             <label style={{ fontSize: '11px', fontWeight: 700 }}>Vĩ độ (lat)
@@ -5037,7 +5088,7 @@ export function App() {
                           )}
                           <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
                             <button type="button" className="btn-primary" disabled={branchEditBusy}
-                              onClick={() => handleSaveBranchCoords(b.id)}
+                              onClick={() => handleSaveBranchCoords(branchKey)}
                               style={{ fontSize: '11.5px', padding: '6px 12px', fontWeight: 800 }}>
                               {branchEditBusy ? '⏳ Đang lưu...' : '💾 Lưu toạ độ'}
                             </button>
@@ -5058,26 +5109,44 @@ export function App() {
                               : <span style={{ color: 'var(--success)', fontWeight: 700 }}>📡 Định vị GPS: ĐANG BẬT</span>}
                           </div>
                           <div style={{ marginTop: '4px' }}>👥 Định biên ca: <strong>{b.min_staff} - {b.max_staff} NV</strong></div>
+                          <div style={{ marginTop: '4px' }}>
+                            {branchHidden
+                              ? <span style={{ color: '#B91C1C', fontWeight: 700 }}>🙈 Lịch làm việc: ĐÃ ẨN (chi nhánh ngừng hoạt động)</span>
+                              : <span style={{ color: 'var(--success)', fontWeight: 700 }}>📅 Lịch làm việc: ĐANG HIỂN THỊ</span>}
+                          </div>
                           {currentUser?.role === 'ADMIN' && (
-                            <button type="button" className="btn-secondary"
-                              onClick={() => {
-                                setBranchEditId(b.id);
-                                setBranchEditForm({
-                                  latitude: String(b.latitude ?? ''),
-                                  longitude: String(b.longitude ?? ''),
-                                  radius_meters: String(b.radius_meters ?? 300),
-                                  gps_enabled: b.gps_enabled !== false,
-                                });
-                              }}
-                              style={{ marginTop: '10px', fontSize: '11.5px', padding: '5px 10px', fontWeight: 700 }}>
-                              ⚙️ Sửa toạ độ GPS
-                            </button>
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+                              <button type="button" className="btn-secondary"
+                                onClick={() => {
+                                  setBranchEditId(b.id || b.branch_id);
+                                  setBranchEditForm({
+                                    latitude: String(b.latitude ?? ''),
+                                    longitude: String(b.longitude ?? ''),
+                                    radius_meters: String(b.radius_meters ?? 300),
+                                    gps_enabled: b.gps_enabled !== false,
+                                  });
+                                }}
+                                style={{ fontSize: '11.5px', padding: '5px 10px', fontWeight: 700 }}>
+                                ⚙️ Sửa toạ độ GPS
+                              </button>
+                              <button
+                                type="button"
+                                className={branchHidden ? 'btn-primary' : 'btn-secondary'}
+                                disabled={branchVisibilityBusy === branchKey}
+                                title={branchHidden ? 'Mở lại chi nhánh — lịch hiển thị trở lại trên mọi tài khoản' : 'Ẩn lịch — chi nhánh ngừng hoạt động, lịch ẩn trên mọi tài khoản'}
+                                onClick={() => handleToggleBranchSchedule(b, !branchHidden)}
+                                style={{ fontSize: '11.5px', padding: '5px 10px', fontWeight: 800 }}
+                              >
+                                {branchVisibilityBusy === branchKey ? '⏳ Đang lưu...' : branchHidden ? '👁 Hiện lại lịch' : '🙈 Ẩn lịch'}
+                              </button>
+                            </div>
                           )}
                         </>
                       )}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Shift Templates */}
