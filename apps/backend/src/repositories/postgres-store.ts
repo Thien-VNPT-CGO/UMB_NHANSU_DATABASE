@@ -53,6 +53,7 @@ const TABLES = {
   evGpsPoints: 'ev_gps_points',
   evDriverPayroll: 'ev_driver_payroll',
   evRouteChangeRequests: 'ev_route_change_requests',
+  evExplanationTickets: 'ev_explanation_tickets',
 } as const;
 
 type CollectionKey = keyof typeof TABLES;
@@ -214,6 +215,12 @@ const COLLECTIONS: CollectionDef[] = [
     id: r => str(r.request_id),
     bucketMonth: r => monthOf(r.effective_from),
   },
+  {
+    key: 'evExplanationTickets',
+    table: TABLES.evExplanationTickets,
+    id: r => str(r.ticket_id),
+    bucketMonth: r => monthOf(r.created_at),
+  },
 ];
 
 const SINGLETON_KEYS = ['shiftTemplates', 'policies', 'maintenance', 'systemSettings'] as const;
@@ -228,6 +235,7 @@ const PHOTO_PAYLOAD_FIELDS = new Set([
   'event_photo',
   'avatar_photo',
   'evidence_photo',
+  'data_url',
 ]);
 
 function serializeRow(row: any): string {
@@ -287,6 +295,8 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_ev_payroll_driver_period ON ev_driver_payroll ((data->>'driver_id'), (data->>'period'))`,
   `CREATE INDEX IF NOT EXISTS idx_ev_route_changes_route_dates ON ev_route_change_requests ((data->>'route_id'), (data->>'effective_from'), (data->>'effective_to'))`,
   `CREATE INDEX IF NOT EXISTS idx_ev_route_changes_status ON ev_route_change_requests ((data->>'status'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_explanations_driver_status ON ev_explanation_tickets ((data->>'driver_id'), (data->>'status'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_explanations_status_time ON ev_explanation_tickets ((data->>'status'), (data->>'created_at'))`,
   `CREATE INDEX IF NOT EXISTS idx_ev_vehicles_driver ON ev_vehicles ((data->>'assigned_driver_id'))`,
   `CREATE INDEX IF NOT EXISTS idx_ev_vehicles_status ON ev_vehicles ((data->>'status'))`,
 ];
@@ -707,6 +717,14 @@ export class PostgresStore {
           break;
         case 'deleteEVRouteChangeRequest':
           await this.deleteRecord(TABLES.evRouteChangeRequests, str(args[0]), client);
+          break;
+
+        case 'createEVExplanationTicket':
+        case 'updateEVExplanationTicket':
+          await upsert('evExplanationTickets', result);
+          break;
+        case 'deleteEVExplanationTicket':
+          await this.deleteRecord(TABLES.evExplanationTickets, str(args[0]), client);
           break;
 
         default:

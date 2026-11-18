@@ -69,6 +69,7 @@ export function DriverCharging({ d }: { d: DriverData }) {
           </div>
           <div style={{ fontSize: 11.5, color: '#9D174D', fontWeight: 600, marginTop: 4 }}>
             Ngày đăng ký {fmtDay(active.requested_date)}. Bấm bắt đầu khi đã cắm sạc — hệ thống ghim trạm theo GPS.
+            Sau đó vào tab Hôm nay bấm điểm <b>Trạm sạc</b> 3 lần tại cùng vị trí để ghi nhớ trạm.
           </div>
           <BigButton
             style={{ marginTop: 10 }}

@@ -86,6 +86,8 @@ export const evRouteStopCreateBody = z.object({
   longitude: z.number().min(-180).max(180),
   geofence_radius_m: z.number().int().positive().default(100),
   sla_minutes: z.number().int().nonnegative(),
+  sla_minutes_with_charging: z.number().int().nonnegative().optional(),
+  sla_minutes_without_charging: z.number().int().nonnegative().optional(),
   stop_type: z.enum(['START', 'DELIVERY', 'OFFICE', 'CHARGING', 'END']),
   is_mandatory: z.boolean().default(true),
   notes: z.string().optional(),
@@ -101,6 +103,8 @@ export const evRouteStopUpdateBody = z.object({
   longitude: z.number().min(-180).max(180).optional(),
   geofence_radius_m: z.number().int().positive().optional(),
   sla_minutes: z.number().int().nonnegative().optional(),
+  sla_minutes_with_charging: z.number().int().nonnegative().optional(),
+  sla_minutes_without_charging: z.number().int().nonnegative().optional(),
   stop_type: z.enum(['START', 'DELIVERY', 'OFFICE', 'CHARGING', 'END']).optional(),
   is_mandatory: z.boolean().optional(),
   notes: z.string().optional(),
@@ -245,6 +249,47 @@ export const evChargingTicketsQuery = z.object({
   offset: z.coerce.number().int().nonnegative().default(0),
 });
 
+// EV Explanation Ticket (Phiếu giải trình điểm quên chấm)
+export const evExplanationCreateBody = z.object({
+  reason: z.string().min(1).max(2000),
+  items: z.array(z.object({
+    shift_id: idSchema,
+    stop_id: idSchema,
+  })).min(1).max(30),
+  // Client nén ảnh trước khi gửi; backend ghi đĩa và chỉ lưu metadata.
+  photos: z.array(z.object({
+    data_url: z.string().min(32).max(4_500_000),
+    mime_type: z.string().max(50).optional(),
+    name: z.string().max(200).optional(),
+  })).min(1).max(8),
+});
+
+export const evExplanationTicketIdParams = z.object({
+  id: idSchema,
+});
+
+export const evExplanationPhotoParams = z.object({
+  ticketId: idSchema,
+  photoId: idSchema,
+});
+
+export const evExplanationApproveBody = z.object({
+  notes: z.string().max(1000).optional(),
+});
+
+export const evExplanationRejectBody = z.object({
+  reason: z.string().min(1).max(1000),
+});
+
+export const evExplanationTicketsQuery = z.object({
+  status: z.enum(['PENDING', 'APPROVED', 'REJECTED']).optional(),
+  driver_id: idSchema.optional(),
+  date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  limit: z.coerce.number().int().positive().max(100).default(50),
+  offset: z.coerce.number().int().nonnegative().default(0),
+});
+
 // GPS Batch
 export const evGpsBatchBody = z.object({
   points: z.array(z.object({
@@ -298,6 +343,8 @@ const evRouteChangeStopBody = z.object({
   longitude: z.number().min(-180).max(180),
   geofence_radius_m: z.number().int().positive().default(100),
   sla_minutes: z.number().int().nonnegative().default(0),
+  sla_minutes_with_charging: z.number().int().nonnegative().optional(),
+  sla_minutes_without_charging: z.number().int().nonnegative().optional(),
   stop_type: z.enum(['START', 'DELIVERY', 'OFFICE', 'CHARGING', 'END']),
   is_mandatory: z.boolean().default(true),
   notes: z.string().max(500).optional(),

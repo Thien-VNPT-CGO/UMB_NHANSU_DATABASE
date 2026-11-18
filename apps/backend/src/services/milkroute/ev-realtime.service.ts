@@ -300,6 +300,36 @@ export class EVRealtimeService {
     this.io.emit('ev:live:route-changed', payload);
   }
 
+  /**
+   * Broadcast trạng thái Phiếu giải trình điểm quên chấm.
+   * Admin/Kế toán/Giám đốc thấy hàng đợi đổi ngay; tài xế thấy phiếu + điểm
+   * được duyệt (nếu APPROVED) mà không chờ vòng poll.
+   */
+  broadcastExplanationStatus(data: {
+    ticketId: string;
+    driverId: string;
+    status: 'PENDING' | 'APPROVED' | 'REJECTED';
+    ticketCode?: string;
+    approvedBy?: string;
+    rejectedReason?: string;
+  }) {
+    if (!this.io) return;
+
+    const payload: EVWSPayload<any> = {
+      event: 'ev:live:explanation:status',
+      timestamp: new Date().toISOString(),
+      data,
+      driverId: data.driverId,
+    };
+
+    this.io.to('admin:live').emit('ev:live:explanation:status', payload);
+    this.io.to(`driver:${data.driverId}`).emit('ev:live:explanation:status', payload);
+    if (data.status === 'PENDING' || data.status === 'APPROVED' || data.status === 'REJECTED') {
+      this.io.to('finance:payroll').emit('ev:live:explanation:status', payload);
+      this.io.to('director:charging').emit('ev:live:explanation:status', payload);
+    }
+  }
+
   /** Broadcast payroll updated */
   broadcastPayrollUpdated(driverId: string, payrollData: any) {
     if (!this.io) return;

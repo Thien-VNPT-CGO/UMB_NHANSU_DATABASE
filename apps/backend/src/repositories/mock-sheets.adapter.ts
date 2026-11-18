@@ -38,6 +38,7 @@ import {
   EVGPSPoint,
   EVDriverPayroll,
   EVRouteChangeRequest,
+  EVExplanationTicket,
 } from '@ubm/shared';
 import { ISheetsRepository } from './sheets.interface.js';
 import { dedupeShiftAssignments, findLiveShift } from './shift-dedupe.js';
@@ -118,6 +119,8 @@ export class MockSheetsAdapter implements ISheetsRepository {
   public evDriverPayroll: EVDriverPayroll[] = [];
   /** Phiếu đổi lộ trình theo sản phẩm (tạo là APPROVED, có hiệu lực ngay). */
   public evRouteChangeRequests: EVRouteChangeRequest[] = [];
+  /** Phiếu giải trình điểm quên chấm (tài xế tạo → Kế toán/Giám đốc duyệt). */
+  public evExplanationTickets: EVExplanationTicket[] = [];
 
   // Nhân viên TERMINATED đã thu hồi token (tránh audit spam mỗi lần pull)
   public terminatedRevoked: Set<string> = new Set();
@@ -180,6 +183,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
       evChargingTickets: clone(this.evChargingTickets),
       evDriverPayroll: clone(this.evDriverPayroll),
       evRouteChangeRequests: clone(this.evRouteChangeRequests),
+      evExplanationTickets: clone(this.evExplanationTickets),
       // evGpsPoints cố ý KHÔNG đưa vào snapshot: dữ liệu realtime, ghi rất dày
       // (mỗi 15s/xe) sẽ làm file snapshot phình to; Live Map tự nạp lại khi chạy.
       terminatedRevoked: Array.from(this.terminatedRevoked),
@@ -201,6 +205,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
       // MILKROUTE EV (BETA) — khôi phục từ snapshot khi chạy chế độ Sheets.
       'evVehicles', 'evRoutes', 'evRouteStops', 'evShifts', 'evShiftCheckins',
       'evChargingTickets', 'evDriverPayroll', 'evRouteChangeRequests',
+      'evExplanationTickets',
     ] as const;
     for (const key of arrayKeys) {
       if (Array.isArray(state[key])) {
@@ -606,6 +611,12 @@ export class MockSheetsAdapter implements ISheetsRepository {
     this.checkErrors();
     const cand = this.candidates.find(c => c.submission_id === submissionId);
     if (!cand) throw new Error('CANDIDATE_NOT_FOUND');
+    // HR vừa thao tác trên hồ sơ (đặt lịch/chấm điểm/duyệt...) -> bỏ cờ ẩn tự
+    // động để hồ sơ hiện lại. Lượt ẩn tự động luôn truyền auto_hidden_at rõ ràng.
+    if (!Object.prototype.hasOwnProperty.call(updates || {}, 'auto_hidden_at')) {
+      delete (cand as any).auto_hidden_at;
+      delete (cand as any).auto_hidden_reason;
+    }
     Object.assign(cand, updates);
     return { ...cand };
   }
@@ -616,6 +627,25 @@ export class MockSheetsAdapter implements ISheetsRepository {
     if (idx < 0) return false;
     this.candidates.splice(idx, 1);
     return true;
+  }
+
+  /** Ẩn hồ sơ khỏi danh sách vận hành nhưng vẫn giữ nguyên bản ghi (và dòng Sheet). */
+  async hideCandidatesFromSystem(
+    entries: Array<{ id: string; key?: string; at: string; reason?: string }>,
+  ): Promise<{ hidden: string[]; failed: string[] }> {
+    this.checkErrors();
+    const hidden: string[] = [];
+    const failed: string[] = [];
+    for (const entry of entries || []) {
+      const id = String(entry?.id || '').trim();
+      if (!id) continue;
+      const cand: any = this.candidates.find(c => c.submission_id === id);
+      if (!cand) { failed.push(id); continue; }
+      cand.auto_hidden_at = entry.at || new Date().toISOString();
+      cand.auto_hidden_reason = entry.reason || undefined;
+      hidden.push(id);
+    }
+    return { hidden, failed };
   }
 
   // --- Schedules ---
@@ -1658,6 +1688,31 @@ export class MockSheetsAdapter implements ISheetsRepository {
       longitude: Number(input?.longitude),
       geofence_radius_m: Number(input?.geofence_radius_m) > 0 ? Number(input.geofence_radius_m) : 100,
       sla_minutes: Number(input?.sla_minutes) >= 0 ? Number(input.sla_minutes) : 0,
+      sla_minutes_with_charging: Number(input?.sla_minutes_with_charging) >= 0
+        ? Number(input.sla_minutes_with_charging)
+        : undefined,
+      sla_minutes_without_charging: Number(input?.sla_minutes_without_charging) >= 0
+        ? Number(input.sla_minutes_without_charging)
+        : undefined,
+      charging_pending_latitude: Number.isFinite(Number(input?.charging_pending_latitude))
+        ? Number(input.charging_pending_latitude)
+        : undefined,
+      charging_pending_longitude: Number.isFinite(Number(input?.charging_pending_longitude))
+        ? Number(input.charging_pending_longitude)
+        : undefined,
+      charging_pending_count: Number(input?.charging_pending_count) > 0
+        ? Number(input.charging_pending_count)
+        : undefined,
+      charging_pending_updated_at: input?.charging_pending_updated_at,
+      charging_confirmed_at: input?.charging_confirmed_at,
+      charging_confirmed_latitude: Number.isFinite(Number(input?.charging_confirmed_latitude))
+        ? Number(input.charging_confirmed_latitude)
+        : undefined,
+      charging_confirmed_longitude: Number.isFinite(Number(input?.charging_confirmed_longitude))
+        ? Number(input.charging_confirmed_longitude)
+        : undefined,
+      charging_confirmed_address: input?.charging_confirmed_address,
+      charging_confirmed_by: input?.charging_confirmed_by,
       stop_type: (input?.stop_type as EVRouteStop['stop_type']) || 'DELIVERY',
       is_mandatory: input?.is_mandatory !== false,
       notes: String(input?.notes ?? '').trim() || undefined,
@@ -1752,6 +1807,103 @@ export class MockSheetsAdapter implements ISheetsRepository {
     const idx = this.evRouteChangeRequests.findIndex(r => r.request_id === requestId);
     if (idx === -1) return false;
     this.evRouteChangeRequests.splice(idx, 1);
+    return true;
+  }
+
+  // ---------- Phiếu giải trình điểm quên chấm ----------
+  async createEVExplanationTicket(input: Partial<EVExplanationTicket>): Promise<EVExplanationTicket> {
+    this.checkErrors();
+    const driverId = String(input?.driver_id ?? '').trim();
+    if (!driverId) throw new Error('EXPLANATION_DRIVER_REQUIRED');
+    const reason = String(input?.reason ?? '').trim();
+    if (!reason) throw new Error('EXPLANATION_REASON_REQUIRED: Vui lòng nhập nội dung giải trình');
+    const items = Array.isArray(input?.items) ? input!.items : [];
+    if (!items.length) throw new Error('EXPLANATION_ITEMS_REQUIRED: Chọn ít nhất 1 điểm cần giải trình');
+    const photos = Array.isArray(input?.photos) ? input!.photos : [];
+    const now = new Date().toISOString();
+    const seq = this.evExplanationTickets.length + 1;
+    const ticketId = String(input?.ticket_id ?? '').trim() || uuidv4();
+    const created: EVExplanationTicket = {
+      ticket_id: ticketId,
+      ticket_code: String(input?.ticket_code ?? '').trim()
+        || `EGT-${now.slice(0, 10).replace(/-/g, '')}-${String(seq).padStart(4, '0')}`,
+      driver_id: driverId,
+      driver_name: String(input?.driver_name ?? '').trim() || undefined,
+      reason,
+      items: items.map((it: any) => ({
+        shift_id: String(it?.shift_id ?? '').trim(),
+        shift_date: String(it?.shift_date ?? '').slice(0, 10),
+        route_id: String(it?.route_id ?? '').trim() || undefined,
+        route_name: String(it?.route_name ?? '').trim() || undefined,
+        stop_id: String(it?.stop_id ?? '').trim(),
+        stop_order: Number(it?.stop_order) || 0,
+        stop_name: String(it?.stop_name ?? '').trim(),
+        address: String(it?.address ?? '').trim() || undefined,
+        checkin_id: String(it?.checkin_id ?? '').trim() || undefined,
+        issue_type: it?.issue_type === 'LATE_SLA'
+          ? 'LATE_SLA'
+          : (it?.issue_type === 'MISSED_CHECKIN' ? 'MISSED_CHECKIN' : undefined),
+        late_minutes: Number.isFinite(Number(it?.late_minutes)) && Number(it?.late_minutes) > 0
+          ? Number(it.late_minutes)
+          : undefined,
+        penalty_amount: Number.isFinite(Number(it?.penalty_amount)) && Number(it?.penalty_amount) >= 0
+          ? Number(it.penalty_amount)
+          : undefined,
+      })),
+      photos: photos.map((p: any) => ({
+        photo_id: String(p?.photo_id ?? '').trim() || uuidv4(),
+        mime_type: String(p?.mime_type ?? '').trim() || 'image/jpeg',
+        size_bytes: Number(p?.size_bytes) > 0 ? Number(p.size_bytes) : undefined,
+        original_name: String(p?.original_name ?? '').trim() || undefined,
+        drive_file_id: String(p?.drive_file_id ?? '').trim() || undefined,
+        created_at: String(p?.created_at ?? '').trim() || now,
+      })),
+      total_penalty_amount: Number(input?.total_penalty_amount) > 0
+        ? Number(input.total_penalty_amount)
+        : undefined,
+      status: (input?.status as EVExplanationTicket['status']) || 'PENDING',
+      approved_by: String(input?.approved_by ?? '').trim() || undefined,
+      approved_by_name: String(input?.approved_by_name ?? '').trim() || undefined,
+      approved_at: String(input?.approved_at ?? '').trim() || undefined,
+      approval_notes: String(input?.approval_notes ?? '').trim() || undefined,
+      rejected_by: String(input?.rejected_by ?? '').trim() || undefined,
+      rejected_by_name: String(input?.rejected_by_name ?? '').trim() || undefined,
+      rejected_at: String(input?.rejected_at ?? '').trim() || undefined,
+      rejected_reason: String(input?.rejected_reason ?? '').trim() || undefined,
+      version: 1,
+      created_at: now,
+      updated_at: now,
+    };
+    this.evExplanationTickets.push(created);
+    return {
+      ...created,
+      items: created.items.map(it => ({ ...it })),
+      photos: created.photos.map(p => ({ ...p })),
+    };
+  }
+
+  async updateEVExplanationTicket(ticketId: string, updates: Partial<EVExplanationTicket>): Promise<EVExplanationTicket> {
+    this.checkErrors();
+    const idx = this.evExplanationTickets.findIndex(t => t.ticket_id === ticketId);
+    if (idx === -1) throw new Error('EXPLANATION_NOT_FOUND');
+    const next: any = { ...(updates || {}) };
+    delete next.ticket_id;
+    delete next.created_at;
+    if (Array.isArray(next.items)) next.items = next.items.map((it: any) => ({ ...it }));
+    if (Array.isArray(next.photos)) next.photos = next.photos.map((p: any) => ({ ...p }));
+    this.evExplanationTickets[idx] = this.touchEv({ ...this.evExplanationTickets[idx], ...next });
+    return {
+      ...this.evExplanationTickets[idx],
+      items: this.evExplanationTickets[idx].items.map(it => ({ ...it })),
+      photos: this.evExplanationTickets[idx].photos.map(p => ({ ...p })),
+    };
+  }
+
+  async deleteEVExplanationTicket(ticketId: string): Promise<boolean> {
+    this.checkErrors();
+    const idx = this.evExplanationTickets.findIndex(t => t.ticket_id === ticketId);
+    if (idx === -1) return false;
+    this.evExplanationTickets.splice(idx, 1);
     return true;
   }
 

@@ -235,8 +235,23 @@ export class EVRouteService {
           address: useBaseCharging ? (baseCharging?.address || s.address) : s.address,
           latitude: useBaseCharging ? Number(baseCharging!.latitude) : Number(s.latitude) || 0,
           longitude: useBaseCharging ? Number(baseCharging!.longitude) : Number(s.longitude) || 0,
+          charging_pending_latitude: isCharging && baseCharging ? baseCharging.charging_pending_latitude : undefined,
+          charging_pending_longitude: isCharging && baseCharging ? baseCharging.charging_pending_longitude : undefined,
+          charging_pending_count: isCharging && baseCharging ? baseCharging.charging_pending_count : undefined,
+          charging_pending_updated_at: isCharging && baseCharging ? baseCharging.charging_pending_updated_at : undefined,
+          charging_confirmed_at: isCharging && baseCharging ? baseCharging.charging_confirmed_at : undefined,
+          charging_confirmed_latitude: isCharging && baseCharging ? baseCharging.charging_confirmed_latitude : undefined,
+          charging_confirmed_longitude: isCharging && baseCharging ? baseCharging.charging_confirmed_longitude : undefined,
+          charging_confirmed_address: isCharging && baseCharging ? baseCharging.charging_confirmed_address : undefined,
+          charging_confirmed_by: isCharging && baseCharging ? baseCharging.charging_confirmed_by : undefined,
           geofence_radius_m: Number(s.geofence_radius_m) > 0 ? Number(s.geofence_radius_m) : 100,
           sla_minutes: Number(s.sla_minutes) >= 0 ? Number(s.sla_minutes) : 0,
+          sla_minutes_with_charging: Number(s.sla_minutes_with_charging) >= 0
+            ? Number(s.sla_minutes_with_charging)
+            : undefined,
+          sla_minutes_without_charging: Number(s.sla_minutes_without_charging) >= 0
+            ? Number(s.sla_minutes_without_charging)
+            : undefined,
           stop_type: s.stop_type,
           is_mandatory: s.is_mandatory !== false,
           notes: s.notes,

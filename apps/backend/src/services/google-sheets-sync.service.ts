@@ -23,6 +23,7 @@ import { MockSheetsAdapter } from '../repositories/mock-sheets.adapter.js';
 import { dedupeShiftAssignments, pickPulledShift } from '../repositories/shift-dedupe.js';
 import { hashPasswordSync, isBcryptHash, hashPin, generateAutoPin } from './password.service.js';
 import { canonicalPhone } from './employees.service.js';
+import { normalizePeriodValue } from '@ubm/shared';
 import { normSheetDate, normSheetDateTime, sheetDateText, sheetDateTimeText } from './employees.service.js';
 import { evaluateCandidateAiScore } from './ai-scorer.js';
 import {
@@ -33,14 +34,20 @@ import {
   normalizeFormFacebook,
   parseFormBirthYear,
   parseZaloInviteCell,
+  ZALO_INVITE_STATUSES,
 } from './candidate-form-map.js';
+import {
+  candidateCleanupKey,
+  getCandidateCleanupTombstones,
+  isCandidateInterviewHandled,
+} from './candidate-cleanup.service.js';
 import { buildZipStore, ZipEntry } from '../utils/zip-store.js';
 import { contractDocsCell, parseContractDocs } from '../utils/contracts.js';
 import { uniformCell, parseUniform } from '../utils/uniform.js';
 import { blacklistCell, parseBlacklist } from '../utils/blacklist.js';
 import { readAttendancePhotoDisk } from './photo-disk.store.js';
 import { createDriveOAuthClient, describeDriveAuth, describeGoogleApiError, type GoogleDriveAuthMode } from './google-drive-auth.js';
-import { uploadBufferViaDriveWebhook, downloadBufferViaDriveWebhook } from './drive-upload-webhook.js';
+import { uploadBufferViaDriveWebhook, downloadBufferViaDriveWebhook, getDriveUploadWebhookUrl } from './drive-upload-webhook.js';
 import {
   DRIVE_EMPLOYEE_PROFILES_FOLDER_NAME,
   DRIVE_SUBFOLDERS,
@@ -69,6 +76,43 @@ function pad2(n: number): string {
 }
 
 /**
+ * Tự động "làm đẹp" Sheets có được bật không (mặc định BẬT).
+ *
+ * `SHEETS_AUTO_BEAUTIFY=0|off|false|no` phải tắt Ở MỌI chỗ: trước đây cờ này chỉ
+ * chặn timer 24h trong server.ts, còn 2 chỗ auto-beautify trong sync service
+ * (sau khi tạo tab mới và sau mỗi lượt push đủ) vẫn chạy. Hệ quả trên production:
+ * mỗi lần restart container lại đọc/format toàn bộ tab của 25 file → ~75 lần
+ * vượt hạn mức đọc 60 lượt/phút, tranh quota với pull và backup.
+ */
+export function isAutoBeautifyEnabled(envValue: string | undefined = process.env.SHEETS_AUTO_BEAUTIFY): boolean {
+  const v = String(envValue ?? '1').trim().toLowerCase();
+  return v !== '0' && v !== 'off' && v !== 'false' && v !== 'no';
+}
+
+/** 1 → A, 26 → Z, 27 → AA (tối đa 702 = ZZ, đủ cho mọi bảng nghiệp vụ). */
+function columnLetterOf(index: number): string {
+  const n = Math.max(1, Math.floor(index));
+  let rest = n;
+  let out = '';
+  while (rest > 0) {
+    const rem = (rest - 1) % 26;
+    out = String.fromCharCode(65 + rem) + out;
+    rest = Math.floor((rest - 1) / 26);
+  }
+  return out || 'A';
+}
+
+/** 1 dòng → 1 dòng CSV (escape theo RFC 4180). */
+function csvRowOf(cells: any[]): string {
+  return (cells || [])
+    .map(cell => {
+      const s = cell === null || cell === undefined ? '' : String(cell);
+      return /["\r\n,;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    })
+    .join(',');
+}
+
+/**
  * Tuỳ chọn đọc Google Sheets cho MỌI luồng pull.
  *
  * - UNFORMATTED_VALUE: trả SỐ THẬT thay vì chuỗi hiển thị. Ô tiền định dạng
@@ -85,12 +129,12 @@ const SHEETS_READ_OPTIONS = {
 
 /**
  * Kỳ lương trên Sheet có thể bị USER_ENTERED biến "2026-10" thành ngày
- * ("2026-10-01"). Chuẩn hoá về YYYY-MM để mọi nơi so khớp đúng kỳ.
+ * ("2026-10-01") hoặc thành SỐ SERIAL Excel khi đọc UNFORMATTED_VALUE
+ * (46296 = 01/10/2026). Dùng chung normalizePeriodValue để mọi luồng
+ * (pull Sheets, đọc phiếu lương) chuẩn hoá GIỐNG NHAU về YYYY-MM.
  */
 export function normalizeSheetPeriod(value: unknown): string {
-  const raw = String(value ?? '').trim();
-  const m = raw.match(/^(\d{4})-(0[1-9]|1[0-2])(?:$|[-/T\s])/);
-  return m ? `${m[1]}-${m[2]}` : raw;
+  return normalizePeriodValue(value);
 }
 
 /**
@@ -312,7 +356,15 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'LUUTRU_CHAMCONG_TUAN',
-    headers: ['ID Sự Kiện', 'ID Ca', 'ID Nhân Viên', 'Loại (IN/OUT)', 'Thời Gian Máy Chủ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Khoảng Cách (m)', 'Trạng Thái GPS', 'Ảnh Drive Object', 'ID Yêu Cầu', 'Tuần Lưu Trữ'],
+    // Giữ đủ cột quyết định lương như tab realtime: tuần cũ archive đi mà mất
+    // cờ trễ/phạt thì kỳ lương tính sau đó tự suy lại từ giờ vào ca và phạt oan
+    // ca đã được duyệt bù công.
+    headers: [
+      'ID Sự Kiện', 'ID Ca', 'ID Nhân Viên', 'Loại (IN/OUT)', 'Thời Gian Máy Chủ',
+      'Vĩ Độ GPS', 'Kinh Độ GPS', 'Khoảng Cách (m)', 'Trạng Thái GPS', 'Ảnh Drive Object',
+      'ID Yêu Cầu', 'Hồng Đồng Phục (%)', 'Giờ Máy Khách',
+      'Trễ (YES/NO)', 'Sớm (YES/NO)', 'Lệch (phút)', 'Phạt (nấc)', 'Phạt (đ)',
+    ],
   },
   {
     title: 'DON_NGHI_PHEP',
@@ -691,6 +743,20 @@ export class GoogleSheetsSyncService {
   private driveFolderId: string;
   private driveAuthMode: GoogleDriveAuthMode = 'none';
   private driveAuthAccount = '';
+  /** Drive client dựng bằng Service Account — đường dự phòng khi OAuth hỏng. */
+  private saDriveClient: any = null;
+  private saDriveClientTried = false;
+  /**
+   * OAuth đã bị Google thu hồi (invalid_client). Khi đã biết chết thì bỏ qua
+   * hẳn driveClient để khỏi lặp 401 cho từng bảng/thao tác trong lượt backup.
+   */
+  private driveOAuthDead = false;
+  /** Mốc phát hiện OAuth chết — sau 30 phút thử lại (token có thể được cấp lại). */
+  private driveOAuthDeadAt = 0;
+  /** Cache CSV của tab quá lớn (key: spreadsheetId|tab) — dùng lại cho lượt backup kế tiếp. */
+  private backupCsvTabCache = new Map<string, { at: number; csv: Buffer }>();
+  /** Cache danh sách tab + số dòng (key: spreadsheetId) — tránh đọc metadata lặp lại. */
+  private backupGridCache = new Map<string, { at: number; grids: Array<{ title: string; rowCount: number }> }>();
   private isConfigured = false;
   private authError: string | null = null;
   private lastPulledAt: number = 0;
@@ -869,25 +935,109 @@ export class GoogleSheetsSyncService {
     return true;
   }
 
-  /** Tombstone lịch PV vừa hủy (tay/auto sau 5p không vào Meet): pull overlay
-   *  FROM_NHAN_VIEN trong ~120s sau hủy mà thấy dòng lịch cũ (push chưa kịp chạy)
-   *  thì ÉP XÓA lịch thay vì hồi sinh — trước đây hủy xong reload là lịch về lại. */
+  /** Tombstone lịch PV vừa hủy/chấm điểm/vắng (tay/auto/tick): pull overlay
+   *  FROM_NHAN_VIEN trong thời gian bảo vệ mà thấy dòng cũ trên master (push
+   *  chưa kịp chạy) thì ÉP XÓA lịch thay vì hồi sinh — trước đây hủy xong reload
+   *  là lịch về lại, chấm điểm xong ứng viên tự nhảy về tab "Chờ phỏng vấn". */
   private clearedInterviewIds = new Map<string, number>();
 
-  public markInterviewScheduleCleared(submissionId: string) {
-    if (submissionId) this.clearedInterviewIds.set(String(submissionId).trim(), Date.now());
+  /** Khoá hồ sơ ứng viên VỪA bị tự động xoá (quá hạn chờ xếp lịch): chặn pull
+   *  form gốc hồi sinh trong lúc tombstone bền vững chưa kịp ghi lên Sheet cấu
+   *  hình. Hết TTL thì tombstone trong CAU_HINH_HE_THONG đã gánh nhiệm vụ. */
+  private deletedCandidateKeys = new Map<string, number>();
+  private static readonly CANDIDATE_DELETE_TTL_MS = 15 * 60_000;
+
+  /** Khóa trạng thái nghiệp vụ vừa set (SCORED/ACCEPTED/CONFIRMED/...) — trong
+   *  thời gian bảo vệ, pull master KHÔNG được ghi đè trạng thái/lịch trong bộ
+   *  nhớ. Tách riêng khỏi tombstone xóa lịch để lịch mới đặt vẫn được giữ. */
+  private candidateStatusLocks = new Map<string, { at: number; status?: string }>();
+
+  /** Số ms giữ khóa. Push master là await nhưng có thể xếp hàng quota
+   *  (1.1s/write) + pull nền 10s, nên 120s cũ quá ngắn và gây hồi sinh. */
+  private static readonly INTERVIEW_TOMBSTONE_TTL_MS = 15 * 60_000;
+
+  private static normStatus(v?: string): string | undefined {
+    const st = String(v || '').trim().toUpperCase();
+    return st || undefined;
+  }
+
+  /** Lịch PV vừa bị gỡ (hủy/chấm điểm/vắng/đen/từ chối): chặn master hồi sinh
+   *  lịch cũ VÀ khóa trạng thái cuối cùng. */
+  public markInterviewScheduleCleared(submissionId: string, finalStatus?: string) {
+    const k = String(submissionId || '').trim();
+    if (!k) return;
+    this.clearedInterviewIds.set(k, Date.now());
+    this.candidateStatusLocks.set(k, { at: Date.now(), status: GoogleSheetsSyncService.normStatus(finalStatus) });
+  }
+
+  /** Lịch mới vừa đặt/chốt lại: bỏ tombstone xóa lịch cũ (nếu còn) và khóa
+   *  trạng thái mới để pull không kéo về trạng thái/lịch cũ. */
+  public markInterviewScheduleRestored(submissionId: string, finalStatus?: string) {
+    const k = String(submissionId || '').trim();
+    if (!k) return;
+    this.clearedInterviewIds.delete(k);
+    this.candidateStatusLocks.set(k, { at: Date.now(), status: GoogleSheetsSyncService.normStatus(finalStatus) });
+  }
+
+  /** Khóa trạng thái không liên quan lịch (VD duyệt thử việc ACCEPTED). */
+  public markCandidateStatus(submissionId: string, finalStatus?: string) {
+    const k = String(submissionId || '').trim();
+    if (!k) return;
+    this.candidateStatusLocks.set(k, { at: Date.now(), status: GoogleSheetsSyncService.normStatus(finalStatus) });
+  }
+
+  private getCandidateStatusLock(submissionId: string): { at: number; status?: string } | null {
+    const k = String(submissionId || '').trim();
+    const rec = this.candidateStatusLocks.get(k);
+    if (!rec) return null;
+    if (Date.now() - rec.at > GoogleSheetsSyncService.INTERVIEW_TOMBSTONE_TTL_MS) {
+      this.candidateStatusLocks.delete(k);
+      return null;
+    }
+    return rec;
   }
 
   private isInterviewScheduleClearedRecently(submissionId: string): boolean {
     const k = String(submissionId || '').trim();
     const t = this.clearedInterviewIds.get(k);
     if (!t) return false;
-    if (Date.now() - t > 120000) {
+    if (Date.now() - t > GoogleSheetsSyncService.INTERVIEW_TOMBSTONE_TTL_MS) {
       this.clearedInterviewIds.delete(k);
       return false;
     }
     return true;
   }
+
+  /** Đánh dấu hồ sơ ứng viên VỪA bị xoá tự động (theo khoá nhận diện) để pull
+   *  form gốc bỏ qua ngay, không chờ ghi xong CAU_HINH_HE_THONG. */
+  public markCandidateDeleted(keys: string[], ttlMs = GoogleSheetsSyncService.CANDIDATE_DELETE_TTL_MS) {
+    const now = Date.now();
+    for (const raw of keys || []) {
+      const k = String(raw || '').trim();
+      if (k) this.deletedCandidateKeys.set(k, now + Math.max(60_000, ttlMs));
+    }
+  }
+
+  /** Xoá đánh dấu khi lô xoá thất bại (hồ sơ còn sống). */
+  public unmarkCandidateDeleted(keys: string[]) {
+    for (const raw of keys || []) {
+      const k = String(raw || '').trim();
+      if (k) this.deletedCandidateKeys.delete(k);
+    }
+  }
+
+  private isCandidateDeletedRecently(key: string): boolean {
+    const k = String(key || '').trim();
+    if (!k) return false;
+    const until = this.deletedCandidateKeys.get(k);
+    if (!until) return false;
+    if (Date.now() > until) {
+      this.deletedCandidateKeys.delete(k);
+      return false;
+    }
+    return true;
+  }
+
   /** ===== AUTO-PUSH ĐIỀU KIỆN (chỉ push khi có thay đổi thật) =====
    *  Adapter đánh dấu dirty khi dữ liệu bộ nhớ đổi mà chưa chắc đã lên Sheet
    *  (scheduleSheetsWrite / scheduleFullSync / backfill PIN). Auto-push định kỳ
@@ -914,6 +1064,20 @@ export class GoogleSheetsSyncService {
   private lastWriteAt: number = 0;
   private initOkAt = 0;
   private lastInitResult: { success: boolean; createdSheets: string[]; existingSheets: string[]; message: string } | null = null;
+  /**
+   * Chống "bão quota": khi init cấu trúc thất bại toàn bộ (thường do 429 đọc),
+   * KHÔNG chạy lại ngay lượt sau — mỗi lượt tốn ~1 request metadata/file (≈25
+   * request) và làm Google khoá lâu hơn. Nghỉ ngắn rồi thử lại.
+   */
+  private initFailedAt = 0;
+  private static readonly INIT_FAIL_BACKOFF_MS = 120_000;
+  /**
+   * TTL cache kết quả khởi tạo cấu trúc. Header gần như không bao giờ đổi, mà
+   * mỗi lượt kiểm tra tốn ~1 request metadata/file (≈25 request ≈ 40% hạn mức
+   * 60 đọc/phút). Lượt SẠCH (không file nào lỗi) giữ cache 6 giờ; lượt có lỗi
+   * chỉ 10 phút để còn tự sửa tab thiếu.
+   */
+  private initOkTtlMs = 600_000;
 
   /** Minimum interval between write requests to stay under 60 writes/minute quota. */
   private static readonly WRITE_RATE_LIMIT_MS = 1100;
@@ -1674,7 +1838,7 @@ export class GoogleSheetsSyncService {
     return {
       ok: true,
       name: res.name,
-      fileId: res.fileId,
+      fileId: res.fileId || '',
       createdTime: new Date().toISOString(),
       deletedOld: res.deletedOld ?? 0,
     };
@@ -1813,11 +1977,11 @@ export class GoogleSheetsSyncService {
     keep?: number;
   }): Promise<{
     ok: boolean;
-    folderId?: string;
-    folderUrl?: string;
+    folderId?: string | null;
+    folderUrl?: string | null;
     name?: string;
-    fileId?: string;
-    url?: string;
+    fileId?: string | null;
+    url?: string | null;
     total?: number;
     exported?: number;
     existing?: boolean;
@@ -1838,13 +2002,31 @@ export class GoogleSheetsSyncService {
     if (sources.length === 0) return { ok: false, reason: 'BACKUP_NO_SOURCES' };
 
     try {
-      const folderId = await this.ensureDriveFolderPath(opts.segments || [], rootId);
-      if (!folderId) return { ok: false, reason: 'BACKUP_FOLDER_UNAVAILABLE' };
-      const folderUrl = `https://drive.google.com/drive/folders/${folderId}`;
+      // Token OAuth có thể đã được cấp lại (vd. đổi client secret) → thử lại
+      // sau 30 phút thay vì bỏ OAuth vĩnh viễn tới lần restart.
+      if (this.driveOAuthDead && Date.now() - this.driveOAuthDeadAt > 30 * 60_000) {
+        this.driveOAuthDead = false;
+      }
+      // Folder kỳ: ưu tiên Drive API (OAuth). Nếu OAuth hỏng (token bị thu hồi)
+      // vẫn chạy tiếp được bằng webhook Apps Script (chạy dưới quyền chủ thư
+      // mục) — webhook tự tạo cây thư mục con theo `segments`.
+      const folderId = this.driveOAuthDead
+        ? ''
+        : await this.ensureDriveFolderPath(opts.segments || [], rootId).catch(() => '');
+      const webhookFallback = !folderId && !!getDriveUploadWebhookUrl();
+      if (!folderId && !webhookFallback) return { ok: false, reason: 'BACKUP_FOLDER_UNAVAILABLE' };
+      if (!folderId) {
+        console.warn(
+          '[BackupSheets] Không tạo được folder kỳ bằng Drive API — dùng webhook Apps Script'
+          + ` (${(opts.segments || []).join('/') || periodKey})`,
+        );
+      }
+      const folderUrl = folderId ? `https://drive.google.com/drive/folders/${folderId}` : null;
       const zipName = `UMB_NHANSU_${periodKey}.zip`;
 
       // Kỳ đã có ZIP → dùng lại (idempotent, không upload trùng).
       try {
+        if (!folderId) throw new Error('NO_FOLDER_ID');
         const dup: any = await this.driveClient.files.list({
           q: `name = '${zipName.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`,
           fields: 'files(id,name,webViewLink,size)',
@@ -1876,17 +2058,54 @@ export class GoogleSheetsSyncService {
       const entries: ZipEntry[] = [];
       const errors: Array<{ title: string; error: string }> = [];
 
+      /**
+       * Export XLSX bằng Drive API. Thử OAuth trước (tài khoản sở hữu Drive),
+       * rồi tới Service Account — SA export được cùng bộ file và không phụ
+       * thuộc refresh token nên backup vẫn chạy khi OAuth hết hiệu lực.
+       */
+      const saClient = await this.getServiceAccountDriveClient();
+      const exportClients: any[] = [];
+      if (!this.driveOAuthDead && this.driveClient) exportClients.push(this.driveClient);
+      if (saClient) exportClients.push(saClient);
+
       for (const src of sources) {
-        try {
-          const resp: any = await this.driveClient.files.export(
-            { fileId: src.spreadsheetId, mimeType: XLSX_MIME },
-            { responseType: 'arraybuffer' } as any,
-          );
-          const buf = Buffer.isBuffer(resp?.data) ? resp.data : Buffer.from(resp?.data || []);
-          if (buf.length === 0) throw new Error('EXPORT_EMPTY');
+        let buf: Buffer | null = null;
+        let lastErr: any = null;
+        for (const client of exportClients.filter(Boolean)) {
+          try {
+            const resp: any = await client.files.export(
+              { fileId: src.spreadsheetId, mimeType: XLSX_MIME },
+              { responseType: 'arraybuffer' } as any,
+            );
+            const got = Buffer.isBuffer(resp?.data) ? resp.data : Buffer.from(resp?.data || []);
+            if (got.length === 0) throw new Error('EXPORT_EMPTY');
+            buf = got;
+            break;
+          } catch (err: any) {
+            lastErr = err;
+            if (this.isDriveOAuthInvalidError(err)) this.driveOAuthDead = true;
+          }
+        }
+        if (buf) {
           entries.push({ name: `${src.title}_${periodKey}.xlsx`, data: buf });
-        } catch (err: any) {
-          errors.push({ title: src.title, error: String(err?.message || err) });
+          continue;
+        }
+
+        // Drive API từ chối export (vd. 403 "This file is too large to be
+        // exported" với bảng log khổng lồ) → đọc từng tab qua Sheets API và
+        // đóng gói CSV. Dữ liệu vẫn đủ để khôi phục, ZIP không bị thiếu bảng.
+        try {
+          const csvEntries = await this.exportSpreadsheetTabsCsvFallback(src, periodKey);
+          entries.push(...csvEntries);
+          console.warn(
+            `[BackupSheets] ${src.title}: Drive export lỗi (${String(lastErr?.message || lastErr).slice(0, 80)})`
+            + ` → đã export ${csvEntries.length} tab sang CSV`,
+          );
+        } catch (csvErr: any) {
+          errors.push({
+            title: src.title,
+            error: `${String(lastErr?.message || lastErr)} | CSV: ${String(csvErr?.message || csvErr)}`,
+          });
         }
       }
 
@@ -1912,21 +2131,59 @@ export class GoogleSheetsSyncService {
       }
 
       const zipBuf = buildZipStore(entries);
-      const uploaded: any = await this.driveClient.files.create({
-        requestBody: {
-          name: zipName,
-          parents: [folderId],
+      let uploadedId = '';
+      let uploadedLink = '';
+      let uploadError: any = null;
+
+      if (folderId && this.driveClient && !this.driveOAuthDead) {
+        try {
+          const uploaded: any = await this.driveClient.files.create({
+            requestBody: {
+              name: zipName,
+              parents: [folderId],
+              mimeType: 'application/zip',
+            },
+            media: {
+              mimeType: 'application/zip',
+              body: Readable.from(zipBuf),
+            },
+            fields: 'id,name,webViewLink,size',
+            supportsAllDrives: true,
+          } as any);
+          uploadedId = String(uploaded?.data?.id || '');
+          uploadedLink = String(uploaded?.data?.webViewLink || '');
+          if (!uploadedId) uploadError = new Error('DRIVE_UPLOAD_RETURNED_NO_ID');
+        } catch (err: any) {
+          uploadError = err;
+        }
+      }
+
+      // Drive API hỏng (token OAuth bị thu hồi / SA không có quota My Drive)
+      // thì đẩy ZIP qua webhook Apps Script — không cần token nào cả.
+      if (!uploadedId) {
+        console.log(
+          `[BackupSheets] ${zipName}: Drive API không upload được`
+          + ` (${String(uploadError?.message || 'chưa thử')}) → webhook Apps Script, ZIP ${(zipBuf.length / 1024 / 1024).toFixed(2)} MB`,
+        );
+        const webhook = await uploadBufferViaDriveWebhook({
+          folderId: rootId,
+          segments: opts.segments || [],
+          fileName: zipName,
           mimeType: 'application/zip',
-        },
-        media: {
-          mimeType: 'application/zip',
-          body: Readable.from(zipBuf),
-        },
-        fields: 'id,name,webViewLink,size',
-        supportsAllDrives: true,
-      } as any);
-      const fileId = String(uploaded?.data?.id || '');
-      if (!fileId) throw new Error('DRIVE_UPLOAD_RETURNED_NO_ID');
+          buffer: zipBuf,
+        });
+        if (webhook?.fileId) {
+          uploadedId = webhook.fileId;
+          uploadedLink = webhook.webViewLink || '';
+          console.log(`[BackupSheets] ${zipName}: upload qua webhook Apps Script OK`);
+        }
+      }
+
+      if (!uploadedId) {
+        throw new Error(
+          `DRIVE_UPLOAD_FAILED: ${String(uploadError?.message || uploadError || 'webhook không khả dụng')}`,
+        );
+      }
 
       console.log(
         `[BackupSheets] Đã tạo ${zipName}: ${entries.length} bảng,`
@@ -1935,11 +2192,11 @@ export class GoogleSheetsSyncService {
 
       return {
         ok: true,
-        folderId,
+        folderId: folderId || null,
         folderUrl,
         name: zipName,
-        fileId,
-        url: uploaded?.data?.webViewLink || folderUrl,
+        fileId: uploadedId,
+        url: uploadedLink || folderUrl,
         total: sources.length,
         exported: entries.length,
         existing: false,
@@ -1951,6 +2208,234 @@ export class GoogleSheetsSyncService {
       console.warn(`[BackupSheets] Lỗi tạo ZIP backup (${periodKey}):`, err?.message || err);
       return { ok: false, reason: 'DRIVE_ERROR', error: String(err?.message || err) };
     }
+  }
+
+  /**
+   * Drive client dựng bằng Service Account (nếu có). Dùng làm đường dự phòng
+   * khi OAuth mất hiệu lực: SA export được đúng bộ 25 file nhưng không ghi
+   * được vào My Drive (0 quota) — phần upload sẽ đi qua webhook.
+   */
+  private async getServiceAccountDriveClient(): Promise<any | null> {
+    if (this.saDriveClientTried) return this.saDriveClient;
+    this.saDriveClientTried = true;
+    if (!this.authClient) return null;
+    try {
+      this.saDriveClient = google.drive({ version: 'v3', auth: this.authClient });
+    } catch (err: any) {
+      console.warn('[BackupSheets] Không tạo được Drive client bằng Service Account:', err?.message || err);
+      this.saDriveClient = null;
+    }
+    return this.saDriveClient;
+  }
+
+  /** Lỗi "OAuth client secret/token bị Google từ chối" — không phải lỗi dữ liệu. */
+  private isDriveOAuthInvalidError(err: any): boolean {
+    const status = Number(err?.response?.status ?? err?.code);
+    const msg = String(
+      err?.response?.data?.error_description
+      || err?.response?.data?.error?.message
+      || err?.message
+      || '',
+    );
+    const invalid = status === 401 || /invalid_client/i.test(msg);
+    if (invalid && !this.driveOAuthDead) {
+      this.driveOAuthDead = true;
+      this.driveOAuthDeadAt = Date.now();
+    }
+    return invalid;
+  }
+
+  /**
+   * Dự phòng cho bảng quá lớn (Drive API trả 403 "This file is too large to be
+   * exported"): đọc từng tab bằng Sheets API rồi đóng gói CSV (UTF-8 BOM để
+   * Excel mở đúng tiếng Việt).
+   *
+   * Cache 30 phút theo (spreadsheetId, tab): lượt backup NGÀY và TUẦN chạy liền
+   * nhau dùng chung 1 lần đọc — hạn mức đọc Sheets của Google chỉ 60 lượt/phút
+   * nên đọc lại 2 bảng log lớn mỗi lượt sẽ đụng trần ngay.
+   *
+   * Giới hạn `BACKUP_LOG_MAX_ROWS_PER_SHEET` (mặc định 200.000 dòng/bảng): 2
+   * bảng nhật ký (THONGBAO_NV/GUI) chỉ tăng, mỗi ngày vài nghìn dòng. Nếu nhét
+   * toàn bộ lịch sử vào MỌI kỳ backup thì ZIP phình vô hạn và webhook Apps Script
+   * sẽ trả HTTP 400 như trước. Vượt hạn mức → chỉ lấy các dòng MỚI NHẤT và ghi
+   * chú rõ trong ZIP (dữ liệu cũ vẫn nằm ở các bản backup trước + Sheet gốc).
+   */
+  private async exportSpreadsheetTabsCsvFallback(
+    src: { title: string; spreadsheetId: string },
+    periodKey: string,
+  ): Promise<ZipEntry[]> {
+    if (!this.sheetsClient) throw new Error('SHEETS_NOT_CONFIGURED');
+    const maxRows = Math.max(20_000, Number(process.env.BACKUP_LOG_MAX_ROWS_PER_SHEET) || 200_000);
+
+    const grids = await this.backupTabGrids(src.spreadsheetId, src.title);
+    const totalRows = grids.reduce((sum, g) => sum + Math.max(0, g.rowCount), 0);
+    const truncate = totalRows > maxRows;
+
+    // Cắt bớt thì ưu tiên các tab CUỐI (dữ liệu mới nhất được ghi vào cuối).
+    const plan: Array<{ title: string; fromRow: number }> = [];
+    let budget = truncate ? maxRows : Number.POSITIVE_INFINITY;
+    for (let i = grids.length - 1; i >= 0; i -= 1) {
+      const g = grids[i];
+      if (budget <= 0) break;
+      const take = Math.min(g.rowCount > 0 ? g.rowCount : budget, budget);
+      const fromRow = g.rowCount > 0 ? Math.max(1, g.rowCount - take + 1) : 1;
+      plan.push({ title: g.title, fromRow });
+      budget -= take;
+    }
+    plan.reverse();
+
+    const out: ZipEntry[] = [];
+    for (const item of plan) {
+      const tab = item.title;
+      const cacheKey = `${src.spreadsheetId}|${tab}|${item.fromRow}`;
+      const cached = this.backupCsvTabCache.get(cacheKey);
+      let csvBuf: Buffer | null = null;
+      if (cached && Date.now() - cached.at < 30 * 60_000) {
+        csvBuf = cached.csv;
+      } else {
+        let rows = await this.readTabRowsForBackup(src.spreadsheetId, tab, item.fromRow);
+        if (rows.length === 0 && item.fromRow > 1) {
+          // Lưới Sheet có thể có dòng trống ở cuối (grid > dữ liệu thật) — đọc
+          // lại từ đầu để không mất dữ liệu của bảng.
+          rows = await this.readTabRowsForBackup(src.spreadsheetId, tab, 1);
+        }
+        if (rows.length === 0) continue;
+        const csv = rows.map(row => csvRowOf(row)).join('\r\n');
+        csvBuf = Buffer.from('\uFEFF' + csv, 'utf8');
+        this.backupCsvTabCache.set(cacheKey, { at: Date.now(), csv: csvBuf });
+      }
+      const safeTab = String(tab).replace(/[\\/:*?"<>|]/g, '-').trim() || 'Sheet1';
+      out.push({
+        name: `${src.title}_${periodKey}__${safeTab}.csv`,
+        data: csvBuf,
+        compress: true,
+      });
+    }
+    if (out.length === 0) throw new Error('CSV_FALLBACK_EMPTY');
+
+    if (truncate) {
+      const note = [
+        `BẢNG: ${src.title} — export CSV thay cho XLSX (file gốc quá lớn để Google export).`,
+        `Tổng số dòng hiện có: ${totalRows}.`,
+        `Số dòng đưa vào ZIP: các dòng MỚI NHẤT (giới hạn ${maxRows} dòng, cấu hình BACKUP_LOG_MAX_ROWS_PER_SHEET).`,
+        '',
+        'Lý do: đây là bảng nhật ký chỉ tăng; nếu đóng gói toàn bộ lịch sử vào mọi kỳ backup thì',
+        'file ZIP phình vô hạn và không upload được. Dữ liệu cũ vẫn còn trong:',
+        '  - Google Sheet gốc (nguồn dữ liệu thật), và',
+        '  - các file ZIP backup của những kỳ trước.',
+        '',
+        `Thời điểm tạo: ${new Date().toISOString()}`,
+      ].join('\r\n');
+      out.push({
+        name: `${src.title}_${periodKey}__GHI_CHU.txt`,
+        data: Buffer.from(note, 'utf8'),
+        compress: true,
+      });
+      console.warn(
+        `[BackupSheets] ${src.title}: ${totalRows} dòng > giới hạn ${maxRows}`
+        + ' — chỉ đóng gói các dòng mới nhất (có ghi chú trong ZIP)',
+      );
+    }
+
+    return out;
+  }
+
+  /** Danh sách tab + số dòng của 1 spreadsheet (cache 10 phút). */
+  private async backupTabGrids(
+    spreadsheetId: string,
+    fallbackTitle: string,
+  ): Promise<Array<{ title: string; rowCount: number }>> {
+    const cached = this.backupGridCache.get(spreadsheetId);
+    if (cached && Date.now() - cached.at < 10 * 60_000) return cached.grids;
+    try {
+      const meta: any = await this.sheetsCall(`backup.grids.${spreadsheetId.slice(0, 8)}`, () =>
+        this.sheetsClient!.spreadsheets.get({
+          spreadsheetId,
+          fields: 'sheets.properties(title,gridProperties(rowCount,columnCount))',
+        }), 30_000);
+      const grids = (meta?.data?.sheets || [])
+        .map((s: any) => ({
+          title: String(s?.properties?.title || ''),
+          rowCount: Number(s?.properties?.gridProperties?.rowCount || 0),
+        }))
+        .filter((g: any) => g.title);
+      if (grids.length > 0) {
+        this.backupGridCache.set(spreadsheetId, { at: Date.now(), grids });
+        return grids;
+      }
+    } catch { /* rơi về tab mặc định */ }
+    return [{ title: fallbackTitle, rowCount: 0 }];
+  }
+
+  /** Lỗi do chạm hạn mức đọc Sheets (429 / "Quota exceeded"). */
+  private isSheetsQuotaError(err: any): boolean {
+    const status = Number(err?.code ?? err?.response?.status ?? err?.response?.data?.error?.code);
+    const msg = String(err?.response?.data?.error?.message || err?.message || '');
+    return status === 429 || /quota exceeded|rate limit/i.test(msg);
+  }
+
+  /** Đọc 1 tab theo lô 20k dòng, bắt đầu từ `fromRow` (bảng log có thể >150k dòng). */
+  private async readTabRowsForBackup(spreadsheetId: string, tab: string, fromRow = 1): Promise<any[][]> {
+    const rows: any[][] = [];
+    const chunk = 20_000;
+    let columnCount = 30;
+    let rowCount = 0;
+
+    /** Gọi API có giãn cách + chờ khi chạm hạn mức đọc (60 lượt/phút/user). */
+    const guarded = async (label: string, fn: () => Promise<any>, ms: number) => {
+      let lastErr: any = null;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          return await this.sheetsCall(label, fn, ms);
+        } catch (err: any) {
+          lastErr = err;
+          if (!this.isSheetsQuotaError(err) || attempt === 3) break;
+          const wait = 20_000 * (attempt + 1);
+          console.warn(
+            `[BackupSheets] ${tab}: chạm hạn mức đọc Sheets — chờ ${Math.round(wait / 1000)}s rồi đọc lại`,
+          );
+          await new Promise(resolve => setTimeout(resolve, wait));
+        }
+      }
+      throw lastErr;
+    };
+
+    try {
+      const meta: any = await guarded(`backup.meta.${tab}`, () =>
+        this.sheetsClient!.spreadsheets.get({
+          spreadsheetId,
+          fields: 'sheets.properties(title,gridProperties(rowCount,columnCount))',
+        }), 30_000);
+      for (const s of meta?.data?.sheets || []) {
+        if (String(s?.properties?.title || '') === tab) {
+          columnCount = Number(s?.properties?.gridProperties?.columnCount || columnCount);
+          rowCount = Number(s?.properties?.gridProperties?.rowCount || 0);
+        }
+      }
+    } catch { /* dùng giá trị mặc định */ }
+
+    const lastCol = columnLetterOf(Math.max(1, Math.min(columnCount, 702)));
+    const hardLimit = rowCount > 0 ? Math.min(rowCount, 500_000) : 500_000;
+    const quotedTab = String(tab).replace(/'/g, "''");
+    let start = Math.max(1, Math.floor(fromRow) || 1);
+    while (start <= hardLimit) {
+      const end = Math.min(start + chunk - 1, hardLimit);
+      const range = `'${quotedTab}'!A${start}:${lastCol}${end}`;
+      if (start > 1) await new Promise(resolve => setTimeout(resolve, 1_200));
+      const res: any = await guarded(`backup.csv.${tab}.${start}`, () =>
+        this.sheetsClient!.spreadsheets.values.get({
+          spreadsheetId,
+          range,
+          valueRenderOption: 'FORMATTED_VALUE',
+          dateTimeRenderOption: 'FORMATTED_STRING',
+        } as any), 60_000);
+      const vals = (res?.data?.values as any[][]) || [];
+      if (vals.length === 0) break;
+      rows.push(...vals);
+      if (vals.length < end - start + 1) break;
+      start = end + 1;
+    }
+    return rows;
   }
 
   /** Dọn các folder kỳ cũ hơn `keep` (chỉ folder đúng định dạng kỳ). */
@@ -2001,8 +2486,18 @@ export class GoogleSheetsSyncService {
     }
 
     // Cache 10 phút: header hầu như không đổi, khỏi tốn ~N API call mỗi lần full-sync.
-    if (this.lastInitResult && Date.now() - this.initOkAt < 600000) {
+    if (this.lastInitResult && Date.now() - this.initOkAt < this.initOkTtlMs) {
       return { ...this.lastInitResult, createdSheets: [...this.lastInitResult.createdSheets], existingSheets: [...this.lastInitResult.existingSheets] };
+    }
+    // Vừa thất bại toàn bộ (thường vì quota đọc) -> nghỉ ngắn, tránh bắn tiếp
+    // 25 request metadata và làm Google khoá lâu hơn.
+    if (this.initFailedAt && Date.now() - this.initFailedAt < GoogleSheetsSyncService.INIT_FAIL_BACKOFF_MS) {
+      return {
+        success: false,
+        createdSheets: [],
+        existingSheets: [],
+        message: 'Tạm nghỉ khởi tạo cấu trúc sau lỗi quota đọc (thử lại sau 2 phút)',
+      };
     }
 
     try {
@@ -2122,24 +2617,30 @@ export class GoogleSheetsSyncService {
       }
 
       if (existingSheets.length === 0 && createdSheets.length === 0) {
+        this.initFailedAt = Date.now();
         const message = failures.length
           ? `Lỗi Google Sheets API: ${failures.join('; ')}`
           : this.authError || 'Không đọc được cấu trúc 25 file Google Sheets';
         return { success: false, createdSheets, existingSheets, message };
       }
+      this.initFailedAt = 0;
 
       console.log(`[GoogleSheetsSyncService] Đã tạo ${createdSheets.length} sheet mới trên ${groups.size} file riêng. Toàn bộ ${SHEETS_DEFINITIONS.length} tab sẵn sàng.`);
 
-      for (const sid of touchedSpreadsheets) {
-        // Tự động làm đẹp và định dạng các tab mới tạo (đúng file vừa tạo tab).
-        this.formatAndBeautifySpreadsheet(sid).catch(err => {
-          console.warn('[GoogleSheetsSyncService] Tự động làm đẹp Sheets thất bại:', err?.message || err);
-        });
+      if (isAutoBeautifyEnabled()) {
+        for (const sid of touchedSpreadsheets) {
+          // Tự động làm đẹp và định dạng các tab mới tạo (đúng file vừa tạo tab).
+          this.formatAndBeautifySpreadsheet(sid).catch(err => {
+            console.warn('[GoogleSheetsSyncService] Tự động làm đẹp Sheets thất bại:', err?.message || err);
+          });
+        }
       }
 
       const message = `Đã khởi tạo thành công cấu trúc ${SHEETS_DEFINITIONS.length} sheet tabs trên ${groups.size} file Google Sheets riêng!`
         + (failures.length ? ` (lỗi ${failures.length} file: ${failures.join('; ')})` : '');
       this.initOkAt = Date.now();
+      // Chạy sạch (không file nào lỗi) -> giữ cache lâu, đỡ đốt quota đọc.
+      this.initOkTtlMs = failures.length ? 600_000 : 6 * 60 * 60_000;
       this.lastInitResult = {
         success: true,
         createdSheets,
@@ -2285,6 +2786,18 @@ export class GoogleSheetsSyncService {
       this.cfCleanupState.running = false;
       this.cfCleanupState.finishedAt = new Date().toISOString();
     }
+  }
+
+  /**
+   * Tự động làm đẹp sau khi push đủ có nên chạy không.
+   *
+   * Tôn trọng `SHEETS_AUTO_BEAUTIFY` (production đặt 0) và giới hạn 1 lần/6 giờ.
+   * `lastBeautifyAt` chỉ nằm trong RAM nên sau mỗi lần restart trước đây beautify
+   * chạy ngay ở lượt push đầu — đúng lúc pull/backup đang cần quota đọc.
+   */
+  public shouldAutoBeautify(nowMs: number = Date.now()): boolean {
+    if (!isAutoBeautifyEnabled()) return false;
+    return nowMs - this.lastBeautifyAt > 6 * 3_600_000;
   }
 
   /**
@@ -3252,6 +3765,9 @@ export class GoogleSheetsSyncService {
             status: (r[6] as any) || old.status || 'ACTIVE',
             gps_enabled: parseSheetBoolean(r[7], old.gps_enabled !== false),
             map_visible: parseSheetBoolean(r[8], old.map_visible !== false),
+            // Cờ ẩn lịch không có cột riêng trên Sheet → giữ nguyên trạng thái
+            // trong bộ nhớ để pull không vô tình bật lại lịch đang ẩn.
+            ...(old.schedule_visible === false ? { schedule_visible: false } : {}),
           };
         });
       } else if (branchesInMemory.length === 0) {
@@ -4233,6 +4749,9 @@ export class GoogleSheetsSyncService {
         }
 
         const dataRows = candRows.slice(1);
+        // Tombstone tự động xoá (quá 20 ngày chưa xếp lịch): pull form gốc phải
+        // BỎ QUA hồ sơ đã xoá, nếu không dòng form cũ sẽ hồi sinh ứng viên.
+        const candidateTombstones = getCandidateCleanupTombstones((fallback as any).systemSettings);
         fallback.candidates = dataRows
           .filter(r => r && r.length > 0 && r.some(cell => String(cell || '').trim().length > 0))
           .map((r, idx) => {
@@ -4249,6 +4768,17 @@ export class GoogleSheetsSyncService {
             const hometown = getVal(colHometown) || 'TP. Hồ Chí Minh';
             const phone = getVal(colPhone) || '';
             const phoneNormalized = canonicalPhone(phone);
+            // Hồ sơ đã bị hệ thống tự ẩn (quá hạn chờ lịch PV): vẫn giữ dòng form
+            // trong bộ nhớ (để lần push sau không xoá dòng trên Sheet) nhưng gắn
+            // cờ ẩn — API danh sách ứng viên sẽ lọc bỏ.
+            const cleanupKey = candidateCleanupKey({
+              phone_normalized: phoneNormalized,
+              full_name: fullName,
+              created_at: rawCreatedAt,
+            });
+            const hiddenEntry = candidateTombstones.entries?.[cleanupKey];
+            const hiddenByRecentMark = this.isCandidateDeletedRecently(cleanupKey);
+            const autoHiddenAt = hiddenEntry?.deleted_at || (hiddenByRecentMark ? new Date().toISOString() : undefined);
             const registeredShift = getVal(colShift) || 'Ca sáng / Ca chiều';
             const branchName = getVal(colBranch) || 'CN130 - Lê Văn Sỹ';
             const experience = getVal(colExperience) || 'Chưa có kinh nghiệm (sẵn sàng đào tạo)';
@@ -4323,7 +4853,15 @@ export class GoogleSheetsSyncService {
               interview_reminder_count: (prev as any).interview_reminder_count ?? undefined,
               interview_reminder_key: (prev as any).interview_reminder_key || undefined,
               interview_mode: (prev as any).interview_mode || undefined,
-              zalo_invite_status: zaloSrc.status || prev.zalo_invite_status || undefined,
+              // Trạng thái Zalo: chỉ nhận MÃ HỢP LỆ. Dữ liệu cũ từng ghi SĐT vào
+              // cột "Zalo Thư Mời" và bị nạp vào đây ("346635827"), khiến mọi hồ
+              // sơ bị coi là đã gửi Zalo và chặn tự xoá quá hạn vĩnh viễn.
+              zalo_invite_status: zaloSrc.status
+                || ((ZALO_INVITE_STATUSES as readonly string[]).includes(
+                  String(prev.zalo_invite_status || '').trim().toUpperCase(),
+                )
+                  ? String(prev.zalo_invite_status).trim().toUpperCase()
+                  : undefined),
               zalo_invite_note: zaloSrc.note || prev.zalo_invite_note || undefined,
               zalo_invite_at: getVal(colZaloAt) || prev.zalo_invite_at || undefined,
               zalo_uid: prev.zalo_uid || undefined,
@@ -4361,8 +4899,16 @@ export class GoogleSheetsSyncService {
               status,
               source_code: sourceCode,
               created_at: rawCreatedAt,
+              // Ẩn tự động (quá 20 ngày chưa xếp lịch PV): giữ cờ qua các lần pull.
+              // Không xoá dòng Sheet — chỉ lọc khỏi API danh sách ứng viên.
+              auto_hidden_at: autoHiddenAt || (prev as any).auto_hidden_at || undefined,
+              auto_hidden_reason: autoHiddenAt
+                ? (hiddenEntry?.reason || 'Quá hạn chờ xếp lịch phỏng vấn')
+                : ((prev as any).auto_hidden_reason || undefined),
             };
-          });
+          })
+          // Bỏ các dòng rỗng (mapping giờ luôn trả object).
+          .filter((c: any) => !!c);
         // Phủ dữ liệu vận hành (lịch PV + Zalo + trạng thái) từ master FROM_NHAN_VIEN:
         // restart/sửa code làm bộ nhớ trắng, Sheet form gốc không có các cột này —
         // không phủ thì reload là mất. Khớp theo submission_id, rớt về SĐT+tên.
@@ -4406,17 +4952,34 @@ export class GoogleSheetsSyncService {
                   || byPhoneName.get(`${c.phone_normalized || ''}|${String(c.full_name || '').trim().toLowerCase()}`)
                   || byId.get(c.submission_id);
                 if (!mr) continue;
-                // Lịch vừa bị hủy (tay/auto): ÉP XÓA thay vì hồi sinh dòng cũ trên Sheet.
-                if (this.isInterviewScheduleClearedRecently(c.submission_id)) {
-                  c.interview_date = undefined;
-                  c.interview_time_slot = undefined;
-                  c.interviewer_id = undefined;
-                  if ((c as any).status === 'INVITED_INTERVIEW') (c as any).status = 'NEW';
-                  continue;
-                }
+                // Lịch vừa bị hủy/chấm điểm/vắng (tay/auto/tick): GIỮ trạng thái + lịch
+                // mới nhất trong bộ nhớ, KHÔNG hồi sinh dòng cũ còn sót trên master.
                 const nz = (v: any) => (v !== undefined && String(v).trim() !== '' ? String(v).trim() : undefined);
+                const curStatus = String((c as any).status || '').toUpperCase();
+                const hasScore = (String((c as any).interview_score_detail || '').trim() !== ''
+                  && (c as any).interview_score_detail !== undefined && (c as any).interview_score_detail !== null)
+                  || ((c as any).interview_score !== undefined && (c as any).interview_score !== null && String((c as any).interview_score).trim() !== '');
+                const statusLock = this.getCandidateStatusLock(c.submission_id);
+                const scheduleCleared = this.isInterviewScheduleClearedRecently(c.submission_id);
                 const mStatus = nz(mr[15]);
-                if (mStatus && mStatus !== 'NEW') c.status = mStatus as any;
+                // Đang khóa trạng thái (vừa chấm điểm/duyệt/hủy/xếp lịch): bộ nhớ là
+                // nguồn đúng, KHÔNG lấy trạng thái từ master (có thể còn dòng cũ).
+                if (!statusLock && mStatus && mStatus !== 'NEW') {
+                  const mStatusU = String(mStatus).toUpperCase();
+                  // Master là bản sao push từ bộ nhớ. Nếu master còn trạng thái CHỜ cũ
+                  // (CONFIRMED/INVITED...) trong khi bộ nhớ đã chấm điểm/duyệt/vắng/đen
+                  // thì TUYỆT ĐỐI không hạ cấp — đây là nguyên nhân ứng viên tự nhảy về
+                  // tab "Chờ phỏng vấn" sau khi HR chấm điểm.
+                  const WAITING = ['NEW', 'INVITED_INTERVIEW', 'CONFIRMED', 'INTERVIEWED', 'RESCHEDULE_PROPOSED', 'DECLINED'];
+                  const downgradeFromScored = (curStatus === 'SCORED' || curStatus === 'ACCEPTED' || hasScore) && WAITING.includes(mStatusU);
+                  const downgradeAccepted = curStatus === 'ACCEPTED' && !['ACCEPTED', 'BLACKLIST', 'REJECTED'].includes(mStatusU);
+                  const downgradeBlacklist = curStatus === 'BLACKLIST' && mStatusU !== 'BLACKLIST';
+                  const downgradeProposal = ['RESCHEDULE_PROPOSED', 'DECLINED', 'NO_SHOW'].includes(curStatus)
+                    && ['INVITED_INTERVIEW', 'CONFIRMED'].includes(mStatusU);
+                  if (!downgradeFromScored && !downgradeAccepted && !downgradeBlacklist && !downgradeProposal) {
+                    c.status = mStatus as any;
+                  }
+                }
                 // Năm sinh: ưu tiên chuỗi gốc từ form; master chỉ bổ sung khi form
                 // không có (VD dữ liệu cũ chỉ còn 1 năm).
                 const mBirthRaw = nz(mr[3]);
@@ -4437,9 +5000,29 @@ export class GoogleSheetsSyncService {
                   const mCode = String(mBranch).match(/CN\d+/i)?.[0]?.toUpperCase();
                   if (mCode) c.preferred_branch_id = mCode as any;
                 }
-                c.interview_date = nz(mr[17]) || c.interview_date;
-                c.interview_time_slot = nz(mr[18]) || c.interview_time_slot;
-                c.interviewer_id = nz(mr[19]) || c.interviewer_id;
+                // Ứng viên đã phỏng vấn xong / vắng / bị loại / đen thì KHÔNG khôi phục
+                // lịch cũ từ master (master có thể còn dòng lịch trễ) — tránh đếm ngược
+                // Meet + tab "Chờ phỏng vấn" sống lại sau khi đã chấm điểm.
+                const effStatus = String((c as any).status || '').toUpperCase();
+                const finalNoSchedule = ['SCORED', 'ACCEPTED', 'REJECTED', 'NO_SHOW', 'BLACKLIST', 'INTERVIEWED', 'DECLINED', 'RESCHEDULE_PROPOSED'].includes(effStatus)
+                  || hasScore;
+                if (scheduleCleared) {
+                  // Lịch vừa bị gỡ: ép xóa, không hồi sinh dòng cũ.
+                  c.interview_date = undefined;
+                  c.interview_time_slot = undefined;
+                  c.interviewer_id = undefined;
+                } else if (statusLock) {
+                  // Lịch vừa đặt/chốt/xác nhận: giữ nguyên lịch trong bộ nhớ, không để
+                  // master cũ ghi đè ngày/giờ (kể cả lịch cũ của lần hẹn trước).
+                } else if (finalNoSchedule) {
+                  c.interview_date = undefined;
+                  c.interview_time_slot = undefined;
+                  c.interviewer_id = undefined;
+                } else {
+                  c.interview_date = nz(mr[17]) || c.interview_date;
+                  c.interview_time_slot = nz(mr[18]) || c.interview_time_slot;
+                  c.interviewer_id = nz(mr[19]) || c.interviewer_id;
+                }
                 // Cột "Zalo Thư Mời" có thể còn dữ liệu cũ HR nhập tay (SĐT/Zalo
                 // phụ). Chỉ nhận mã trạng thái hợp lệ; phần còn lại lưu thành
                 // ghi chú để push không ghi ngược SĐT vào cột trạng thái.
@@ -4477,6 +5060,15 @@ export class GoogleSheetsSyncService {
                 if (mPropNote) (c as any).interview_proposed_note = mPropNote;
                 const mBlacklist = nz(mr[30]);
                 if (mBlacklist) (c as any).blacklist_reason = mBlacklist;
+              }
+              // Hồ sơ đã bị ẩn tự động nhưng sau đó HR đã xếp lịch/chấm điểm:
+              // bỏ cờ ẩn để hồ sơ hiện lại (tombstone không còn hiệu lực).
+              for (const c of fallback.candidates as any[]) {
+                if (!c?.auto_hidden_at) continue;
+                if (isCandidateInterviewHandled(c)) {
+                  delete (c as any).auto_hidden_at;
+                  delete (c as any).auto_hidden_reason;
+                }
               }
             }
           }
@@ -4774,7 +5366,18 @@ export class GoogleSheetsSyncService {
         for (let i = 0; i < tabs.length; i++) {
           out[tabs[i]] = (groups[i]?.values as string[][]) || [];
         }
-      } catch (e) {
+      } catch (e: any) {
+        // 429/quota: KHÔNG đọc lại từng tab. Mỗi lần thử lại là thêm 1 request
+        // đọc trong khi Google đang khoá theo phút, nên retry chỉ làm khoá lâu
+        // hơn và biến 1 lỗi thành N lỗi. Trả rỗng cho nhịp này, pull sau đọc bù.
+        const msg = String(e?.message || e || '');
+        const isQuota = Number(e?.code) === 429
+          || Number(e?.response?.status) === 429
+          || /Quota exceeded|rateLimitExceeded|RATE_LIMIT_EXCEEDED|429/i.test(msg);
+        if (isQuota) {
+          for (const t of tabs) out[t] = [];
+          return;
+        }
         // Fallback đọc từng tab nếu batch lỗi
         for (const t of tabs) {
           try {
@@ -4974,6 +5577,8 @@ export class GoogleSheetsSyncService {
   private invalidateInitCache() {
     this.initOkAt = 0;
     this.lastInitResult = null;
+    this.initFailedAt = 0;
+    this.initOkTtlMs = 600_000;
   }
 
   /**
@@ -5363,7 +5968,7 @@ export class GoogleSheetsSyncService {
         // Tự động căn chỉnh & làm đẹp: tối đa 1 lần/6 giờ (đẹp Sheets tốn ~20-30
         // write + đọc 20 dòng/tab, lấn quota của thao tác thật). Endpoint định dạng
         // thủ công (/admin/integrations/format-sheets) vẫn chạy bất kỳ lúc nào.
-        if (Date.now() - this.lastBeautifyAt > 6 * 3_600_000) {
+        if (this.shouldAutoBeautify()) {
           this.formatAndBeautifySpreadsheet().catch(err => {
             console.warn('[GoogleSheetsSyncService] Tự động làm đẹp sau syncAllData thất bại:', err?.message || err);
           });
@@ -5888,7 +6493,9 @@ export class GoogleSheetsSyncService {
       e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
       e.drive_object_id || '', e.request_id || '', e.uniform_pink_ratio ?? '',
       sheetDateTimeText(e.client_time || ''),
-      e.is_late ? 'YES' : '', e.is_early ? 'YES' : '', Number(e.minutes_deviation) || 0,
+      e.is_late === true ? 'YES' : (e.is_late === false ? 'NO' : ''),
+      e.is_early === true ? 'YES' : (e.is_early === false ? 'NO' : ''),
+      Number(e.minutes_deviation) || 0,
       e.fine_tier || 'NONE', Number(e.fine_amount) || 0,
     ]);
     // BETA partition: tab SU_KIEN_DIEM_DANH có thể đã chia part -> ghi qua các part
@@ -6929,6 +7536,12 @@ export class GoogleSheetsSyncService {
         e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
         e.drive_object_id || '', e.request_id || '', (e as any).uniform_pink_ratio ?? '',
         sheetDateTimeText(e.client_time || ''),
+        // Cờ trễ/sớm + mức phạt phải đi theo tuần cũ: mất ở đây thì kỳ lương
+        // tính lại từ giờ vào ca -> ca đã duyệt bù công vẫn bị phạt 100%.
+        e.is_late === true ? 'YES' : (e.is_late === false ? 'NO' : ''),
+        e.is_early === true ? 'YES' : (e.is_early === false ? 'NO' : ''),
+        Number(e.minutes_deviation) || 0,
+        e.fine_tier || 'NONE', Number(e.fine_amount) || 0,
       ]);
     if (rows.length > 0 && this.sheetsClient) {
       try {
@@ -6951,7 +7564,9 @@ export class GoogleSheetsSyncService {
           e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
           e.drive_object_id || '', e.request_id || '', (e as any).uniform_pink_ratio ?? '',
           sheetDateTimeText(e.client_time || ''),
-          e.is_late ? 'YES' : '', e.is_early ? 'YES' : '', Number(e.minutes_deviation) || 0,
+          e.is_late === true ? 'YES' : (e.is_late === false ? 'NO' : ''),
+          e.is_early === true ? 'YES' : (e.is_early === false ? 'NO' : ''),
+          Number(e.minutes_deviation) || 0,
           e.fine_tier || 'NONE', Number(e.fine_amount) || 0,
         ]);
         const def = SHEETS_DEFINITIONS.find(dd => dd.title === 'SU_KIEN_DIEM_DANH')!;
@@ -7010,6 +7625,13 @@ export class GoogleSheetsSyncService {
         drive_object_id: (r[9] || '').trim() || undefined,
         request_id: (r[10] || '').trim() || undefined,
         client_time: wall,
+        // Dòng archive cũ (≤13 cột) không có mấy cột này -> để undefined để nơi
+        // tính lương còn suy bù từ giờ vào ca; dòng mới giữ đúng cờ/phạt gốc.
+        is_late: r[13] === 'YES' ? true : (r[13] ? false : undefined),
+        is_early: r[14] === 'YES' ? true : (r[14] ? false : undefined),
+        minutes_deviation: numOrUndef(r[15]),
+        fine_tier: (r[16] || '').trim() || undefined,
+        fine_amount: numOrUndef(r[17]),
         archived: true,
       });
     }
@@ -7039,6 +7661,41 @@ export class GoogleSheetsSyncService {
       type: String(gone[3] || '').trim(),
     };
   };
+
+  /**
+   * Gỡ cờ trễ + mức phạt của các lượt điểm danh ĐÃ LƯU TRỮ (tuần cũ). Dùng khi
+   * phiếu bù công được duyệt SAU mốc archive tuần — kho lưu trữ chỉ đọc với
+   * luồng thường, nhưng "duyệt = xóa vi phạm" phải áp cho cả tuần đã archive,
+   * nếu không kỳ lương sẽ tính lại trễ từ giờ vào ca và phạt 100% lần nữa.
+   * Gộp 1 lượt đọc/ghi toàn kho (không rewrite N lần).
+   */
+  public async clearArchivedEventFines(eventIds: string[]): Promise<number> {
+    const ids = new Set((eventIds || []).map(id => String(id || '').trim()).filter(Boolean));
+    if (ids.size === 0 || !this.sheetsClient) return 0;
+    const rows = await this.readPartitionedRows('LUUTRU_CHAMCONG_TUAN').catch(() => [] as string[][]);
+    let fixed = 0;
+    const next = (rows || []).map(r => {
+      const id = String((r as any)?.[0] || '').trim();
+      if (!ids.has(id)) return r;
+      if (String((r as any)?.[13] || '').toUpperCase() === 'NO'
+        && !Number((r as any)?.[17])
+        && (!(r as any)?.[16] || String((r as any)[16]).toUpperCase() === 'NONE')) {
+        return r; // đã sạch, không cần ghi lại
+      }
+      const row = [...(r as any[])];
+      while (row.length < 18) row.push('');
+      row[13] = 'NO';        // Trễ = NO (đã được duyệt)
+      row[15] = '0';         // Lệch 0 phút
+      row[16] = 'NONE';      // Không phạt
+      row[17] = '0';
+      fixed++;
+      return row;
+    });
+    if (fixed === 0) return 0;
+    await this.rewritePartitionedTab('LUUTRU_CHAMCONG_TUAN', next as any[][]);
+    this.invalidateArchivedAttendanceCache();
+    return fixed;
+  }
 
   /** Tải bytes ảnh từ Google Drive (để xem trực tiếp / đóng gói ZIP tải về). */
   public async downloadDriveFile(fileId: string): Promise<{ buffer: Buffer; mimeType: string }> {

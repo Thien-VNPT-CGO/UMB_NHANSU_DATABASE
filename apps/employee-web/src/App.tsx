@@ -2470,6 +2470,14 @@ export function App() {
         }
         reload(entity, p);
 
+        // Admin ẩn/hiện lịch chi nhánh → cập nhật cờ schedule_visible để cổng NV
+        // hiện banner "lịch đã ẩn" và tải lại lịch ngay (không cần F5).
+        if (!entity || entity === 'branches' || entity === 'config' || entity === 'schedules' || entity === 'all') {
+          apiRequest('/me/branch')
+            .then((b: any) => { if (b) setBranchInfo(b); })
+            .catch(() => null);
+        }
+
         // Hồ sơ thay đổi (tôi sửa ở máy khác / HR sửa) -> tải lại hồ sơ của tôi.
         if (!entity || entity === 'employees' || entity === 'accounts' || entity === 'all') {
           apiRequest('/me').then((me: any) => {
@@ -2485,6 +2493,7 @@ export function App() {
         if (
           !entity ||
           entity === 'schedules' ||
+          entity === 'branches' ||
           entity === 'attendance' ||
           entity === 'office-attendance' ||
           entity === 'office-schedules' ||
@@ -2497,6 +2506,8 @@ export function App() {
           // app tài xế tải lại ca + điểm dừng ngay.
           entity === 'ev' ||
           entity === 'evShift' ||
+          entity === 'evShiftCheckin' ||
+          entity === 'evExplanationTicket' ||
           entity === 'evChargingTicket' ||
           entity === 'evDriverPayroll' ||
           entity === 'evRouteChange' ||
@@ -3628,6 +3639,11 @@ export function App() {
       }
       if (err?.code === 'SESSION_EXPIRED' || /hết hạn|đăng nhập lại/i.test(String(err?.message || ''))) {
         showToast('🔒 Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại!');
+        return;
+      }
+      // Chi nhánh đã ngừng hoạt động → Admin ẩn lịch, không cho đổi ca.
+      if (err?.code === 'BRANCH_SCHEDULE_HIDDEN') {
+        showToast('🚫 Chi nhánh đã ngừng hoạt động — lịch làm việc đã bị ẩn, không thể đổi ca.');
         return;
       }
       showToast(err.message || 'Không tải được lịch của đồng nghiệp!');
@@ -4933,6 +4949,19 @@ export function App() {
         )}
         {!isOffice && activeTab === 'schedule' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Chi nhánh đã ngừng hoạt động (Admin ẩn lịch) → báo rõ thay vì lịch trống. */}
+            {branchInfo && branchInfo.schedule_visible === false && (
+              <div style={{ padding: '14px 16px', backgroundColor: '#FEF2F2', border: '2px solid #FCA5A5', borderRadius: 'var(--radius-sm)' }}>
+                <div style={{ fontSize: '14px', fontWeight: 800, color: '#B91C1C' }}>
+                  🚫 Lịch làm việc chi nhánh đã bị ẩn
+                </div>
+                <div style={{ fontSize: '12.5px', color: '#991B1B', marginTop: '5px', lineHeight: 1.65 }}>
+                  Chi nhánh <strong>{branchInfo?.name || branchInfo?.id || (employee as any)?.default_branch_id || ''}</strong> đã ngừng hoạt động.
+                  Admin đã ẩn lịch làm việc trên toàn hệ thống nên bạn không xem được lịch.
+                  Vui lòng liên hệ Quản lý / Admin nếu cần hỗ trợ.
+                </div>
+              </div>
+            )}
             {/* LỊCH KIỂM TRA ĐẦU RA: thông báo dẫn thẳng về tab Lịch nên phải có
                 link Meet ngay tại đây (trước chỉ hiện ở Trang chủ). */}
             {isProbation && probationAssessment && !probationAssessment?.meetDone && (() => {

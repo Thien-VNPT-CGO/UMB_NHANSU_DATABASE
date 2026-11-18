@@ -12,6 +12,7 @@ import { EVChargingService } from './ev-charging.service.js';
 import { EVGPSService } from './ev-gps.service.js';
 import { EVPayrollService } from './ev-payroll.service.js';
 import { EVRouteChangeService } from './ev-route-change.service.js';
+import { EVExplanationService } from './ev-explanation.service.js';
 import { EVRealtimeService, evRealtimeService } from './ev-realtime.service.js';
 import { EVDriveService } from './ev-drive.service.js';
 import { EVDriverProfileService } from './ev-profile.service.js';
@@ -20,6 +21,7 @@ export class MilkRouteModule {
   public readonly vehicles: EVVehicleService;
   public readonly routes: EVRouteService;
   public readonly routeChanges: EVRouteChangeService;
+  public readonly explanations: EVExplanationService;
   public readonly shifts: EVShiftService;
   public readonly checkins: EVCheckinService;
   public readonly charging: EVChargingService;
@@ -33,6 +35,7 @@ export class MilkRouteModule {
     this.vehicles = new EVVehicleService(repo);
     this.routes = new EVRouteService(repo);
     this.routeChanges = new EVRouteChangeService(repo);
+    this.explanations = new EVExplanationService(repo, this.routes);
     this.shifts = new EVShiftService(repo, this.routes);
     this.checkins = new EVCheckinService(repo, this.routes);
     this.charging = new EVChargingService(repo, this.routes);

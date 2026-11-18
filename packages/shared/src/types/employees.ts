@@ -187,4 +187,8 @@ export interface CandidateApplication {
   vip_by?: string;
   /** Cấp bậc VIP trong cùng chi nhánh (1 = ưu tiên nhất). Khác chi nhánh thì độc lập. */
   vip_rank?: number;
+  /** Hệ thống tự ẩn hồ sơ khỏi tab Ứng viên (quá 20 ngày chưa được HR xếp lịch PV).
+   *  Dòng trên Google Sheet vẫn giữ nguyên — chỉ ẩn khỏi giao diện/vận hành. */
+  auto_hidden_at?: string;
+  auto_hidden_reason?: string;
 }

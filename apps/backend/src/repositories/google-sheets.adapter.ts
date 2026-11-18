@@ -72,6 +72,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       'employees',
       'evVehicles', 'evRoutes', 'evRouteStops', 'evShifts', 'evShiftCheckins',
       'evChargingTickets', 'evGpsPoints', 'evDriverPayroll', 'evRouteChangeRequests',
+      'evExplanationTickets',
       // Cờ cấu hình đọc trực tiếp trong service (VD: chế độ Test vận chuyển).
       'systemSettings',
     ];
@@ -93,6 +94,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       'createEVGpsPoints', 'pruneEVGpsPoints',
       'createEVDriverPayroll', 'updateEVDriverPayroll', 'deleteEVDriverPayroll',
       'createEVRouteChangeRequest', 'updateEVRouteChangeRequest', 'deleteEVRouteChangeRequest',
+      'createEVExplanationTicket', 'updateEVExplanationTicket', 'deleteEVExplanationTicket',
     ];
     // GPS ghi rất dày và không nằm trong snapshot → khỏi lên lịch lưu mỗi lần.
     const skipSnapshot = new Set(['createEVGpsPoints', 'pruneEVGpsPoints']);
@@ -754,6 +756,32 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   private fullSyncDirty = false;
   /** Hẹn chạy lại full-sync khi hàng đợi append đang tồn đọng (tránh tranh quota). */
   private fullSyncDeferTimer: ReturnType<typeof setTimeout> | null = null;
+  // Ghi HÀNG LOẠT sự kiện điểm danh (backup ảnh lên Drive, dời sự kiện khi đổi NV):
+  // mỗi lượt updateAttendanceEvent đẩy nguyên tab SU_KIEN_DIEM_DANH, lặp N lượt sẽ
+  // thành N lần rewrite (N² dữ liệu). Trong khối bulk chỉ đánh dấu dirty, kết thúc
+  // khối mới đẩy đúng 1 lần nên không đốt quota mà vẫn bền.
+  private bulkEventsDepth = 0;
+  private bulkEventsDirty = false;
+
+  /** Mở khối ghi nhiều sự kiện điểm danh (phải đóng bằng endBulkAttendanceEvents). */
+  public beginBulkAttendanceEvents(): void {
+    this.bulkEventsDepth++;
+  }
+
+  /** Đóng khối ghi nhiều sự kiện: đẩy tab SU_KIEN_DIEM_DANH đúng 1 lần. */
+  public async endBulkAttendanceEvents(): Promise<void> {
+    if (this.bulkEventsDepth > 0) this.bulkEventsDepth--;
+    if (this.bulkEventsDepth > 0 || !this.bulkEventsDirty) return;
+    this.bulkEventsDirty = false;
+    if (!this.isConfigured) return;
+    try {
+      await this.syncService.pushEventsTab(this.fallbackAdapter);
+      this.lastSheetsWriteAt = new Date().toISOString();
+    } catch (err: any) {
+      console.warn('[GoogleSheetsAdapter] Đẩy tab sự kiện sau ghi hàng loạt thất bại (full-sync nền sẽ thử lại):', err?.message || err);
+      this.scheduleFullSync('SU_KIEN_DIEM_DANH.bulk');
+    }
+  }
 
   /** Hoãn full-sync (gộp 1 hẹn duy nhất) — tránh xếp hàng nhiều lượt. */
   private deferFullSync(ms: number) {
@@ -1193,6 +1221,58 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return ok;
   }
 
+  /** Ẩn hồ sơ khỏi hệ thống nhưng GIỮ NGUYÊN dòng trên Google Sheet (form gốc +
+   *  master FROM_NHAN_VIEN). Không lên lịch full-sync để tránh ghi đè Sheet. */
+  async hideCandidatesFromSystem(
+    entries: Array<{ id: string; key?: string; at: string; reason?: string }>,
+  ): Promise<{ hidden: string[]; failed: string[] }> {
+    const hidden: string[] = [];
+    const failed: string[] = [];
+    const cands: any[] = (this.fallbackAdapter as any).candidates || [];
+    for (const entry of entries || []) {
+      const id = String(entry?.id || '').trim();
+      if (!id) continue;
+      const cand = cands.find(c => String(c.submission_id) === id);
+      if (!cand) { failed.push(id); continue; }
+      cand.auto_hidden_at = entry.at || new Date().toISOString();
+      cand.auto_hidden_reason = entry.reason || undefined;
+      hidden.push(id);
+    }
+    // Chỉ lưu snapshot cục bộ (không đẩy Google Sheets).
+    if (hidden.length > 0) this.scheduleRuntimeSnapshot(0);
+    return { hidden, failed };
+  }
+
+  /** Xóa NHIỀU ứng viên rồi đẩy master FROM_NHAN_VIEN MỘT LẦN — dùng cho lượt
+   *  tự động dọn hồ sơ quá hạn, tránh mỗi hồ sơ một lần ghi cả bảng (cháy quota). */
+  async deleteCandidatesBatch(submissionIds: string[]): Promise<{ deleted: string[]; failed: string[] }> {
+    const deleted: string[] = [];
+    const failed: string[] = [];
+    for (const raw of submissionIds || []) {
+      const id = String(raw || '').trim();
+      if (!id) continue;
+      try {
+        const ok = await this.fallbackAdapter.deleteCandidate(id);
+        (ok ? deleted : failed).push(id);
+      } catch (err: any) {
+        console.warn(`[GoogleSheetsAdapter] Xóa ứng viên ${id} thất bại:`, err?.message || err);
+        failed.push(id);
+      }
+    }
+    if (deleted.length > 0) {
+      this.scheduleRuntimeSnapshot();
+      if (this.isConfigured) {
+        try {
+          await this.syncService.pushCandidatesTab(this.fallbackAdapter);
+        } catch (err) {
+          console.warn('[GoogleSheetsAdapter] Đẩy FROM_NHAN_VIEN sau xóa lô ứng viên thất bại:', (err as any)?.message || err);
+          this.scheduleFullSync('FROM_NHAN_VIEN.deleteBatch');
+        }
+      }
+    }
+    return { deleted, failed };
+  }
+
   /** Đẩy tab FROM_NHAN_VIEN lên Sheets NGAY (await): dùng sau xóa lịch PV trùng
    *  để pull nền sau đó không hồi sinh lịch đã xóa. Mock/không cấu hình -> no-op. */
   async pushCandidatesNow(): Promise<number> {
@@ -1559,8 +1639,8 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         // Giữ giờ máy khách (kèm múi giờ +07:00) để lọc đúng ngày Việt Nam
         sheetDateTimeText((snapshot as any).client_time || ''),
         // Cờ trễ/sớm (phạt lương): Sheet phải lưu, pull mới khôi phục được
-        (snapshot as any).is_late ? 'YES' : '',
-        (snapshot as any).is_early ? 'YES' : '',
+        (snapshot as any).is_late === true ? 'YES' : ((snapshot as any).is_late === false ? 'NO' : ''),
+        (snapshot as any).is_early === true ? 'YES' : ((snapshot as any).is_early === false ? 'NO' : ''),
         Number((snapshot as any).minutes_deviation) || 0,
         // Phạt trễ ghi nhận ngay lúc check-in (ràng buộc chặt 10p:30k • 30p:50% • 60p:100%)
         (snapshot as any).fine_tier || 'NONE',
@@ -1578,9 +1658,33 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateAttendanceEvent(eventId: string, patch: any) {
     const res = await this.fallbackAdapter.updateAttendanceEvent(eventId, patch);
-    // Đẩy Sheet nền có debounce để không spam rewrite tab làm nghẽn quota/khóa queue
+    // Chỉ cập nhật ảnh/Drive object (job backup ảnh, retry upload lỗi): không đụng
+    // cờ trễ/phạt nên KHÔNG cần rewrite nguyên tab ngay — các job này tự đẩy tab
+    // 1 lần ở cuối, còn lưới an toàn full-sync vẫn chạy nền.
+    const touched = Object.keys(patch || {});
+    const onlyPhotoMeta = touched.length > 0 && touched.every(k => k === 'drive_object_id' || k === 'event_photo');
+    if (this.isConfigured && onlyPhotoMeta) {
+      this.scheduleFullSync('SU_KIEN_DIEM_DANH.photo');
+      return res;
+    }
+    // Ghi NGAY tab SU_KIEN_DIEM_DANH (await được): duyệt bù công/xóa phạt trễ chỉ
+    // sửa cờ trên sự kiện, nếu chỉ hẹn full-sync nền (tối thiểu 180s) thì lượt
+    // pull kế tiếp đọc dòng Sheet cũ (created_at bằng nhau -> bản Sheet thắng) sẽ
+    // hồi sinh mức phạt vừa xóa. Đẩy tab ngay để "duyệt xong là bền", không revert.
     if (this.isConfigured) {
-      this.scheduleFullSync('SU_KIEN_DIEM_DANH.update');
+      if (this.bulkEventsDepth > 0) {
+        // Trong khối ghi hàng loạt: chỉ đánh dấu, cuối khối đẩy 1 lần.
+        this.bulkEventsDirty = true;
+      } else {
+        try {
+          await this.syncService.pushEventsTab(this.fallbackAdapter);
+          this.lastSheetsWriteAt = new Date().toISOString();
+        } catch (err: any) {
+          console.warn('[GoogleSheetsAdapter] Đẩy tab sự kiện sau cập nhật thất bại (full-sync nền sẽ thử lại):', (err as any)?.message || err);
+          // Đẩy ngay rớt (mạng/quota): vẫn còn lưới an toàn full-sync nền.
+          this.scheduleFullSync('SU_KIEN_DIEM_DANH.update');
+        }
+      }
     }
     return res;
   }

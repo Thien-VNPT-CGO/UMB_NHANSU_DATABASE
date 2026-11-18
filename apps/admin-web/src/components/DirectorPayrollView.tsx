@@ -22,19 +22,26 @@ export const DirectorPayrollView: React.FC<{ currentUser: any }> = ({ currentUse
   const [busy, setBusy] = useState<string>('');
   const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [signName, setSignName] = useState<string>(currentUser?.fullName || 'Giám Đốc');
+  const [batches, setBatches] = useState<any[]>([]);
+  const [approveBusy, setApproveBusy] = useState<string>('');
+  const [notice2, setNotice2] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   const vnd = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
 
   const load = async (p = period) => {
     setLoading(true);
     try {
-      const data: any = await apiRequest(`/payroll/period-slips/${p}`);
+      const [data, wf]: any[] = await Promise.all([
+        apiRequest(`/payroll/period-slips/${p}`),
+        apiRequest(`/payroll/workflow-status?period=${p}`).catch(() => null),
+      ]);
       const arr = Array.isArray(data) ? data : (Array.isArray(data?.slips) ? data.slips : []);
       // Chỉ hiển thị phiếu đã có chữ ký KẾ TOÁN (KT ký trước). Phiếu chưa ký KT ẩn khỏi Giám đốc.
       // Sau khi Giám đốc ký xong, phiếu biến mất khỏi danh sách Giám đốc (chuyển tiếp sang QL/KT).
       setSlips((arr || []).filter((s: any) => !!s?.sign_lap && !s?.sign_giamdoc));
       setTotalSlips((arr || []).length);
       setHiddenCount((arr || []).filter((s: any) => !s?.sign_lap).length);
+      setBatches(Array.isArray(wf?.batches) ? wf.batches : []);
     } catch (err: any) {
       setSlips([]);
       setNotice({ kind: 'err', text: `Không tải được phiếu lương kỳ ${p}: ${err?.message || err}` });
@@ -158,6 +165,41 @@ export const DirectorPayrollView: React.FC<{ currentUser: any }> = ({ currentUse
     CANCELLED: 'Đã hủy',
   };
 
+  // ── PHÊ DUYỆT KỲ LƯƠNG (cấp đợt): Kế toán đối soát → Giám đốc duyệt ──
+  const RUN_STATUS_LABEL: Record<string, string> = {
+    DRAFT: 'Chờ Kế toán đối soát',
+    RECONCILED: 'Chờ Giám đốc duyệt',
+    APPROVED: 'Đã duyệt',
+    PUBLISHED: 'Đã phát hành phiếu',
+    PAID: 'Đã chi trả',
+  };
+  const approveRun = async (b: any) => {
+    const runId = String(b?.run_id || '');
+    if (!runId) return;
+    if (String(b?.createdBy || '') && String(b.createdBy) === String(currentUser?.id || '')) {
+      setNotice2({ kind: 'err', text: '⚠️ Người tính lương không được tự duyệt kỳ của mình!' });
+      return;
+    }
+    if (!window.confirm(`PHÊ DUYỆT đợt ${b?.label || b?.id} kỳ ${period}?\n${Number(b?.slipCount || 0)} phiếu · ${vnd(b?.totalAmount)}\nNgười tính: ${b?.createdByName || b?.createdBy || '—'}\n\nSau khi duyệt, Kế toán mới được phát hành phiếu đến nhân viên.`)) return;
+    setApproveBusy(String(b?.id || runId));
+    setNotice2(null);
+    try {
+      await apiRequest(`/payroll/${encodeURIComponent(runId)}/approve`, { method: 'POST', body: '{}' });
+      setNotice2({ kind: 'ok', text: `Đã phê duyệt đợt ${b?.label || b?.id} kỳ ${period} (${runId}).` });
+      await load(period);
+    } catch (err: any) {
+      const msg = String(err?.message || err);
+      setNotice2({
+        kind: 'err',
+        text: /SEPARATION_OF_DUTIES/.test(msg)
+          ? '⚠️ Người tính lương không được tự duyệt kỳ của mình!'
+          : `Không duyệt được kỳ lương: ${msg}`,
+      });
+    } finally {
+      setApproveBusy('');
+    }
+  };
+
   const card: React.CSSProperties = {
     backgroundColor: 'var(--surface)',
     border: '1px solid var(--border)',
@@ -199,6 +241,73 @@ export const DirectorPayrollView: React.FC<{ currentUser: any }> = ({ currentUse
             <RefreshCw size={14} className={loading ? 'spin' : ''} /> Tải lại
           </button>
         </div>
+      </div>
+
+      {/* DUYỆT KỲ LƯƠNG THEO ĐỢT: người tính không được tự duyệt; Giám đốc duyệt
+          sau khi Kế toán đã Đối soát. Mỗi đợt (Cửa hàng / Tổng hợp) duyệt riêng. */}
+      <div style={{ ...card, padding: '14px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <CheckCircle size={17} /> Duyệt kỳ lương theo đợt — {period}
+          </div>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            Kế toán tính & đối soát → <b>Giám đốc phê duyệt</b> → Kế toán phát hành phiếu. Người tính lương không được tự duyệt kỳ của mình.
+          </span>
+        </div>
+        {batches.length === 0 ? (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Chưa có đợt lương nào trong kỳ {period}.</div>
+        ) : (
+          <div style={{ display: 'grid', gap: 10 }}>
+            {batches.map((b: any) => {
+              const st = String(b?.status || '');
+              const isSelf = String(b?.createdBy || '') && String(b.createdBy) === String(currentUser?.id || '');
+              const canApprove = st === 'RECONCILED' && !!b?.run_id && !isSelf;
+              const hint = st === 'DRAFT' ? 'Kế toán chưa đối soát'
+                : st === 'RECONCILED' ? (isSelf ? 'Bạn là người tính — không được tự duyệt' : 'Sẵn sàng duyệt')
+                : isSelf ? 'Bạn là người tính kỳ này' : 'Đã duyệt/xử lý';
+              return (
+                <div key={String(b?.id || b?.run_id)} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: b?.bg || 'var(--surface)' }}>
+                  <div style={{ minWidth: 110, fontWeight: 800, fontSize: 13.5, color: b?.color || 'var(--text)' }}>{b?.label || b?.id}</div>
+                  <div style={{ fontSize: 12.5, color: 'var(--text)' }}>
+                    <b>{String(RUN_STATUS_LABEL[st] || st || 'Chưa tính')}</b>
+                    <span style={{ color: 'var(--text-muted)' }}> · {Number(b?.slipCount || 0)} phiếu · {vnd(b?.totalAmount)}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    Người tính: <b>{b?.createdByName || b?.createdBy || '—'}</b>
+                    {b?.approvedByName ? <> · Người duyệt: <b>{b.approvedByName}</b></> : null}
+                  </div>
+                  <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 11.5, color: canApprove ? '#065F46' : 'var(--text-muted)' }}>{hint}</span>
+                    <button
+                      type="button"
+                      onClick={() => approveRun(b)}
+                      disabled={!canApprove || !!approveBusy}
+                      title={canApprove ? `Phê duyệt đợt ${b?.label || b?.id}` : hint}
+                      style={{
+                        padding: '7px 14px', borderRadius: 'var(--radius-sm)', border: 'none', fontSize: 12.5, fontWeight: 800,
+                        backgroundColor: canApprove ? 'var(--brand)' : '#E5E7EB',
+                        color: canApprove ? '#FFF' : '#9CA3AF',
+                        cursor: canApprove && !approveBusy ? 'pointer' : 'not-allowed',
+                      }}
+                    >
+                      {approveBusy === String(b?.id || b?.run_id) ? '⏳ Đang duyệt…' : st === 'APPROVED' || st === 'PUBLISHED' || st === 'PAID' ? '✓ Đã duyệt' : '✓ Phê duyệt'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {notice2 && (
+          <div style={{
+            marginTop: 10, padding: '9px 12px', borderRadius: 'var(--radius-sm)', fontSize: 12.5, fontWeight: 600,
+            backgroundColor: notice2.kind === 'ok' ? 'var(--success-soft)' : 'var(--danger-soft)',
+            color: notice2.kind === 'ok' ? '#065F46' : '#991B1B',
+            border: `1px solid ${notice2.kind === 'ok' ? '#A7F3D0' : '#FECACA'}`,
+          }}>
+            {notice2.text}
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>

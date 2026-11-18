@@ -33,6 +33,7 @@ import { dedupeDuplicateInterviews, enforceScreeningOutcomes } from './services/
 import { interviewNoShowTick, interviewReminderTick } from './services/interview-reminders.service.js';
 import { interviewZaloReminderTick } from './services/interview-zalo-reminder.service.js';
 import { autoRemindersTick } from './services/auto-reminders.service.js';
+import { candidateCleanupTick } from './services/candidate-cleanup.service.js';
 import { notifySystemAlert, startSystemAlertMonitor } from './services/system-alert.service.js';
 import {
   addDaysIso,
@@ -383,6 +384,29 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
   // retry dồn dập càng làm pull kế tiếp khó thành công.
   let pullFailStreak = 0;
   let nextPullAllowedAt = 0;
+  // Chỉ tự chữa phạt oan 1 lần/phiên, sau khi đã pull xong dữ liệu (xem
+  // AttendanceService.repairApprovedAdjustmentFines).
+  let fineRepairDone = false;
+  const repairApprovedFinesOnce = () => {
+    if (fineRepairDone) return;
+    fineRepairDone = true;
+    (async () => {
+      // Bản vá dữ liệu chạy ĐÚNG 1 LẦN cho mỗi hệ thống (lưu mốc vào cấu hình):
+      // chỉ dọn phạt oan tồn đọng từ lỗi cũ, không đụng các mức phạt HR cố ý ghi
+      // nhận về sau. Lỗi giữa đường thì không lưu mốc -> lần khởi động sau chạy lại.
+      const settings: any = await adapter.getSystemSettings().catch(() => ({}));
+      if (settings?.attendanceFineRepairV1At) return;
+      const r = await services.attendanceService.repairApprovedAdjustmentFines();
+      await adapter.updateSystemSettings({
+        ...(settings || {}),
+        attendanceFineRepairV1At: new Date().toISOString(),
+        attendanceFineRepairV1Result: r,
+      }).catch(() => null);
+      if (r.cleared > 0 || r.archivedCleared > 0) {
+        console.log(`[attendance-repair] Đã gỡ phạt oan cho ${r.cleared} lượt live + ${r.archivedCleared} lượt lưu trữ (phiếu bù công đã duyệt).`);
+      }
+    })().catch((err: any) => console.warn('[attendance-repair] lỗi:', err?.message || err));
+  };
   const autoPullSheetsTick = async () => {
     if (postgresMode) return;
     if (Date.now() < nextPullAllowedAt) return;
@@ -396,6 +420,9 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
         if (pullRes?.success) {
           pullFailStreak = 0;
           nextPullAllowedAt = 0;
+          // Dữ liệu đã sẵn trong bộ nhớ -> gỡ phạt oan của ca có phiếu bù công
+          // đã duyệt (bản Sheet cũ từng đè ngược cờ trễ/phạt).
+          repairApprovedFinesOnce();
         } else if (pullRes) {
           pullFailStreak += 1;
           const waitMs = Math.min(60_000, 10_000 * 2 ** Math.min(pullFailStreak - 1, 3));
@@ -417,6 +444,8 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
   // trên Sheet đã có webhook onEdit pull riêng đúng tab.
   const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 15_000;
   setInterval(autoPullSheetsTick, syncIntervalMs);
+  // PostgreSQL: không có vòng pull Sheets nên tự chữa phạt oan ngay sau khởi động.
+  if (postgresMode) setTimeout(repairApprovedFinesOnce, 20_000);
 
   // ỨNG VIÊN có nhịp riêng, nhanh hơn vòng pull nền: chỉ đọc nguồn form (1
   // request) + master overlay (1 request). Nhờ vậy hồ sơ mới lên web trong ~10s
@@ -1106,7 +1135,7 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
         await services.employeesService.markInterviewNoShow(sid, 'SYSTEM', 'Quá giờ hẹn 30 phút không xác nhận');
         try {
           const syncSvc = (adapter as any)?.syncService;
-          syncSvc?.markInterviewScheduleCleared?.(sid);
+          syncSvc?.markInterviewScheduleCleared?.(sid, 'NO_SHOW');
           await (adapter as any)?.pushCandidatesNow?.();
         } catch { /* tick sau thử lại */ }
       },
@@ -1134,6 +1163,48 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
   };
   setTimeout(interviewNoShowTickSafe, 60_000);
   setInterval(interviewNoShowTickSafe, 5 * 60_000);
+
+  // Tự động ẨN ứng viên Google Form quá 20 ngày (CANDIDATE_AUTO_DELETE_DAYS)
+  // mà HR CHƯA đặt lịch phỏng vấn. Chỉ ẩn khỏi hệ thống, KHÔNG xoá dòng trên
+  // Google Sheet. Quét mỗi 30 giây để gần như tức thời với HR.
+  let candidateCleanupRunning = false;
+  let lastCandidateCleanupSummaryAt = 0;
+  const candidateCleanupTickSafe = () => {
+    if (candidateCleanupRunning) return;
+    candidateCleanupRunning = true;
+    candidateCleanupTick(adapter)
+      .then(r => {
+        if (r.deletedIds.length > 0) {
+          console.log(
+            `[candidate-cleanup] Tự động ẩn ${r.deletedIds.length} ứng viên quá hạn chưa xếp lịch PV: `
+            + r.deletedIds.join(', '),
+          );
+          try {
+            io.emit('data:updated', {
+              entity: 'candidates',
+              data: { action: 'auto-hidden', ids: r.deletedIds },
+              timestamp: new Date().toISOString(),
+            });
+          } catch { /* non-fatal */ }
+        }
+        // Nhật ký nhịp 30 phút: thấy rõ đã quét bao nhiêu, bao nhiêu đủ điều kiện
+        // (trước đây không log gì khi danh sách rỗng nên khó phát hiện chặn oan).
+        if (r.eligible > 0 || Date.now() - lastCandidateCleanupSummaryAt >= 30 * 60_000) {
+          lastCandidateCleanupSummaryAt = Date.now();
+          console.log(
+            `[candidate-cleanup] Quét ${r.checked} hồ sơ — đủ điều kiện quá hạn: ${r.eligible}, `
+            + `đã ẩn: ${r.deletedIds.length}, lỗi: ${r.failedIds.length}`,
+          );
+        }
+        if (r.failedIds.length > 0) {
+          console.warn(`[candidate-cleanup] ${r.failedIds.length} hồ sơ ẩn lỗi, tick sau thử lại: ${r.failedIds.join(', ')}`);
+        }
+      })
+      .catch(err => console.warn('[candidate-cleanup] tick error:', err?.message || err))
+      .finally(() => { candidateCleanupRunning = false; });
+  };
+  setTimeout(candidateCleanupTickSafe, 30_000);
+  setInterval(candidateCleanupTickSafe, 30_000);
 
   // Thử lại upload ảnh chấm công lỗi (đang giữ inline): Drive hồi là ảnh hiện
   // lại trên modal/ZIP ngay, không cần NV chụp lại.

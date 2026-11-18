@@ -45,6 +45,8 @@ export interface BranchInfo {
   gps_enabled?: boolean;
   /** Bật/tắt hiển thị chi nhánh (ghim + vòng bán kính) trên bản đồ GPS. Mặc định bật. */
   map_visible?: boolean;
+  /** Cờ ẩn lịch làm việc của chi nhánh (mặc định hiển thị). */
+  schedule_visible?: boolean;
   min_staff: number;
   max_staff: number;
   manager_name?: string;
@@ -54,6 +56,17 @@ export interface BranchInfo {
 /** Chi nhánh có bật định vị GPS không (mặc định BẬT nếu dữ liệu cũ chưa có cờ). */
 export function isBranchGpsEnabled(branch: any): boolean {
   return branch?.gps_enabled !== false;
+}
+
+/**
+ * Chi nhánh đã ngừng hoạt động → ẩn toàn bộ lịch làm việc (không cho xem/xếp lịch).
+ * CLOSED là trạng thái "ngừng hoạt động"; schedule_visible=false hỗ trợ ẩn lịch
+ * riêng mà không đổi trạng thái chi nhánh.
+ */
+export function isBranchScheduleHidden(branch: any): boolean {
+  if (!branch) return false;
+  const status = String(branch?.status || 'ACTIVE').trim().toUpperCase();
+  return status === 'CLOSED' || branch?.schedule_visible === false;
 }
 
 /** Chi nhánh có hiển thị trên bản đồ GPS không (mặc định HIỂN THỊ nếu chưa có cờ). */

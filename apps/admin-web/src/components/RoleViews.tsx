@@ -962,6 +962,7 @@ import {
   uniformRefundMilestoneDate,
   uniformRefundReminderDate,
   uniformRefundTotal,
+  isBranchScheduleHidden,
 } from '@ubm/shared';
 
 /** Chuẩn hóa mã chi nhánh (Sheets có thể ghi CN1..CN4, hệ thống dùng CN130/261/120/111). */
@@ -997,6 +998,29 @@ export function fullBranchLabel(branchId?: string, branches?: any[]): string {
 }
 
 const PUBLISH_BRANCH_OPTIONS = ['CN130', 'CN120', 'CN261', 'CN111'];
+
+/** Nhãn ngắn gọn cho nút chọn chi nhánh ở tab Lịch tuần. */
+const BRANCH_SHORT_LABEL: Record<string, string> = {
+  CN130: 'CN1',
+  CN261: 'CN2',
+  CN120: 'CN3',
+  CN111: 'CN4',
+  XUONG_SX: 'Xưởng SX',
+  VAN_PHONG: 'Văn Phòng',
+};
+const FALLBACK_BRANCH_ROWS: any[] = [
+  { id: 'CN130', name: 'CN1 — 130 Vạn Kiếp' },
+  { id: 'CN261', name: 'CN2 — 261 Tô Hiến Thành' },
+  { id: 'CN120', name: 'CN3 — 120 Hoàng Diệu 2' },
+  { id: 'CN111', name: 'CN4 — 111 Tôn Đản' },
+  { id: 'XUONG_SX', name: 'Xưởng Sản Xuất' },
+  { id: 'VAN_PHONG', name: 'Văn Phòng' },
+];
+const branchIdOf = (b: any): string => canonicalBranchId(b?.id || b?.branch_id);
+const branchShortLabelOf = (b: any): string => {
+  const id = branchIdOf(b);
+  return BRANCH_SHORT_LABEL[id] || String(b?.name || id || '').trim() || id;
+};
 
 /**
  * Chu kỳ đăng ký OFF tuần HIỆN TẠI (reset Thứ 6 09:00 VN).
@@ -1037,6 +1061,8 @@ interface PublishScheduleModalProps {
   lockBranch: string;
   initialBranch: string;
   allEmployees: any[];
+  /** Mã chi nhánh đã ngừng hoạt động — không cho chọn khi phát hành lịch. */
+  hiddenBranches?: string[];
   showToast: (msg: string) => void;
   onRefreshData?: () => Promise<void> | void;
   onSyncSheets?: () => Promise<void> | void;
@@ -1053,12 +1079,15 @@ export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
   lockBranch,
   initialBranch,
   allEmployees,
+  hiddenBranches,
   showToast,
   onRefreshData,
   onSyncSheets,
   onClose,
 }) => {
   const locked = lockBranch !== '*';
+  const hiddenSet = new Set((hiddenBranches || []).map(canonicalBranchId));
+  const publishBranchOptions = PUBLISH_BRANCH_OPTIONS.filter(b => !hiddenSet.has(b));
   const [branch, setBranch] = useState(locked ? canonicalBranchId(lockBranch) : initialBranch);
   const [preview, setPreview] = useState<any>(null);
   const [busy, setBusy] = useState(false);
@@ -1137,7 +1166,8 @@ export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
             onChange={e => { setBranch(e.target.value); setPreview(null); }}
             style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px' }}
           >
-            {PUBLISH_BRANCH_OPTIONS.map(b => <option key={b} value={b}>{getDisplayBranch(b)}</option>)}
+            {publishBranchOptions.map(b => <option key={b} value={b}>{getDisplayBranch(b)}</option>)}
+            {publishBranchOptions.length === 0 && <option value="">— Không còn chi nhánh hoạt động —</option>}
           </select>
           <button className="btn-secondary" style={{ fontSize: '12px' }} disabled={busy} onClick={loadPreview}>
             {busy ? 'Đang tính...' : 'Xem trước kế hoạch BOT'}
@@ -1412,12 +1442,70 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const branchName = branchScope === '*' ? 'Toàn Hệ Thống' : getDisplayBranch(branchScope);
 
   // Filters for HR Schedule
-  const [scheduleBranchFilter, setScheduleBranchFilter] = useState('ALL');
+  // Lịch tuần hiển thị RIÊNG từng chi nhánh (không trộn tổng). Mặc định chi nhánh
+  // đầu tiên đang hoạt động; tài khoản bị khóa phạm vi thì luôn đúng chi nhánh mình.
+  const [scheduleBranchFilter, setScheduleBranchFilter] = useState('');
   const [scheduleStageFilter, setScheduleStageFilter] = useState('ALL');
   const [scheduleAttFilter, setScheduleAttFilter] = useState('ALL');
   const [scheduleSearch, setScheduleSearch] = useState('');
   const [selectedRealtimeModal, setSelectedRealtimeModal] = useState<any>(null);
+  // Modal ADMIN ẩn/hiện lịch theo chi nhánh (áp dụng realtime cho mọi tài khoản).
+  const [branchVisOpen, setBranchVisOpen] = useState(false);
+  const [branchVisBusy, setBranchVisBusy] = useState('');
+  // Danh sách chi nhánh dùng cho bộ lọc: fallback hằng số khi chưa tải xong.
+  const scheduleBranchRows = (Array.isArray(branches) && branches.length > 0) ? branches : FALLBACK_BRANCH_ROWS;
+  const activeScheduleBranches = scheduleBranchRows.filter((b: any) => !isBranchScheduleHidden(b));
+  const hiddenScheduleBranchIds = new Set<string>(
+    scheduleBranchRows.filter((b: any) => isBranchScheduleHidden(b)).map(branchIdOf).filter(Boolean)
+  );
+  const scheduleBranchLocked = branchScope !== '*' && !!branchScope;
+  // Tự chọn đúng 1 chi nhánh: tài khoản khóa phạm vi → chi nhánh của mình; ADMIN/HR
+  // (phạm vi *) → chi nhánh đang hoạt động đầu tiên (KHÔNG hiển thị tổng).
+  useEffect(() => {
+    if (scheduleBranchLocked) {
+      const lockedId = canonicalBranchId(branchScope);
+      setScheduleBranchFilter(prev => prev === lockedId ? prev : lockedId);
+      return;
+    }
+    const allowed = activeScheduleBranches
+      .map(branchIdOf)
+      .filter(Boolean);
+    setScheduleBranchFilter(prev => {
+      if (prev && prev !== 'ALL' && allowed.includes(prev)) return prev;
+      return allowed[0] || '';
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branches, branchScope]);
   const [attPhotoZoom, setAttPhotoZoom] = useState<{ eventId?: string; url?: string; label: string; driveId?: string } | null>(null);
+
+  /** ADMIN ẩn/hiện lịch 1 chi nhánh — backend lưu trạng thái CLOSED/ACTIVE vào
+   *  DANH_SACH_CHI_NHANH và broadcast realtime cho MỌI tài khoản/cổng. */
+  const toggleBranchScheduleVisibility = async (b: any, hide: boolean) => {
+    const id = branchIdOf(b);
+    if (!id || branchVisBusy) return;
+    const label = b?.name || getDisplayBranch(id);
+    if (hide && !window.confirm(
+      `ẨN LỊCH CHI NHÁNH ${label}?\n\n• Chi nhánh chuyển trạng thái NGỪNG HOẠT ĐỘNG (CLOSED).\n• Toàn bộ lịch làm việc của chi nhánh bị ẩn trên mọi tài khoản.\n• Nhân viên thuộc chi nhánh KHÔNG xem được lịch.\n• Dữ liệu công/lương cũ vẫn giữ nguyên.\n\nBạn có chắc chắn?`
+    )) return;
+    setBranchVisBusy(id);
+    try {
+      await apiRequest(`/admin/branches/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ status: hide ? 'CLOSED' : 'ACTIVE', schedule_visible: !hide }),
+      });
+      // Cập nhật tức thì trên máy này + các máy khác qua socket của backend.
+      try { window.dispatchEvent(new CustomEvent('ubm:branches-reload', { detail: { id, hidden: hide } })); } catch {}
+      try { window.dispatchEvent(new CustomEvent('ubm:schedule-reload', { detail: { action: 'branch-visibility', branchId: id, hidden: hide } })); } catch {}
+      if (onRefreshData) await onRefreshData();
+      showToast(hide
+        ? `🙈 Đã ẩn lịch chi nhánh ${label} — mọi tài khoản đã cập nhật realtime!`
+        : `👁 Đã hiện lại lịch chi nhánh ${label} — mọi tài khoản đã cập nhật realtime!`);
+    } catch (e: any) {
+      showToast(e?.message || 'Không lưu được trạng thái chi nhánh!');
+    } finally {
+      setBranchVisBusy('');
+    }
+  };
 
   // Filters xem lịch OFF 2 ngày/tuần (HR/Admin + Store)
   const [weeklyOffBranchFilter, setWeeklyOffBranchFilter] = useState('ALL');
@@ -3762,7 +3850,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Mở modal chấm rubric cho 1 ứng viên (prefill điểm đã chấm nếu có).
   const openScoring = (candidate: any) => {
     // HR mở chấm điểm = đang xử lý buổi PV -> giữ lịch, tắt đếm ngược tự hủy.
-    markPvJoined(candidate);    const saved = parseScoreDetailClient((candidate as any)?.interview_score_detail);
+    markPvJoined(candidate);
+    const saved = parseScoreDetailClient((candidate as any)?.interview_score_detail);
     const rubric = (saved?.rubricId === 'office' ? 'office' : 'store') as 'store' | 'office';
     setScoringRubric((candidate as any)?.interview_rubric === 'office' ? 'office' : rubric);
     setScoringAnswers((saved?.answers && typeof saved.answers === 'object' ? saved.answers : {}) as Record<string, number[]>);
@@ -4982,6 +5071,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0', maxWidth: '680px' }}>
               Đồng bộ trực tiếp từ Google Form (FROM_NHAN_VIEN). Bảng gom 17 cột gốc thành <strong>9 cột theo nhóm</strong> — bấm <strong>👁 Chi Tiết</strong> để xem toàn bộ hồ sơ + ma trận 9 tiêu chí AI.
+              <br />
+              <span style={{ color: '#B45309', fontWeight: 700 }}>🧹 Hồ sơ quá 20 ngày kể từ lúc đăng ký mà chưa được gửi lịch phỏng vấn sẽ tự động bị xoá khỏi hệ thống và Google Sheet.</span>
             </p>
           </div>
 
@@ -6653,6 +6744,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           const tabKey = pvTabOf(c);
                           return (
                             <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
+                              {/* Chấm điểm PV: mở bảng rubric CÓ/KHÔNG kinh nghiệm bất cứ lúc nào
+                                  (trước đây chỉ tự bật ở T-10 nên HR bỏ lỡ là không có cách mở lại). */}
+                              {(['WAIT_CONFIRM', 'WAIT_INTERVIEW', 'WAIT_PROBATION'].includes(tabKey))
+                                && String(c.status || '') !== 'BLACKLIST'
+                                && String(c.status || '') !== 'NO_SHOW'
+                                && !disabledForFail && (
+                                <button
+                                  style={{ ...btn2, backgroundColor: isScored ? '#0F766E' : '#4F46E5', color: '#FFF' }}
+                                  onClick={() => openScoring(c)}
+                                  title={isScored ? 'Xem / sửa điểm phỏng vấn đã chấm (rubric CÓ hoặc KHÔNG kinh nghiệm)' : 'Mở bảng chấm điểm phỏng vấn theo bộ tiêu chí CÓ / KHÔNG kinh nghiệm'}
+                                >
+                                  {isScored ? '📝 Xem/Sửa điểm' : '📝 Chấm điểm'}
+                                </button>
+                              )}
                               {tabKey !== 'NO_SHOW' && (
                               <button
                                 disabled={disabledForFail || candActionBusyId === `zalo-${c.submission_id}`}
@@ -7096,6 +7201,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     Để sau
                   </button>
                 </div>
+                <button
+                  onClick={() => { const alert = pvAlert; setPvAlert(null); if (alert) openScoring(alert); }}
+                  style={{ marginTop: '8px', padding: '11px', borderRadius: '10px', backgroundColor: '#4F46E5', color: '#FFF', fontSize: '13.5px', fontWeight: 800, border: 'none', cursor: 'pointer' }}
+                >
+                  📝 Chấm điểm phỏng vấn
+                </button>
               </div>
             </div>
           </div>
@@ -8949,7 +9060,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       // Chi hien NV trong ho so master (tru khoa + tru nghi viec). Ca/nghi/su
       // kien mo coi (ID test tao tay, khong con ho so) KHONG hien hang rieng de
       // tranh rac "Nhan Vien" khong ro nguon goc tren luoi (2 tab giong nhau).
-      const baseEmps = (allEmployees || []).filter((emp: any) => !isEmpAccountLocked(emp) && emp.employment_status !== 'TERMINATED');
+      // Chi nhánh đã ngừng hoạt động → ẩn TOÀN BỘ nhân sự/lịch của chi nhánh đó.
+      const baseEmps = (allEmployees || []).filter((emp: any) =>
+        !isEmpAccountLocked(emp) &&
+        emp.employment_status !== 'TERMINATED' &&
+        !hiddenScheduleBranchIds.has(canonicalBranchId(emp.default_branch_id || emp.branch_id))
+      );
       // Trạng thái ca theo assignment_id (tra 1 lần): phiếu gắn ca đã hủy/mất
       // sau khi HR xếp lại thì rớt về khớp cùng ngày, khỏi hiện "chưa điểm danh" oan.
       const shiftStatusByAssign = new Map<string, string>();
@@ -9372,8 +9488,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       String(a.empCode || '').localeCompare(String(b.empCode || '')) ||
       String(a.name || '').localeCompare(String(b.name || ''), 'vi')
     );
+    // Tài khoản thuộc chi nhánh đã ngừng hoạt động: chặn xem lịch (khớp backend).
+    const myScheduleBranchHidden =
+      !scheduleBranchLocked ? false : hiddenScheduleBranchIds.has(canonicalBranchId(branchScope));
     const filteredSchedule = sortedSchedule.filter((item) => {
-      const matchBranch = scheduleBranchFilter === 'ALL' || item.branch === scheduleBranchFilter;
+      // Chỉ hiển thị ĐÚNG chi nhánh đang chọn (so khớp mã chuẩn CN1 ↔ CN130),
+      // không trộn tổng các chi nhánh.
+      const matchBranch = !!scheduleBranchFilter && canonicalBranchId(item.branch) === canonicalBranchId(scheduleBranchFilter);
       const matchStage = scheduleStageFilter === 'ALL' || item.stage === scheduleStageFilter;
       const q = scheduleSearch.trim().toLowerCase();
       const matchSearch = !q ||
@@ -9403,6 +9524,106 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
       return matchBranch && matchStage && matchSearch && matchAtt;
     });
+
+    // Modal Ẩn/Hiện lịch chi nhánh: dùng chung cho cả màn hình bình thường và
+    // màn hình "chi nhánh đã bị ẩn" (để Admin mở lại ngay tại chỗ).
+    const branchVisibilityModal = branchVisOpen ? (
+      <div
+        style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1600, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
+        onClick={() => setBranchVisOpen(false)}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', maxWidth: '620px', width: '100%', maxHeight: '88vh', overflow: 'auto', padding: '20px', boxShadow: '0 20px 60px rgba(15,23,42,0.35)' }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+            <h2 style={{ fontSize: '17px', fontWeight: 800, margin: 0 }}>👁 Ẩn / Hiện Lịch Chi Nhánh</h2>
+            <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => setBranchVisOpen(false)}>Đóng</button>
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', lineHeight: 1.7 }}>
+            Chi nhánh <strong>ngừng hoạt động</strong> sẽ bị ẩn toàn bộ lịch làm việc trên <strong>mọi tài khoản Admin/HR/Store</strong> và
+            nhân viên thuộc chi nhánh đó <strong>không xem được lịch</strong>. Dữ liệu công &amp; lương cũ vẫn giữ nguyên.
+            Thay đổi áp dụng <strong>realtime</strong> ngay khi lưu.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '14px' }}>
+            {scheduleBranchRows.map((b: any) => {
+              const id = branchIdOf(b);
+              const hidden = hiddenScheduleBranchIds.has(id);
+              const busy = branchVisBusy === id;
+              return (
+                <div
+                  key={id}
+                  style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px',
+                    padding: '10px 12px', borderRadius: '10px',
+                    border: hidden ? '1px solid #FCA5A5' : '1px solid var(--border)',
+                    backgroundColor: hidden ? '#FEF2F2' : 'var(--surface)',
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '13px', fontWeight: 800, color: hidden ? '#B91C1C' : 'var(--text)' }}>
+                      {b?.name || getDisplayBranch(id)}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                      {id} • {hidden ? '🚫 Đang ẩn lịch (ngừng hoạt động)' : '✅ Đang hiển thị lịch'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className={hidden ? 'btn-primary' : 'btn-secondary'}
+                    disabled={busy}
+                    style={{ padding: '7px 14px', fontSize: '12px', fontWeight: 800, whiteSpace: 'nowrap', minWidth: '118px' }}
+                    onClick={() => toggleBranchScheduleVisibility(b, !hidden)}
+                  >
+                    {busy ? 'Đang lưu...' : hidden ? '👁 Hiện lại lịch' : '🙈 Ẩn lịch'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    ) : null;
+
+    if (myScheduleBranchHidden) {
+      return (
+        <TabErrorBoundary tabName="Lịch Làm Việc Tuần">
+          <div id="sec-schedule" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <h1 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: 'var(--text)' }}>
+              Lịch Làm Việc Tuần &amp; Giám Sát Điểm Danh Realtime
+            </h1>
+            <div style={{
+              backgroundColor: 'var(--surface)',
+              border: '1px solid #FCA5A5',
+              borderRadius: '16px',
+              padding: '40px 24px',
+              textAlign: 'center',
+              boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
+            }}>
+              <div style={{ fontSize: '42px', lineHeight: 1 }}>🚫</div>
+              <div style={{ marginTop: '12px', fontSize: '17px', fontWeight: 800, color: '#B91C1C' }}>
+                Lịch chi nhánh đã bị ẩn
+              </div>
+              <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                Chi nhánh <strong>{getDisplayBranch(branchScope)}</strong> đã ngừng hoạt động.
+                Lịch làm việc của chi nhánh đã được Admin ẩn trên toàn hệ thống.
+                {currentUser?.role === 'DIRECTOR' ? '' : ' Vui lòng liên hệ Admin nếu cần mở lại.'}
+              </div>
+              {currentUser?.role === 'ADMIN' && (
+                <button
+                  className="btn-primary"
+                  style={{ marginTop: '16px', padding: '9px 16px', fontWeight: 800 }}
+                  onClick={() => setBranchVisOpen(true)}
+                >
+                  👁 Mở Lại Chi Nhánh
+                </button>
+              )}
+            </div>
+            {branchVisibilityModal}
+          </div>
+        </TabErrorBoundary>
+      );
+    }
 
     return (
       <TabErrorBoundary tabName="Lịch Làm Việc Tuần">
@@ -10173,20 +10394,65 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           gap: '12px',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            {/* Filter by Branch */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            {/* Chọn ĐÚNG 1 chi nhánh — mỗi lần chỉ hiển thị lịch của chi nhánh đó */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>Chi nhánh:</span>
-              <select
-                value={scheduleBranchFilter}
-                onChange={(e) => setScheduleBranchFilter(e.target.value)}
-                style={{ padding: '6px 10px', fontSize: '12px', minHeight: '34px', borderRadius: '6px' }}
-              >
-                <option value="ALL">Tất Cả Chi Nhánh</option>
-                <option value="CN130">Chi Nhánh 130</option>
-                <option value="CN120">Chi Nhánh 120</option>
-                <option value="CN261">Chi Nhánh 261</option>
-                <option value="CN111">Chi Nhánh 111</option>
-              </select>
+              {scheduleBranchLocked ? (
+                <span
+                  title="Tài khoản của bạn chỉ được xem lịch chi nhánh này"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '5px',
+                    padding: '6px 12px', borderRadius: '999px', minHeight: '34px',
+                    backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE',
+                    color: '#1D4ED8', fontSize: '12px', fontWeight: 800,
+                  }}
+                >
+                  🔒 {BRANCH_SHORT_LABEL[canonicalBranchId(branchScope)] || getDisplayBranch(branchScope)}
+                </span>
+              ) : (
+                activeScheduleBranches.map((b: any) => {
+                  const id = branchIdOf(b);
+                  const active = canonicalBranchId(scheduleBranchFilter) === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setScheduleBranchFilter(id)}
+                      title={`${b?.name || getDisplayBranch(id)} — chỉ hiển thị lịch chi nhánh này`}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '999px',
+                        minHeight: '34px',
+                        border: active ? '1.5px solid var(--brand)' : '1px solid var(--border)',
+                        backgroundColor: active ? 'var(--brand)' : 'var(--surface)',
+                        color: active ? '#FFF' : 'var(--text)',
+                        fontSize: '12px',
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                        boxShadow: active ? '0 2px 8px rgba(0, 104, 255, 0.22)' : 'none',
+                      }}
+                    >
+                      {branchShortLabelOf(b)}
+                    </button>
+                  );
+                })
+              )}
+              {!scheduleBranchLocked && activeScheduleBranches.length === 0 && (
+                <span style={{ fontSize: '11.5px', color: '#B91C1C', fontWeight: 700 }}>
+                  Không có chi nhánh nào đang hoạt động
+                </span>
+              )}
+              {currentUser?.role === 'ADMIN' && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: '6px 10px', fontSize: '11.5px', minHeight: '34px', fontWeight: 800 }}
+                  title="Ẩn/hiện lịch chi nhánh đã ngừng hoạt động — áp dụng realtime cho mọi tài khoản"
+                  onClick={() => setBranchVisOpen(true)}
+                >
+                  👁 Ẩn/Hiện Chi Nhánh
+                </button>
+              )}
             </div>
 
             {/* Filter by Stage */}
@@ -11349,14 +11615,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             weekMon={weekDays[0]?.isoDate || new Date().toISOString().split('T')[0]}
             weekSun={weekDays[6]?.isoDate || weekDays[0]?.isoDate || new Date().toISOString().split('T')[0]}
             lockBranch={branchScope}
-            initialBranch={scheduleBranchFilter !== 'ALL' ? scheduleBranchFilter : 'CN130'}
+            initialBranch={scheduleBranchFilter || branchIdOf(activeScheduleBranches[0] || FALLBACK_BRANCH_ROWS[0]) || 'CN130'}
             allEmployees={allEmployees}
+            hiddenBranches={Array.from(hiddenScheduleBranchIds)}
             showToast={showToast}
             onRefreshData={onRefreshData}
             onSyncSheets={onSyncSheets}
             onClose={() => setPublishOpen(false)}
           />
         )}
+
+        {/* ADMIN: Ẩn/hiện lịch chi nhánh đã ngừng hoạt động (realtime toàn hệ thống) */}
+        {branchVisibilityModal}
       </div>
       </TabErrorBoundary>
     );
@@ -13875,6 +14145,27 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'store-schedule') {
+    // Chi nhánh đã ngừng hoạt động: Store không xem/phát hành lịch (khớp backend).
+    if (branchScope !== '*' && hiddenScheduleBranchIds.has(canonicalBranchId(branchScope))) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>3. Lịch Làm Việc Tuần Chi Nhánh {branchName}</h1>
+          <div style={{
+            backgroundColor: 'var(--surface)', border: '1px solid #FCA5A5', borderRadius: '16px',
+            padding: '40px 24px', textAlign: 'center', boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
+          }}>
+            <div style={{ fontSize: '42px', lineHeight: 1 }}>🚫</div>
+            <div style={{ marginTop: '12px', fontSize: '17px', fontWeight: 800, color: '#B91C1C' }}>
+              Lịch chi nhánh đã bị ẩn
+            </div>
+            <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.7 }}>
+              Chi nhánh <strong>{branchName}</strong> đã ngừng hoạt động. Admin đã ẩn lịch làm việc trên toàn hệ thống
+              nên bạn không thể xem hoặc phát hành lịch. Vui lòng liên hệ Admin nếu cần mở lại.
+            </div>
+          </div>
+        </div>
+      );
+    }
     const branchShifts = shifts.filter(s => (branchScope === '*' || canonicalBranchId(s.branch_id) === canonicalBranchId(branchScope)) && !lockedEmpIds.has(String(s.employee_id || '')));
     const storeWeekMon = mondayIsoOfOffset(scheduleWeekOffset);
     const storeWeekSun = (() => {
@@ -13919,6 +14210,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             lockBranch={branchScope}
             initialBranch={canonicalBranchId(branchScope)}
             allEmployees={allEmployees}
+            hiddenBranches={Array.from(hiddenScheduleBranchIds)}
             showToast={showToast}
             onRefreshData={onRefreshData}
             onSyncSheets={onSyncSheets}

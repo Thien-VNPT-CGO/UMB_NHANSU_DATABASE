@@ -67,6 +67,11 @@ export interface EVRoute {
   version: number;
 }
 
+/** Số lần GPS trùng toạ độ để xác nhận một trạm sạc (trạm không cố định). */
+export const CHARGING_POINT_CONFIRM_HITS = 3;
+/** Bán kính coi là "cùng một toạ độ" khi tài xế bấm lại điểm sạc (m). */
+export const CHARGING_POINT_MATCH_RADIUS_M = 50;
+
 /** Điểm dừng trên lộ trình (có geofence) */
 export interface EVRouteStop {
   stop_id: string;
@@ -80,9 +85,35 @@ export interface EVRouteStop {
   longitude: number;
   geofence_radius_m: number;       // Mặc định 100m
   sla_minutes: number;             // SLA từ điểm trước đến điểm này
+  /**
+   * Riêng điểm cuối (END): thời gian tối đa từ trạm sạc về điểm cuối khi ca
+   * có phiếu sạc đã kết thúc. Bỏ trống → dùng `sla_minutes`.
+   */
+  sla_minutes_with_charging?: number;
+  /**
+   * Riêng điểm cuối (END): thời gian tối đa từ chi nhánh cuối về điểm cuối khi
+   * ca không có phiếu sạc. Bỏ trống → dùng `sla_minutes`.
+   */
+  sla_minutes_without_charging?: number;
   stop_type: 'START' | 'DELIVERY' | 'OFFICE' | 'CHARGING' | 'END';
   is_mandatory: boolean;           // Bắt buộc check-in
   notes?: string;
+  /**
+   * TRẠM SẠC KHÔNG CỐ ĐỊNH — toạ độ ghi tạm từ các lần tài xế bấm nút Điểm.
+   * Mỗi lần bấm gửi GPS hiện tại; khi đủ `CHARGING_POINT_CONFIRM_HITS` lần
+   * trùng toạ độ (trong bán kính `CHARGING_POINT_MATCH_RADIUS_M`) hệ thống mới
+   * ghi nhớ vào `latitude`/`longitude` và thay thế điểm sạc cũ.
+   */
+  charging_pending_latitude?: number;
+  charging_pending_longitude?: number;
+  charging_pending_count?: number;
+  charging_pending_updated_at?: string;
+  /** Điểm sạc đã được xác nhận (đủ 3 lần GPS trùng toạ độ). */
+  charging_confirmed_at?: string;
+  charging_confirmed_latitude?: number;
+  charging_confirmed_longitude?: number;
+  charging_confirmed_address?: string;
+  charging_confirmed_by?: string;
   /**
    * Chỉ có trên điểm dừng HIỆU LỰC (lấy từ phiếu đổi lộ trình đã duyệt):
    * id phiếu + sản phẩm áp dụng. Điểm dừng gốc không có 2 trường này.
@@ -109,9 +140,36 @@ export interface EVRouteChangeStop {
   longitude: number;
   geofence_radius_m: number;
   sla_minutes: number;
+  /** Điểm cuối: SLA từ trạm sạc về khi ca có phiếu sạc (bỏ trống → `sla_minutes`). */
+  sla_minutes_with_charging?: number;
+  /** Điểm cuối: SLA từ chi nhánh cuối về khi ca không có phiếu sạc (bỏ trống → `sla_minutes`). */
+  sla_minutes_without_charging?: number;
   stop_type: EVRouteStop['stop_type'];
   is_mandatory: boolean;
   notes?: string;
+}
+
+/**
+ * SLA hiệu lực của điểm cuối theo việc ca có phiếu sạc đã kết thúc hay không.
+ * - Có sạc: dùng `sla_minutes_with_charging`.
+ * - Không sạc: dùng `sla_minutes_without_charging`.
+ * - Chưa cấu hình 2 mốc mới: giữ tương thích bằng `sla_minutes`.
+ * Điểm dừng khác END luôn dùng `sla_minutes`.
+ */
+export function effectiveEndSlaMinutes(
+  stop: Pick<EVRouteStop, 'stop_type' | 'sla_minutes' | 'sla_minutes_with_charging' | 'sla_minutes_without_charging'>,
+  hasCharging: boolean,
+): number {
+  const toMinutes = (value: unknown): number | null => {
+    if (value === undefined || value === null || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+  };
+  if (stop.stop_type !== 'END') return toMinutes(stop.sla_minutes) ?? 0;
+  const specific = toMinutes(hasCharging
+    ? stop.sla_minutes_with_charging
+    : stop.sla_minutes_without_charging);
+  return specific ?? toMinutes(stop.sla_minutes) ?? 0;
 }
 
 export type EVRouteChangeStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
@@ -199,6 +257,14 @@ export interface EVShiftCheckin {
   penalty_amount: number;          // Tiền phạt chặng này
   is_missed: boolean;              // Quên không bấm (tự động phát hiện)
   notes?: string;
+  /**
+   * Chỉ trả về ở lần bấm điểm TRẠM SẠC:
+   * số lần GPS trùng toạ độ đã ghi nhận (1..3) và đã đủ để ghi nhớ chưa.
+   */
+  charging_pending_count?: number;
+  charging_confirmed?: boolean;
+  /** true = lần bấm này chỉ lưu tạm GPS, chưa tạo check-in mới. */
+  is_repeat?: boolean;
   created_at: string;
 }
 
@@ -233,6 +299,88 @@ export interface EVChargingTicket {
   
   created_at: string;
   updated_at: string;
+}
+
+// ------------------------------------------------------------
+// PHIẾU GIẢI TRÌNH ĐIỂM QUÊN CHẤM
+// ------------------------------------------------------------
+
+export type EVExplanationStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+/**
+ * Loại lỗi tài xế cần giải trình:
+ *  - MISSED_CHECKIN: quên bấm xác nhận tại điểm dừng (bị đánh dấu bỏ lọt).
+ *  - LATE_SLA: đến trễ so với SLA của chặng (bị trừ phạt trễ giờ).
+ */
+export type EVExplanationIssueType = 'MISSED_CHECKIN' | 'LATE_SLA';
+
+/**
+ * Một lỗi của tài xế được đưa vào phiếu giải trình.
+ * Một phiếu có thể gom nhiều lỗi của nhiều ca/chi nhánh khác nhau.
+ */
+export interface EVExplanationItem {
+  shift_id: string;
+  shift_date: string;              // YYYY-MM-DD
+  route_id?: string;
+  route_name?: string;
+  stop_id: string;
+  stop_order: number;
+  stop_name: string;
+  address?: string;
+  /** Check-in "bỏ lọt" do hệ thống tạo khi kết thúc ca (nếu có). */
+  checkin_id?: string;
+  /** Loại lỗi — phiếu cũ chưa có trường này được hiểu là MISSED_CHECKIN. */
+  issue_type?: EVExplanationIssueType;
+  /** Số phút trễ so với SLA (chỉ với LATE_SLA). */
+  late_minutes?: number;
+  /** Tiền phạt ước tính sẽ được đền bù khi phiếu được duyệt. */
+  penalty_amount?: number;
+}
+
+/** Ảnh bằng chứng — chỉ lưu metadata, file nằm trên đĩa/Drive. */
+export interface EVExplanationPhoto {
+  photo_id: string;
+  mime_type: string;
+  size_bytes?: number;
+  original_name?: string;
+  /** ID file trên Google Drive nếu đã upload (hiện ưu tiên lưu đĩa VPS). */
+  drive_file_id?: string;
+  created_at: string;
+}
+
+/**
+ * Phiếu giải trình lỗi tài xế (quên chấm điểm / trễ giờ).
+ * Tài xế tạo → chuyển thẳng Kế toán (FINANCE) / Giám đốc (DIRECTOR) duyệt.
+ * Khi APPROVED, các lỗi trong phiếu được xóa phạt và tính hoàn thành ca.
+ */
+export interface EVExplanationTicket {
+  ticket_id: string;
+  ticket_code?: string;            // VD: EGT-20261116-0001
+  driver_id: string;
+  driver_name?: string;
+  reason: string;                  // Nội dung giải trình
+  items: EVExplanationItem[];
+  photos: EVExplanationPhoto[];
+  /** Tổng tiền phạt ước tính được đền bù khi duyệt. */
+  total_penalty_amount?: number;
+  status: EVExplanationStatus;
+  approved_by?: string;
+  approved_by_name?: string;
+  approved_at?: string;
+  approval_notes?: string;
+  rejected_by?: string;
+  rejected_by_name?: string;
+  rejected_at?: string;
+  rejected_reason?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Lỗi đủ điều kiện giải trình (trả về cho app tài xế). */
+export interface EVExplanationCandidate extends EVExplanationItem {
+  checkin_id?: string;
+  checked_in_at?: string;
 }
 
 /** GPS Tracking Point */
@@ -365,6 +513,7 @@ export type EVWSEventType =
   | 'ev:live:charging-station'
   | 'ev:live:route-changed'
   | 'ev:live:ticket:status'
+  | 'ev:live:explanation:status'
   | 'ev:live:payroll:updated';
 
 export interface EVWSPayload<T = any> {
@@ -506,6 +655,8 @@ export interface EVShiftDetail extends EVShift {
     isLate: boolean;
     lateMinutes: number;
     penaltyAmount: number;
+    /** Check-in bị đánh dấu bỏ lọt (quên bấm) — dùng để hiện nút Giải trình. */
+    isMissed?: boolean;
   }>;
 }
 

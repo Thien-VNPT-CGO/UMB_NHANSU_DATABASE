@@ -1,12 +1,11 @@
 import { test } from 'node:test';
-import assert from 'node:assert/strict';
 import { PayrollService } from '../src/services/payroll.service.js';
 
 /**
- * CHẶN THAO TÁC SAI THỨ TỰ Ở SERVER (assertWorkflowStepOpen):
- * Kế toán chỉ được ghi dữ liệu tiến trình khi bước tương ứng ĐANG MỞ. Nếu bước
- * đã xong / chưa mở / tháng đã kết thúc → phải ném STEP_LOCKED kèm lý do, để
- * không thể lách quy trình bằng tab khác hoặc gọi thẳng API.
+ * GUARD THAO TÁC THEO QUY TRÌNH KẾ TOÁN (assertWorkflowStepOpen):
+ * Khóa quy trình đang TẮT nên guard luôn cho phép thao tác — kể cả bước chưa
+ * xong hay tháng đã kết thúc. (Khi bật lại PAYROLL_WORKFLOW_LOCK_ENABLED, guard
+ * mới ném STEP_LOCKED kèm lý do.)
  */
 
 const CUR_MONTH = '2026-11';
@@ -26,15 +25,13 @@ function makeService(opts: any = {}) {
   return svc;
 }
 
-test('guard: bước chưa mở → chặn STEP_LOCKED (tính lương khi chưa xác nhận bước 1-2)', async () => {
+test('guard: đã TẮT khóa → bước chưa xong vẫn cho phép thao tác', async () => {
   const svc = makeService({
     timesheet: { totals: { totalShifts: 3, full: 3, partial: 0, absent: 0 }, rows: [] },
     slips: [],
   });
-  await assert.rejects(
-    () => svc.assertWorkflowStepOpen(CUR_MONTH, ['fin-calculate', 'fin-payroll-periods'], 'Tính lương'),
-    (e: any) => /STEP_LOCKED/.test(String(e?.message)) && /Tính lương/.test(String(e?.message)),
-  );
+  // Không còn chặn STEP_LOCKED khi khóa quy trình đang tắt.
+  await svc.assertWorkflowStepOpen(CUR_MONTH, ['fin-calculate', 'fin-payroll-periods'], 'Tính lương');
 });
 
 test('guard: bước đang mở → cho phép', async () => {
@@ -60,16 +57,13 @@ test('guard: nhiều bước cùng hợp lệ — chỉ cần MỘT bước mở
   await svc.assertWorkflowStepOpen(CUR_MONTH, ['fin-payroll-periods', 'fin-payslips'], 'Phát hành phiếu lương');
 });
 
-test('guard: tháng đã kết thúc → chặn và nêu rõ lý do khóa tháng', async () => {
+test('guard: đã TẮT khóa → tháng đã kết thúc vẫn cho phép thao tác', async () => {
   const svc = makeService({
     timesheet: { totals: { totalShifts: 3, full: 3, partial: 0, absent: 0 }, rows: [] },
     run: { ...runDraft, period: '2026-10' },
     slips: [{ run_id: 'R1', item_id: 'S1', employee_id: 'E1', status: 'DRAFT' }],
   });
-  await assert.rejects(
-    () => svc.assertWorkflowStepOpen('2026-10', 'fin-calculate', 'Tính lương'),
-    (e: any) => /STEP_LOCKED/.test(String(e?.message)) && /tháng/i.test(String(e?.message)),
-  );
+  await svc.assertWorkflowStepOpen('2026-10', 'fin-calculate', 'Tính lương');
 });
 
 test('guard: kỳ lương không hợp lệ → bỏ qua (không chặn nhầm endpoint khác)', async () => {

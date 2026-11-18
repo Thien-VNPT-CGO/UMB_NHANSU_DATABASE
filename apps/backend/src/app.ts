@@ -87,6 +87,7 @@ import { renderRsvpPage as rsvpPage, escapeHtml, type RsvpIconName } from './ser
 import { publicProposalSlots, PROPOSAL_WORK_WINDOWS } from './services/interview-slots.service.js';
 import { ShiftReRegService } from './services/shift-rereg.service.js';
 import { readAttendancePhotoDisk, readAdjustmentPhotoDisk, readAvatarPhotoDisk, hasAdjustmentPhotoDisk } from './services/photo-disk.store.js';
+import { readExplanationPhoto } from './services/milkroute/ev-explanation-photo.store.js';
 import { getDriveBackupScheduler, type BackupKind } from './services/backup-drive.service.js';
 import {
   dashboardSnapshotFromState,
@@ -242,6 +243,12 @@ import {
   evChargingEndBody,
   evChargingTicketIdParams,
   evChargingTicketsQuery,
+  evExplanationCreateBody,
+  evExplanationTicketIdParams,
+  evExplanationPhotoParams,
+  evExplanationApproveBody,
+  evExplanationRejectBody,
+  evExplanationTicketsQuery,
   evGpsBatchBody,
   evPayrollGenerateBody,
   evPayrollApproveBody,
@@ -261,7 +268,7 @@ import {
   requireRole,
   enforceBranchScope,
 } from './middlewares/rbac.middleware.js';
-import { BRANCHES, ERROR_CODES, SHIFT_TEMPLATES, toVietnameseErrorMessage } from '@ubm/shared';
+import { BRANCHES, ERROR_CODES, SHIFT_TEMPLATES, isBranchScheduleHidden, toVietnameseErrorMessage } from '@ubm/shared';
 import { SHEETS_DEFINITIONS } from './services/google-sheets-sync.service.js';
 import {
   addDaysIso,
@@ -524,7 +531,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // MilkRoute EV Module
   const milkRouteModule = createMilkRouteModule(adapter as any);
-  // Mirror dữ liệu EV lên Google Drive (04. VẬN CHUYỂN SỮA/THANG_MM/DD-MM-YYYY).
+  // Mirror TOÀN BỘ dữ liệu App Tài Xế lên Google Drive — tự tạo mục còn thiếu
+  // và tự sinh mục cho chức năng mới (04. VẬN CHUYỂN SỮA/THANG_MM/DD-MM-YYYY/<tab>).
   try { milkRouteModule.drive.start(); } catch { /* non-fatal */ }
   // Seed default route data (chạy nền, không chặn khởi động)
   setTimeout(() => {
@@ -560,6 +568,40 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       }
     } catch { /* cache invalidation không được làm hỏng nghiệp vụ */ }
   };
+
+  // ---------------------------------------------------------------------
+  // ẨN LỊCH CHI NHÁNH ĐÃ NGỪNG HOẠT ĐỘNG (ADMIN áp dụng → toàn hệ thống)
+  //  - Chi nhánh CLOSED (hoặc schedule_visible=false) bị ẩn khỏi mọi lịch.
+  //  - Tài khoản thuộc chi nhánh đó không xem được lịch (/me/schedule...).
+  //  - Cache ngắn 2s để các route lịch gọi liên tục không đọc Sheet nhiều lần.
+  // ---------------------------------------------------------------------
+  let branchVisibilityCache: { at: number; ids: Set<string> } | null = null;
+  const hiddenBranchIdSet = async (): Promise<Set<string>> => {
+    if (branchVisibilityCache && Date.now() - branchVisibilityCache.at < 2000) {
+      return branchVisibilityCache.ids;
+    }
+    const rows = await adapter.getBranches().catch(() => [] as any[]);
+    const ids = new Set<string>(
+      (rows || [])
+        .filter((b: any) => isBranchScheduleHidden(b))
+        .map((b: any) => canonicalBranchId(b?.id || b?.branch_id))
+        .filter(Boolean)
+    );
+    branchVisibilityCache = { at: Date.now(), ids };
+    return ids;
+  };
+  const isBranchScheduleHiddenById = async (branchId?: string): Promise<boolean> => {
+    const id = canonicalBranchId(branchId);
+    if (!id || id === '*') return false;
+    return (await hiddenBranchIdSet()).has(id);
+  };
+  const isEmployeeScheduleHidden = async (employeeId?: string): Promise<boolean> => {
+    if (!employeeId) return false;
+    const emp: any = await employeesService.getEmployee(employeeId).catch(() => null);
+    const branchId = canonicalBranchId(emp?.default_branch_id || emp?.branch_id || '');
+    return branchId ? isBranchScheduleHiddenById(branchId) : false;
+  };
+  const invalidateBranchVisibilityCache = () => { branchVisibilityCache = null; };
 
   // =====================================================================
   // MILKROUTE EV — QUẢN LÝ TÀI XẾ GIAO SỮA + ĐỊNH VỊ GPS (BETA)
@@ -604,9 +646,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     const gps = await ev.gps.getVehicleLatestGPS(shift.vehicle_id).catch(() => null);
     const stops: any[] = detail?.stops || [];
     const next = stops.find(s => !s.isCompleted);
-    // SLA còn lại tính từ lần check-in gần nhất (nếu có).
+    // SLA còn lại tính từ mốc check-in gần nhất (điểm cuối có phiếu sạc dùng
+    // mốc kết thúc sạc do getShiftDetail trả về).
     const lastCheckin = stops.filter(s => s.checkedInAt).pop();
-    const baseAt = Date.parse(lastCheckin?.checkedInAt || shift.actual_start_at || shift.planned_start_at || '');
+    const baseAt = Date.parse(next?.slaBaseAt || lastCheckin?.checkedInAt || shift.actual_start_at || shift.planned_start_at || '');
     const elapsedMin = Number.isFinite(baseAt) ? (Date.now() - baseAt) / 60000 : 0;
     const slaRemainingSeconds = next
       ? Math.max(0, Math.round((Number(next.sla_minutes || 0) - elapsedMin) * 60))
@@ -871,8 +914,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // ---------------------------------------------------------------
-  // ADMIN — Lưu dữ liệu EV lên Google Drive
-  //   04. VẬN CHUYỂN SỮA/THANG_MM/DD-MM-YYYY/<tab>
+  // ADMIN — Lưu TOÀN BỘ dữ liệu App Tài Xế lên Google Drive
+  //   04. VẬN CHUYỂN SỮA/DANH-MUC-CHUC-NANG.json
+  //   04. VẬN CHUYỂN SỮA/THANG_MM/DD-MM-YYYY/<tab>/*
+  //   Tab tự động: chức năng mới có mảng ev* sẽ tự sinh mục trên Drive.
   // ---------------------------------------------------------------
   app.get('/ev/admin/drive/status', authMiddleware, requireRole(EV_ADMIN_ROLES), (req: AuthenticatedRequest, res) => {
     res.json(ev.drive.status());
@@ -888,7 +933,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const end = to || start;
       if (end < start) return res.status(400).json({ error: 'INVALID_DATE_RANGE' });
 
-      // Chặn backfill quá lớn (mỗi ngày 6 file Drive) — tối đa 31 ngày/lần.
+      // Chặn backfill quá lớn (mỗi ngày nhiều tệp Drive) — tối đa 31 ngày/lần.
       const days: string[] = [];
       const cursor = new Date(`${start}T00:00:00Z`);
       const last = new Date(`${end}T00:00:00Z`);
@@ -985,18 +1030,31 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.put('/ev/admin/shifts/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evShiftIdParams, body: evShiftUpdateBody }), async (req: AuthenticatedRequest, res) => {
     try {
+      // Giữ ngày ca CŨ để Drive cập nhật cả tệp ngày cũ khi đổi lịch.
+      const before = await ev.shifts.getShift(req.params.id).catch(() => null);
       const s = await ev.shifts.updateShift(req.params.id, req.body);
       if (!s) return res.status(404).json({ error: 'SHIFT_NOT_FOUND' });
-      broadcastUpdate('evShift', { action: 'update', id: req.params.id });
+      broadcastUpdate('evShift', {
+        action: 'update',
+        id: req.params.id,
+        shift_date: s.shift_date,
+        old_shift_date: before?.shift_date,
+      });
       res.json(s);
     } catch (err: any) { evErr(res, err); }
   });
 
   app.delete('/ev/admin/shifts/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evShiftIdParams }), async (req: AuthenticatedRequest, res) => {
     try {
+      const before = await ev.shifts.getShift(req.params.id).catch(() => null);
       const ok = await ev.shifts.deleteShift(req.params.id);
       if (!ok) return res.status(404).json({ error: 'SHIFT_NOT_FOUND' });
-      broadcastUpdate('evShift', { action: 'delete', id: req.params.id });
+      // Ca đã xóa không còn trong kho dữ liệu → gửi kèm ngày để dọn đúng tệp Drive.
+      broadcastUpdate('evShift', {
+        action: 'delete',
+        id: req.params.id,
+        shift_date: before?.shift_date,
+      });
       res.json({ success: true });
     } catch (err: any) { evErr(res, err); }
   });
@@ -1056,6 +1114,69 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (!t) return res.status(404).json({ error: 'TICKET_NOT_FOUND' });
       ev.realtime.broadcastChargingStatus(t.ticket_id, t.shift_id, t.driver_id, 'REJECTED', { level: 'DIRECTOR' });
       broadcastUpdate('evChargingTicket', { action: 'reject-director', id: t.ticket_id });
+      res.json(t);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
+  // ADMIN — Phiếu giải trình điểm quên chấm (Kế toán/Giám đốc duyệt)
+  // ---------------------------------------------------------------
+  app.get('/ev/admin/explanation-tickets', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ query: evExplanationTicketsQuery }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const q = req.query as any;
+      const all = await ev.explanations.listAdminTickets({
+        status: q.status,
+        driverId: q.driver_id,
+        dateFrom: q.date_from,
+        dateTo: q.date_to,
+      });
+      const offset = Number(q.offset || 0);
+      const limit = Number(q.limit || 50);
+      res.json({ total: all.length, items: all.slice(offset, offset + limit) });
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/explanation-tickets/:id/approve', authMiddleware, requireRole(['ADMIN', 'FINANCE', 'DIRECTOR']), validate({ params: evExplanationTicketIdParams, body: evExplanationApproveBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const t = await ev.explanations.approve(
+        req.params.id,
+        req.user!.id,
+        (req.user as any)?.fullName,
+        req.body?.notes,
+      );
+      ev.realtime.broadcastExplanationStatus({
+        ticketId: t.ticket_id,
+        driverId: t.driver_id,
+        status: 'APPROVED',
+        ticketCode: t.ticket_code,
+        approvedBy: req.user!.id,
+      });
+      broadcastUpdate('evExplanationTicket', { action: 'approve', id: t.ticket_id });
+      // Điểm bỏ lọt vừa thành hoàn thành → ca + check-in của tài xế tải lại ngay.
+      for (const shiftId of Array.from(new Set((t.items || []).map(i => i.shift_id)))) {
+        broadcastUpdate('evShift', { action: 'explanation-approved', id: shiftId });
+      }
+      broadcastUpdate('evShiftCheckin', { action: 'explanation-approved', id: t.ticket_id });
+      res.json(t);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/explanation-tickets/:id/reject', authMiddleware, requireRole(['ADMIN', 'FINANCE', 'DIRECTOR']), validate({ params: evExplanationTicketIdParams, body: evExplanationRejectBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const t = await ev.explanations.reject(
+        req.params.id,
+        req.user!.id,
+        (req.user as any)?.fullName,
+        req.body?.reason,
+      );
+      ev.realtime.broadcastExplanationStatus({
+        ticketId: t.ticket_id,
+        driverId: t.driver_id,
+        status: 'REJECTED',
+        ticketCode: t.ticket_code,
+        rejectedReason: t.rejected_reason,
+      });
+      broadcastUpdate('evExplanationTicket', { action: 'reject', id: t.ticket_id });
       res.json(t);
     } catch (err: any) { evErr(res, err); }
   });
@@ -1279,17 +1400,41 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         stopId: stop.stop_id,
         driverLocation: { latitude: req.body.latitude, longitude: req.body.longitude, accuracy: req.body.accuracy },
       });
-      ev.realtime.broadcastCheckin(shift.shift_id, shift.driver_id, {
-        stopId: stop.stop_id,
-        stopOrder: checkin.stop_order,
-        stopName: stop.name,
-        checkedInAt: checkin.checked_in_at,
-        isLate: !!checkin.is_late,
-        lateMinutes: Number(checkin.late_minutes || 0),
-        penaltyAmount: Number(checkin.penalty_amount || 0),
-      });
-      broadcastUpdate('evShiftCheckin', { action: 'create', shiftId: shift.shift_id });
-      res.status(201).json(checkin);
+      // Trạm sạc: lần bấm 1/3, 2/3 chỉ lưu tạm GPS, KHÔNG phát check-in realtime
+      // (tránh báo "đã hoàn tất điểm" khi chưa đủ 3 lần trùng toạ độ).
+      if (!checkin.is_repeat) {
+        ev.realtime.broadcastCheckin(shift.shift_id, shift.driver_id, {
+          stopId: stop.stop_id,
+          stopOrder: checkin.stop_order,
+          stopName: stop.name,
+          checkedInAt: checkin.checked_in_at,
+          isLate: !!checkin.is_late,
+          lateMinutes: Number(checkin.late_minutes || 0),
+          penaltyAmount: Number(checkin.penalty_amount || 0),
+        });
+        broadcastUpdate('evShiftCheckin', { action: 'create', shiftId: shift.shift_id });
+      }
+      // Đủ 3 lần GPS trùng toạ độ → trạm sạc được ghi nhớ, đẩy ngay lên Live Map.
+      if (checkin.charging_confirmed) {
+        const tickets = await ev.charging.getChargingTicketsByShift(shift.shift_id).catch(() => []);
+        const ticket = tickets
+          .slice()
+          .sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))[0];
+        const stationPayload = {
+          ticketId: ticket?.ticket_id || '',
+          shiftId: shift.shift_id,
+          driverId: shift.driver_id,
+          routeId: shift.route_id,
+          stopId: stop.stop_id,
+          stopName: stop.name,
+          latitude: Number(req.body.latitude),
+          longitude: Number(req.body.longitude),
+          address: `Trạm sạc tại ${Number(req.body.latitude).toFixed(6)}, ${Number(req.body.longitude).toFixed(6)}`,
+        };
+        ev.realtime.broadcastChargingStationUpdated(stationPayload);
+        broadcastUpdate('ev', { area: 'charging-station', ...stationPayload });
+      }
+      res.status(checkin.is_repeat ? 200 : 201).json(checkin);
     } catch (err: any) { evErr(res, err); }
   });
 
@@ -1434,6 +1579,64 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       ev.realtime.broadcastChargingStatus(t!.ticket_id, t!.shift_id, t!.driver_id, 'USED');
       broadcastUpdate('evChargingTicket', { action: 'end', id: t!.ticket_id });
       res.json(t);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
+  // DRIVER — Phiếu giải trình điểm quên chấm
+  // ---------------------------------------------------------------
+  app.get('/ev/me/explanation-candidates', authMiddleware, requireRole(evDriverRoles), async (req: AuthenticatedRequest, res) => {
+    try {
+      const driverId = evDriverId(req);
+      if (!driverId) return res.status(403).json({ error: 'DRIVER_NOT_FOUND' });
+      res.json(await ev.explanations.listCandidates(driverId));
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.get('/ev/me/explanation-tickets', authMiddleware, requireRole(evDriverRoles), async (req: AuthenticatedRequest, res) => {
+    try {
+      const driverId = evDriverId(req);
+      if (!driverId) return res.status(403).json({ error: 'DRIVER_NOT_FOUND' });
+      res.json(await ev.explanations.listDriverTickets(driverId));
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/me/explanation-tickets', authMiddleware, requireRole(evDriverRoles), validate({ body: evExplanationCreateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const driverId = evDriverId(req);
+      if (!driverId) return res.status(403).json({ error: 'DRIVER_NOT_FOUND' });
+      const t = await ev.explanations.createTicket(driverId, {
+        reason: req.body.reason,
+        items: req.body.items,
+        photos: req.body.photos,
+      });
+      ev.realtime.broadcastExplanationStatus({
+        ticketId: t.ticket_id,
+        driverId: t.driver_id,
+        status: 'PENDING',
+        ticketCode: t.ticket_code,
+      });
+      broadcastUpdate('evExplanationTicket', { action: 'create', id: t.ticket_id });
+      res.status(201).json(t);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // Ảnh bằng chứng phiếu giải trình: chỉ tài xế sở hữu hoặc admin được xem.
+  app.get('/ev/explanation-photos/:ticketId/:photoId', authMiddleware, validate({ params: evExplanationPhotoParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const t = ev.explanations.findTicket(req.params.ticketId);
+      if (!t) return res.status(404).json({ error: 'EXPLANATION_NOT_FOUND' });
+      const role = String(req.user?.role || '');
+      const isAdminEv = ['ADMIN', 'HR', 'FINANCE', 'DIRECTOR', 'FLEET_MANAGER'].includes(role);
+      const isOwner = !!req.user?.employeeId && String(req.user.employeeId) === String(t.driver_id);
+      if (!isAdminEv && !isOwner) return res.status(403).json({ error: 'FORBIDDEN' });
+      const photo = (t.photos || []).find(p => p.photo_id === req.params.photoId);
+      if (!photo) return res.status(404).json({ error: 'PHOTO_NOT_FOUND' });
+      const hit = readExplanationPhoto(t.ticket_id, photo.photo_id, photo.mime_type);
+      if (!hit) return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Ảnh chưa được lưu trên máy chủ.' });
+      res.setHeader('Content-Type', hit.mimeType || photo.mime_type || 'image/jpeg');
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      return res.send(hit.buffer);
     } catch (err: any) { evErr(res, err); }
   });
 
@@ -2319,6 +2522,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         radius_meters: Number(branch.radius_meters) || 300,
         gps_enabled: (branch as any).gps_enabled !== false,
         status: branch.status || 'ACTIVE',
+        // Cờ ẩn lịch: cổng NV dùng để khóa màn hình Lịch + hiện thông báo.
+        schedule_visible: !isBranchScheduleHidden(branch),
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -2397,6 +2602,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.get('/me/office/schedule', authMiddleware, async (req: AuthenticatedRequest, res) => {
     try {
       if (req.user?.role !== 'EMPLOYEE' || !req.user.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      if (await isEmployeeScheduleHidden(req.user.employeeId)) {
+        res.setHeader('Cache-Control', 'no-store');
+        return res.status(403).json({
+          error: 'BRANCH_SCHEDULE_HIDDEN',
+          message: 'Chi nhánh đã ngừng hoạt động — lịch làm việc đã được Admin ẩn.',
+        });
+      }
       res.json(await officeService.getSchedule(req.user.employeeId, String(req.query.fromDate || ''), String(req.query.toDate || '')));
     } catch (err: any) { officeErr(res, err); }
   });
@@ -3434,6 +3646,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.put('/employees/:id', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: employeeUpdateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const b = req.body;
+      // Bản ghi TRƯỚC khi sửa — dùng để biết ngày vào làm/ngày chính thức/khối
+      // có thực sự đổi hay không (tránh đẩy cả tab NV lên Sheet mỗi lần lưu hồ sơ).
+      const beforeEmp: any = await employeesService.getEmployee(req.params.id).catch(() => null);
       // Chuẩn hóa ở service (chấp nhận tên tiếng Việt từ dữ liệu cũ).
       const group = b.group ? String(b.group) : undefined;
       const shiftRaw = b.defaultShiftCode !== undefined ? String(b.defaultShiftCode || '').toUpperCase() : undefined;
@@ -3468,16 +3683,36 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // Đổi ĐƠN GIÁ CA qua Hồ Sơ: đồng bộ ngay bảng công + cổng NV + Sheets.
       // Trước đây chỉ đổi hồ sơ, Bảng Tổng Hợp/cổng NV/NHAN_VIEN_MASTER vẫn
       // hiện đơn giá cũ tới lượt pull/push sau.
-      if (b.currentRatePerHour !== undefined || b.current_rate_per_hour !== undefined) {
+      const rateChanged = b.currentRatePerHour !== undefined || b.current_rate_per_hour !== undefined;
+      if (rateChanged) {
         try {
           payrollService.syncEmployeeSalary(req.params.id, { action: 'employee-rate', actorId: req.user!.id });
         } catch { /* realtime best-effort */ }
+      }
+      // NGÀY VÀO LÀM / NGÀY CHÍNH THỨC / KHỐI là dữ liệu quyết định NV có được
+      // tính lương kỳ đó hay không. Phải đẩy lại tab NHAN_VIEN_MASTER NGAY, nếu
+      // không lượt pull Sheets kế tiếp sẽ trả start_date cũ về (VD: sửa NV Xưởng/
+      // Sale về 01/10 nhưng Sheet vẫn 05–10/11 → tháng 10 lại mất phiếu).
+      const day10 = (v: any) => String(v || '').trim().slice(0, 10);
+      // `updateEmployee` trả { operationId, result } — lấy đúng bản ghi NV.
+      const afterEmp: any = (result as any)?.result ?? result;
+      const groupChanged = String(afterEmp?.group || '') !== String(beforeEmp?.group || '');
+      const datesChanged = day10(afterEmp?.start_date) !== day10(beforeEmp?.start_date)
+        || day10(afterEmp?.official_date) !== day10(beforeEmp?.official_date);
+      if (rateChanged || datesChanged || groupChanged) {
         try {
           const syncSvc = (adapter as any)?.syncService;
           if (syncSvc?.pushEmployeesTab) {
-            void syncSvc.pushEmployeesTab(adapter).catch(() => null);
+            // Chờ tối đa 20s để chắc chắn Sheet đã ghi trước khi trả response,
+            // tránh pull chạy ngay sau đó đọc lại bản cũ.
+            await Promise.race([
+              syncSvc.pushEmployeesTab(adapter),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('PUSH_EMPLOYEES_TIMEOUT')), 20_000)),
+            ]);
           }
-        } catch { /* Sheets best-effort */ }
+        } catch (e: any) {
+          console.warn('[employees] Đẩy tab NHAN_VIEN_MASTER thất bại:', e?.message || e);
+        }
       }
       // NV được chuyển sang Văn Phòng → bổ sung lịch hành chính (idempotent, bỏ qua nếu đã có).
       const updEmp: any = result as any;
@@ -4007,6 +4242,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         timeSlot,
         req.user!.id
       );
+      // Lịch mới vừa đặt: giữ trạng thái/lịch này trước dòng master cũ (pull nền
+      // có thể còn CONFIRMED/NEW của lịch trước), đồng thời đẩy master ngay.
+      try {
+        const syncSvc = (adapter as any)?.syncService;
+        syncSvc?.markInterviewScheduleRestored?.(submissionId, 'INVITED_INTERVIEW');
+        await (adapter as any)?.pushCandidatesNow?.();
+      } catch { /* best-effort */ }
       broadcastUpdate('candidates', { action: 'schedule-interview', id: submissionId });
       res.json(result);
     } catch (err: any) {
@@ -4046,6 +4288,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.put('/applications/:id', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: candidateUpdateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await employeesService.updateCandidateFields(req.params.id, req.body || {}, req.user!.id);
+      // Khôi phục ứng viên bị LOẠI (REJECTED -> NEW): khóa trạng thái ngắn hạn để
+      // pull master cũ không kéo ứng viên về REJECTED trước khi push kịp ghi.
+      if (String((req.body as any)?.status || '').toUpperCase() === 'NEW') {
+        try {
+          const syncSvc = (adapter as any)?.syncService;
+          syncSvc?.markCandidateStatus?.(req.params.id, 'NEW');
+        } catch { /* best-effort */ }
+      }
       // Đẩy master FROM_NHAN_VIEN NGAY (await): ca/chi nhánh HR vừa chốt bền vững trên
       // Sheet trước khi trả response — pull nền sau đó phủ lại đúng giá trị mới thay vì
       // dựng lại từ form gốc (fix "báo thành công nhưng dữ liệu không đổi"). Pattern như
@@ -4093,7 +4343,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // để pull nền/pull tay sau đó không đọc lại dòng lịch cũ (pattern như dedupe).
       try {
         const syncSvc = (adapter as any)?.syncService;
-        syncSvc?.markInterviewScheduleCleared?.(req.params.id);
+        syncSvc?.markInterviewScheduleCleared?.(req.params.id, 'NEW');
         await (adapter as any)?.pushCandidatesNow?.();
       } catch { /* best-effort, tombstone đã chặn hồi sinh 120s */ }
       broadcastUpdate('candidates', { action: 'interview-cancelled', id: req.params.id });
@@ -4108,6 +4358,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const result = await employeesService.confirmInterview(req.params.id, req.user!.id, 'HR');
       try {
+        const syncSvc = (adapter as any)?.syncService;
+        syncSvc?.markInterviewScheduleRestored?.(req.params.id, 'CONFIRMED');
         await (adapter as any)?.pushCandidatesNow?.();
       } catch { /* best-effort */ }
       broadcastUpdate('candidates', { action: 'interview-confirmed', id: req.params.id });
@@ -4125,7 +4377,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const result = await employeesService.markInterviewNoShow(req.params.id, req.user!.id, reason || undefined);
       try {
         const syncSvc = (adapter as any)?.syncService;
-        syncSvc?.markInterviewScheduleCleared?.(req.params.id);
+        syncSvc?.markInterviewScheduleCleared?.(req.params.id, 'NO_SHOW');
         await (adapter as any)?.pushCandidatesNow?.();
       } catch { /* best-effort */ }
       broadcastUpdate('candidates', { action: 'interview-no-show', id: req.params.id });
@@ -4145,6 +4397,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         time: b.time ? String(b.time) : undefined,
       });
       try {
+        const syncSvc = (adapter as any)?.syncService;
+        syncSvc?.markInterviewScheduleRestored?.(req.params.id, 'INVITED_INTERVIEW');
         await (adapter as any)?.pushCandidatesNow?.();
       } catch { /* best-effort */ }
       broadcastUpdate('candidates', { action: 'interview-proposal-approved', id: req.params.id });
@@ -4162,7 +4416,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const result = await employeesService.blacklistCandidate(req.params.id, req.user!.id, reason || undefined);
       try {
         const syncSvc = (adapter as any)?.syncService;
-        syncSvc?.markInterviewScheduleCleared?.(req.params.id);
+        syncSvc?.markInterviewScheduleCleared?.(req.params.id, 'BLACKLIST');
         await (adapter as any)?.pushCandidatesNow?.();
       } catch { /* best-effort */ }
       broadcastUpdate('candidates', { action: 'candidate-blacklisted', id: req.params.id });
@@ -4192,6 +4446,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const result = await employeesService.restoreFromBlacklist(req.params.id, req.user!.id);
       try {
+        const syncSvc = (adapter as any)?.syncService;
+        syncSvc?.markInterviewScheduleRestored?.(req.params.id, 'NEW');
         await (adapter as any)?.pushCandidatesNow?.();
       } catch { /* best-effort */ }
       broadcastUpdate('candidates', { action: 'candidate-unblacklisted', id: req.params.id });
@@ -4209,7 +4465,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // master NGAY) để pull nền sau đó không đọc lại dòng lịch cũ.
       try {
         const syncSvc = (adapter as any)?.syncService;
-        syncSvc?.markInterviewScheduleCleared?.(req.params.id);
+        syncSvc?.markInterviewScheduleCleared?.(req.params.id, (result as any)?.autoRejected
+          ? 'REJECTED'
+          : String((result as any)?.candidate?.status || 'SCORED'));
         await (adapter as any)?.pushCandidatesNow?.();
       } catch { /* best-effort, tombstone đã chặn hồi sinh 120s */ }
       broadcastUpdate('candidates', { action: 'score', id: req.params.id });
@@ -4223,6 +4481,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/applications/:id/approve', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await employeesService.approveCandidate(req.params.id, req.user!.id);
+      // Chặn pull cũ hạ ACCEPTED về SCORED/Chờ phỏng vấn + đẩy master ngay.
+      try {
+        const syncSvc = (adapter as any)?.syncService;
+        syncSvc?.markCandidateStatus?.(req.params.id, 'ACCEPTED');
+        await (adapter as any)?.pushCandidatesNow?.();
+      } catch { /* best-effort */ }
       broadcastUpdate('candidates', { action: 'approve', id: req.params.id });
       broadcastUpdate('employees', { action: 'create', employee: (result as any).employee });
       broadcastUpdate('accounts', { action: 'create_emp_account' });
@@ -4330,6 +4594,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
       // Lưu lịch phỏng vấn trước khi gửi (idempotent theo submission).
       await employeesService.scheduleInterview(req.params.id, interviewDate, timeSlot, req.user!.id);
+      try {
+        const syncSvc = (adapter as any)?.syncService;
+        syncSvc?.markInterviewScheduleRestored?.(req.params.id, 'INVITED_INTERVIEW');
+      } catch { /* best-effort */ }
 
       // Link xác nhận cho ứng viên bấm (không cần đăng nhập, token 7 ngày).
       // PUBLIC_BASE_URL (domain thật) ưu tiên; thiếu thì dùng origin của request
@@ -4486,7 +4754,22 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         const week =
           (req.query.week as string) ||
           weekRangeOf(new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)).mon;
-        const shifts = await schedulesService.getShiftsForWeek(branchId, week);
+        // Chi nhánh ngừng hoạt động: chặn xem lịch của chi nhánh đó.
+        if (branchId && branchId !== '*' && await isBranchScheduleHiddenById(branchId)) {
+          res.setHeader('Cache-Control', 'no-store');
+          return res.status(403).json({
+            error: 'BRANCH_SCHEDULE_HIDDEN',
+            message: `Chi nhánh ${branchId} đã ngừng hoạt động — lịch làm việc đã bị ẩn.`,
+          });
+        }
+        let shifts = await schedulesService.getShiftsForWeek(branchId, week);
+        // Xem tổng hợp (branchId='*'): loại bỏ ca của chi nhánh đã ẩn.
+        if (branchId === '*') {
+          const hidden = await hiddenBranchIdSet();
+          if (hidden.size > 0) {
+            shifts = (shifts || []).filter((s: any) => !hidden.has(canonicalBranchId(s?.branch_id)));
+          }
+        }
         res.json(shifts);
       } catch (err: any) {
         res.status(500).json({ error: err.message });
@@ -4498,6 +4781,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const employeeId = req.user?.employeeId;
       if (!employeeId) return res.status(400).json({ error: 'NOT_AN_EMPLOYEE' });
+      // Chi nhánh ngừng hoạt động: trả rỗng (không lộ lịch) — cổng NV hiện banner
+      // "lịch đã ẩn" dựa trên /me/branch.schedule_visible.
+      if (await isEmployeeScheduleHidden(employeeId)) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('X-Branch-Schedule-Hidden', '1');
+        return res.json([]);
+      }
       const fromDate = (req.query.fromDate as string) || vnTodayISO();
       const toDate = (req.query.toDate as string) || '2030-12-31';
       const shifts = await schedulesService.getEmployeeShifts(employeeId, fromDate, toDate);
@@ -4515,6 +4805,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const requesterId = req.user?.employeeId;
       if (req.user?.role !== 'EMPLOYEE' || !requesterId) {
         return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      }
+      if (await isEmployeeScheduleHidden(requesterId)) {
+        return res.status(403).json({
+          error: 'BRANCH_SCHEDULE_HIDDEN',
+          message: 'Chi nhánh đã ngừng hoạt động — lịch làm việc đã bị ẩn, không thể đổi ca.',
+        });
       }
       const targetId = String(req.query.employeeId || '').trim();
       if (!targetId) return res.status(400).json({ error: 'MISSING_EMPLOYEE' });
@@ -4555,6 +4851,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     enforceBranchScope(req => req.body.branchId),
     async (req: AuthenticatedRequest, res) => {
       try {
+        // Chi nhánh đã ngừng hoạt động: không cho xếp thêm ca mới.
+        if (await isBranchScheduleHiddenById((req.body as any)?.branchId)) {
+          return res.status(403).json({
+            error: 'BRANCH_SCHEDULE_HIDDEN',
+            message: 'Chi nhánh đã ngừng hoạt động — lịch làm việc đã bị ẩn, không thể xếp ca.',
+          });
+        }
         const result = await schedulesService.createShift({
           ...req.body,
           actorId: req.user!.id,
@@ -4794,6 +5097,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     async (req: AuthenticatedRequest, res) => {
       try {
         const branchId = req.body.branchId || req.user?.branchScope;
+        if (await isBranchScheduleHiddenById(branchId)) {
+          return res.status(403).json({
+            error: 'BRANCH_SCHEDULE_HIDDEN',
+            message: 'Chi nhánh đã ngừng hoạt động — lịch làm việc đã bị ẩn, không thể phát hành.',
+          });
+        }
         const auto = req.body.auto === true || req.body.auto === 'true' || req.body.auto === '1';
         let autoSummary: any = null;
         if (auto) {
@@ -4860,6 +5169,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     async (req: AuthenticatedRequest, res) => {
       try {
         const branchId = req.body.branchId || req.user?.branchScope || '*';
+        if (await isBranchScheduleHiddenById(branchId)) {
+          return res.status(403).json({
+            error: 'BRANCH_SCHEDULE_HIDDEN',
+            message: 'Chi nhánh đã ngừng hoạt động — lịch làm việc đã bị ẩn, không thể xếp ca.',
+          });
+        }
         const weekMon = req.body.weekMon || new Date().toISOString().split('T')[0];
         const plan = await autoScheduleService.plan(branchId, weekMon);
         res.json(plan);
@@ -6715,7 +7030,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/attendance/adjustments', authMiddleware, validate({ body: adjustmentCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.employeeId || req.body.employeeId;
-      const result = await attendanceService.requestAdjustment({
+      const queued: any = await attendanceService.requestAdjustment({
         ...req.body,
         employeeId,
         // Client gửi snake_case photo_base64, service nhận camelCase photoBase64.
@@ -6723,8 +7038,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         // Ngày sự cố NV chọn — chốt đúng ca, chống gắn nhầm ca ngày khác.
         incidentDate: req.body.incidentDate || req.body.incident_date,
       });
+      // Service trả {operationId, result} của hàng đợi ghi — bóc lớp wrapper để
+      // client/realtime nhận đúng adjustment_id (trước đây id bị undefined).
+      const result: any = queued?.result ?? queued;
       // Realtime 100%: HR/Store thấy phiếu + ảnh bằng chứng ngay, không đợi poll 15s.
-      broadcastUpdate('adjustments', { action: 'created', id: (result as any)?.adjustment_id, employeeId });
+      broadcastUpdate('adjustments', { action: 'created', id: result?.adjustment_id, employeeId });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -7032,13 +7350,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   /** Bước hợp lệ để PHÁT HÀNH PHIẾU: tab Kỳ lương (5) hoặc tab Phiếu lương (6). */
   const PUBLISH_STEPS = ['fin-payroll-periods', 'fin-payslips'];
 
-  // Tính lương theo công thức Excel cho toàn bộ NV (Finance).
+  // Tính lương theo công thức Excel cho 1 ĐỢT của kỳ (Finance).
+  // body.batch: 'STORE' (Cửa hàng) | 'TONG_HOP' (VP+Xưởng+Sales) | 'ALL'/bỏ trống.
   app.post('/payroll/:period/calculate-formula', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollPeriodParams, body: payrollCalculateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       await guardFinanceStep(req, req.params.period, CALC_STEPS, 'Tính lương');
       const branchScope = req.body.branchScope || '*';
-      const result = await payrollService.calculateFormulaPayroll(req.params.period, branchScope, req.user!.id);
-      broadcastUpdate('payroll', { action: 'calculate', period: req.params.period });
+      const batch = String((req.body as any).batch || '').trim() || undefined;
+      const result = await payrollService.calculateFormulaPayroll(req.params.period, branchScope, req.user!.id, { batch });
+      broadcastUpdate('payroll', { action: 'calculate', period: req.params.period, batch });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -7219,7 +7539,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/payroll/:run/approve', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
+  // PHÊ DUYỆT KỲ LƯƠNG: Kế toán đối soát, Giám đốc (DIRECTOR) phê duyệt.
+  // Người đã TÍNH kỳ lương không được tự duyệt (chặn ở approveRun — SoD).
+  app.post('/payroll/:run/approve', authMiddleware, requireRole(['ADMIN', 'FINANCE', 'DIRECTOR']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const det: any = await payrollService.getRunDetails(req.params.run).catch(() => null);
       await guardFinanceStep(req, det?.run?.period, 'fin-payroll-periods', 'Phê duyệt kỳ lương');
@@ -8804,6 +9126,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/admin/branches', authMiddleware, requireRole(['ADMIN']), validate({ body: opaqueConfigBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const created = await adapter.createBranch({ ...(req.body || {}) });
+      invalidateBranchVisibilityCache();
       await adapter.recordAuditLog({
         actor_id: req.user!.id,
         action: 'BRANCH_CREATED',
@@ -8833,7 +9156,22 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         body.map_visible = !(raw === false || raw === 0 || raw === '0' ||
           ['false', 'off', 'no', 'tắt', 'tat', 'không', 'khong', 'ẩn', 'an'].includes(String(raw).trim().toLowerCase()));
       }
+      // Trạng thái hoạt động: CLOSED = ngừng hoạt động → ẩn lịch toàn hệ thống.
+      if (Object.prototype.hasOwnProperty.call(body, 'status')) {
+        const rawStatus = String(body.status ?? '').trim().toUpperCase();
+        body.status = ['ACTIVE', 'MAINTENANCE', 'CLOSED'].includes(rawStatus) ? rawStatus : 'ACTIVE';
+      }
+      // Cờ ẩn lịch riêng (không đổi trạng thái chi nhánh).
+      if (Object.prototype.hasOwnProperty.call(body, 'schedule_visible')) {
+        const raw = body.schedule_visible;
+        body.schedule_visible = !(raw === false || raw === 0 || raw === '0' ||
+          ['false', 'off', 'no', 'tắt', 'tat', 'không', 'khong', 'ẩn', 'an'].includes(String(raw).trim().toLowerCase()));
+      }
+      const visibilityChanged =
+        Object.prototype.hasOwnProperty.call(body, 'status') ||
+        Object.prototype.hasOwnProperty.call(body, 'schedule_visible');
       const updated = await adapter.updateBranch(req.params.id, body);
+      invalidateBranchVisibilityCache();
       // Toạ độ chi nhánh vừa đổi → đồng bộ điểm dừng lộ trình EV để Live Map
       // và geofence check-in của tài xế khớp tab Quản Lý Chi Nhánh.
       try {
@@ -8849,7 +9187,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         payload_after: updated,
       });
       // Realtime: các máy khác tải lại danh sách chi nhánh/GPS ngay.
+      const hiddenNow = isBranchScheduleHidden(updated as any);
       broadcastUpdate('config', { area: 'branches', id: req.params.id });
+      broadcastUpdate('branches', {
+        action: visibilityChanged ? 'visibility' : 'update',
+        id: req.params.id,
+        status: (updated as any)?.status,
+        schedule_visible: (updated as any)?.schedule_visible !== false,
+        hidden: hiddenNow,
+      });
+      // Ẩn/hiện lịch: bắn thêm sự kiện lịch để tab Lịch + cổng NV tải lại ngay
+      // (0ms) thay vì chờ lần tải kế tiếp.
+      if (visibilityChanged) {
+        broadcastUpdate('schedules', {
+          action: 'branch-visibility',
+          branchId: req.params.id,
+          hidden: hiddenNow,
+          status: (updated as any)?.status,
+        });
+      }
       broadcastUpdate('ev', { area: 'branch-coords', id: req.params.id });
       res.json(updated);
     } catch (err: any) {
@@ -9433,6 +9789,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         const updated: any = await employeesService.confirmInterview(sid, 'CANDIDATE', 'CANDIDATE');
         broadcastUpdate('candidates', { action: 'interview-confirmed', id: sid });
         try {
+          const syncSvc = (adapter as any)?.syncService;
+          syncSvc?.markInterviewScheduleRestored?.(sid, String(updated?.status || 'CONFIRMED'));
           await (adapter as any)?.pushCandidatesNow?.();
         } catch { /* best-effort */ }
         return res.json({ success: true, status: updated.status });
@@ -9448,7 +9806,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         broadcastUpdate('candidates', { action: proposed ? 'interview-reschedule-proposed' : 'interview-declined', id: sid });
         try {
           const syncSvc = (adapter as any)?.syncService;
-          syncSvc?.markInterviewScheduleCleared?.(sid);
+          syncSvc?.markInterviewScheduleCleared?.(sid, String(updated?.status || (proposed ? 'RESCHEDULE_PROPOSED' : 'DECLINED')));
           await (adapter as any)?.pushCandidatesNow?.();
         } catch { /* best-effort */ }
         await notifyHRDeclined(updated, sid);
@@ -9459,7 +9817,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         broadcastUpdate('candidates', { action: 'interview-reschedule-requested', id: sid });
         try {
           const syncSvc = (adapter as any)?.syncService;
-          syncSvc?.markInterviewScheduleCleared?.(sid);
+          syncSvc?.markInterviewScheduleCleared?.(sid, String(updated?.status || 'RESCHEDULE_PROPOSED'));
           await (adapter as any)?.pushCandidatesNow?.();
         } catch { /* best-effort */ }
         try {
