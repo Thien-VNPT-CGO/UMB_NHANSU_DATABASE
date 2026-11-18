@@ -417,6 +417,17 @@ export class ScheduleExcelService {
             }
             const validTargets = targets.filter((c) => VALID_CODES.includes(c));
             if (validTargets.length === 0) continue;
+            // Ràng buộc cứng: tối đa 2 ca/ngày — file ghi 3 ca thì báo lỗi, không nhập.
+            if (validTargets.length > 2) {
+              errors.push({
+                row: r,
+                maNV,
+                name: empName,
+                date,
+                message: `1 ngày tối đa 2 ca — ô đang ghi ${validTargets.length} ca (${validTargets.join('+')})`,
+              });
+              continue;
+            }
 
             const sameDay = (
               byEmpDate.get(`${emp.employee_id}|${date}|${canonicalBranch(branchId)}`) || []

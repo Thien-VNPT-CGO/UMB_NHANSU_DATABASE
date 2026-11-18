@@ -286,6 +286,15 @@ export class SchedulesService {
             'SHIFT_ARCHIVED_ATTENDANCE_LOCKED: Ca tuần cũ đã lưu trữ — lượt điểm danh nằm ở kho chỉ đọc nên không chuyển sang NV khác được! Chỉ đổi được ca/chi nhánh (giữ nguyên NV), hoặc dùng phiếu bù công.'
           );
         }
+        // HR đổi NV/ngày: chặn người nhận vượt 2 ca/ngày (bỏ qua chính ca đang sửa).
+        if (newEmp !== String(sh.employee_id || '') || newDate !== oldDay) {
+          await this.assertCanReceiveShift({
+            employeeId: newEmp,
+            date: newDate,
+            shiftCode: newCode,
+            excludeAssignmentId: assignmentId,
+          });
+        }
         // Dời lượt điểm danh theo ca sang NV mới (giữ nguyên giờ giấc bằng chứng).
         let movedEvents = 0;
         if (hasAtt && newEmp !== String(sh.employee_id || '')) {
@@ -614,6 +623,18 @@ export class SchedulesService {
         if (dup) {
           throw new Error(
             `SHIFT_DUPLICATE: ${String(data.employeeId)} ngày ${String(data.date).slice(0, 10)} đã có ${String(data.shiftCode)} (${String((dup as any)?.assignment_id || '')})! Không tạo trùng.`
+          );
+        }
+        // Ràng buộc cứng 2 ca/ngày: HR xếp tay cũng không được tạo ca thứ 3.
+        const liveSameDay = (sameDay || []).filter(
+          (s: any) =>
+            String((s as any)?.status || '').toUpperCase() !== 'CANCELLED' &&
+            (normSheetDate((s as any)?.date) || String((s as any)?.date || '').slice(0, 10)) === String(data.date).slice(0, 10)
+        );
+        if (liveSameDay.length >= 2) {
+          const label = liveSameDay.map((s: any) => s.shift_code).filter(Boolean).join(' + ');
+          throw new Error(
+            `MAX_2_SHIFTS_PER_DAY: ${String(data.employeeId)} ngày ${String(data.date).slice(0, 10)} đã có ${liveSameDay.length} ca (${label}) — mỗi ngày chỉ được tối đa 2 ca!`
           );
         }
         // Tuần đã phát hành (có ca PUBLISHED) hoặc HR bù ca tuần trước → PUBLISHED.
@@ -2252,13 +2273,8 @@ export class SchedulesService {
     if (data.targetEmployeeId === ownerId) {
       throw new Error('SUPPORT_SAME_EMPLOYEE: Nhân viên nhận hỗ trợ phải khác chủ ca!');
     }
-    // Báo sớm cho HR: B đã có đúng ca đó ngày đó thì không nhận trùng được.
-    const dayShifts = await this.repo.getShiftsForEmployee(data.targetEmployeeId, day, day).catch(() => []);
-    const clash = (dayShifts || []).find((s: any) =>
-      (s as any).shift_code === shiftCode && (s as any).status !== 'CANCELLED');
-    if (clash) {
-      throw new Error(`SUPPORT_SHIFT_CONFLICT: Nhân viên đã có ${shiftCode} ngày ${day}, không thể nhận trùng ca!`);
-    }
+    // Báo sớm cho HR: B đã đủ 2 ca/ngày hoặc đã có đúng ca đó ngày đó thì không nhận được.
+    await this.assertCanReceiveShift({ employeeId: data.targetEmployeeId, date: day, shiftCode });
     const swapId = `SUP_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_DOI_CA',
@@ -2392,6 +2408,43 @@ export class SchedulesService {
       }
     } catch { /* best-effort: ca vẫn chuyển, OFF xử lý sau */ }
     return [...new Set(notes)];
+  }
+
+  /**
+   * RÀNG BUỘC CỨNG: mỗi nhân viên TỐI ĐA 2 ca LIVE trên 1 ngày.
+   * Dùng cho MỌI đường chuyển ca (NV tự đổi ca, HR điều phối, hỗ trợ chi nhánh,
+   * xếp tay). Trước đây các đường này chỉ chặn TRÙNG MÃ ca nên NV đã có 2 ca
+   * vẫn nhận thêm ca thứ 3 qua đổi ca (VD 1 ngày có CA_1 + CA_2 rồi nhận tiếp
+   * CA_3) — vi phạm quy định 2 ca/ngày mà không ai chặn.
+   * - `excludeAssignmentId`: ca đang được chuyển ĐI của chính NV đó (tráo tay
+   *   đôi cùng ngày) — sau giao dịch không còn thuộc NV nên không tính.
+   */
+  private async assertCanReceiveShift(data: {
+    employeeId: string;
+    date: string;
+    shiftCode?: string;
+    excludeAssignmentId?: string;
+  }): Promise<void> {
+    const emp = String(data.employeeId || '').trim();
+    const day = normSheetDate(data.date) || String(data.date || '').slice(0, 10);
+    if (!emp || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+    const exclude = String(data.excludeAssignmentId || '');
+    const shifts = await this.repo.getShiftsForEmployee(emp, day, day).catch(() => []);
+    const live = (shifts || []).filter((s: any) =>
+      String((s as any)?.status || '').toUpperCase() !== 'CANCELLED' &&
+      (normSheetDate((s as any)?.date) || String((s as any)?.date || '').slice(0, 10)) === day &&
+      (!exclude || String((s as any)?.assignment_id || '') !== exclude)
+    );
+    const code = String(data.shiftCode || '');
+    if (code && live.some((s: any) => String((s as any)?.shift_code || '') === code)) {
+      throw new Error(`SUPPORT_SHIFT_CONFLICT: Nhân viên đã có ${code} ngày ${day}, không thể nhận trùng ca!`);
+    }
+    if (live.length >= 2) {
+      const label = live.map((s: any) => s.shift_code).filter(Boolean).join(' + ');
+      throw new Error(
+        `MAX_2_SHIFTS_PER_DAY: Nhân viên ${emp} ngày ${day} đã có ${live.length} ca (${label}) — quy định tối đa 2 ca/ngày, không thể nhận thêm ca thứ 3!`
+      );
+    }
   }
 
   /**
@@ -2584,6 +2637,8 @@ export class SchedulesService {
           if (empClash) {
             throw new Error(`SUPPORT_SHIFT_CONFLICT: Bạn đã có ${supCode} ngày ${supDate}, không thể nhận thêm ca hỗ trợ trùng ca!`);
           }
+          // Chặn nhận ca thứ 3 trong ngày (B đã đủ 2 ca live).
+          await this.assertCanReceiveShift({ employeeId: partnerId, date: supDate, shiftCode: supCode });
           await this.repo.updateShiftAssignment(coverShift.assignment_id, {
             employee_id: partnerId,
             // Ca đã publish rồi chuyển chủ: phải giữ PUBLISHED, nếu rơi về
@@ -2613,6 +2668,12 @@ export class SchedulesService {
             if (!coverShift) {
               throw new Error('SHIFTS_NOT_FOUND_FOR_SWAP');
             }
+            // Chặn nhận ca thứ 3 trong ngày (B đã đủ 2 ca live).
+            await this.assertCanReceiveShift({
+              employeeId: swap.target_employee_id,
+              date: String((coverShift as any).date || '').slice(0, 10),
+              shiftCode: String((coverShift as any).shift_code || ''),
+            });
             await this.repo.updateShiftAssignment(coverShift.assignment_id, {
               employee_id: swap.target_employee_id,
               status: 'PUBLISHED',
@@ -2655,18 +2716,22 @@ export class SchedulesService {
           if (!reqShift || !tgtShift) {
             throw new Error('SHIFTS_NOT_FOUND_FOR_SWAP');
           }
-          // Re-check lúc chốt tráo tay đôi: 2 bên còn đi làm + không trùng đúng ca
-          // ngày nhận (hồ sơ/ca có thể đổi trong lúc chờ B xác nhận).
-          for (const [empId, sh] of [[swap.target_employee_id, reqShift], [swap.requester_id, tgtShift]] as any[]) {
+          // Re-check lúc chốt tráo tay đôi: 2 bên còn đi làm, không trùng ca và
+          // KHÔNG vượt 2 ca/ngày ở ngày nhận (trừ ca chính mình chuyển đi cùng ngày).
+          for (const [empId, sh, giveAway] of [
+            [swap.target_employee_id, reqShift, tgtShift],
+            [swap.requester_id, tgtShift, reqShift],
+          ] as any[]) {
             const e = await this.repo.getEmployeeById(empId).catch(() => null);
             if (!e || (e as any).employment_status === 'TERMINATED') {
               throw new Error('SWAP_EMPLOYEE_INVALID: Một bên đã nghỉ việc, phiếu tráo không còn hiệu lực!');
             }
-            const d = String((sh as any)?.date || '').slice(0, 10);
-            const dayShifts = await this.repo.getShiftsForEmployee(empId, d, d).catch(() => []);
-            if ((dayShifts || []).some((s: any) => (s as any).shift_code === (sh as any).shift_code && (s as any).status !== 'CANCELLED')) {
-              throw new Error(`SWAP_SHIFT_CONFLICT: ${(e as any).full_name || empId} đã có ${(sh as any).shift_code} ngày ${d}, không thể tráo trùng ca!`);
-            }
+            await this.assertCanReceiveShift({
+              employeeId: empId,
+              date: String((sh as any)?.date || '').slice(0, 10),
+              shiftCode: String((sh as any)?.shift_code || ''),
+              excludeAssignmentId: String((giveAway as any)?.assignment_id || ''),
+            });
           }
           await this.repo.updateShiftAssignment(reqShift.assignment_id, {
             employee_id: swap.target_employee_id,
@@ -2919,12 +2984,13 @@ export class SchedulesService {
           if (!coverShift) {
             throw new Error('SHIFTS_NOT_FOUND_FOR_SWAP');
           }
-          // Chặn duyệt trùng: người nhận đã có đúng ca đó ngày đó thì không chuyển nữa.
+          // Chặn duyệt khi người nhận đã có đúng ca đó hoặc đã đủ 2 ca/ngày.
           const dispDay = String((coverShift as any).date || '').slice(0, 10);
-          const dispShifts = await this.repo.getShiftsForEmployee(swap.target_employee_id, dispDay, dispDay).catch(() => []);
-          if ((dispShifts || []).some((s: any) => (s as any).shift_code === (coverShift as any).shift_code && (s as any).status !== 'CANCELLED')) {
-            throw new Error(`SUPPORT_SHIFT_CONFLICT: Nhân viên đã có ${(coverShift as any).shift_code} ngày ${dispDay}, không thể nhận trùng ca!`);
-          }
+          await this.assertCanReceiveShift({
+            employeeId: swap.target_employee_id,
+            date: dispDay,
+            shiftCode: String((coverShift as any).shift_code || ''),
+          });
           await this.repo.updateShiftAssignment(coverShift.assignment_id, {
             employee_id: swap.target_employee_id,
             status: 'PUBLISHED',
@@ -2969,6 +3035,20 @@ export class SchedulesService {
         if (!reqShift || !tgtShift) {
           throw new Error('SHIFTS_NOT_FOUND_FOR_SWAP');
         }
+
+        // Chặn tráo vượt 2 ca/ngày ở ngày nhận (trừ ca chính mình chuyển đi cùng ngày).
+        await this.assertCanReceiveShift({
+          employeeId: swap.target_employee_id,
+          date: String((reqShift as any).date || '').slice(0, 10),
+          shiftCode: String((reqShift as any).shift_code || ''),
+          excludeAssignmentId: String((tgtShift as any).assignment_id || ''),
+        });
+        await this.assertCanReceiveShift({
+          employeeId: swap.requester_id,
+          date: String((tgtShift as any).date || '').slice(0, 10),
+          shiftCode: String((tgtShift as any).shift_code || ''),
+          excludeAssignmentId: String((reqShift as any).assignment_id || ''),
+        });
 
         // Multi-tab atomic update check: if partial fails, singleWriterQueue handles reconciliation
         await this.repo.updateShiftAssignment(reqShift.assignment_id, {
