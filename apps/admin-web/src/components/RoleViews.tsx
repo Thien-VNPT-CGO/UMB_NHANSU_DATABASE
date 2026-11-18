@@ -3946,6 +3946,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   // Live Attendance Events State for HR Realtime Tab 11
   const [liveAttendanceEvents, setLiveAttendanceEvents] = useState<any[]>([]);
+  // Lọc/gom Bảng Chấm Công Thời Gian Thực theo chi nhánh (ALL = xem tất cả, có header từng CN).
+  const [attBranchFilter, setAttBranchFilter] = useState<string>('ALL');
   const liveAttendanceEventsRef = useRef<any[]>([]);
   useEffect(() => {
     liveAttendanceEventsRef.current = liveAttendanceEvents;
@@ -12364,6 +12366,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         String(a.employee_code || '').localeCompare(String(b.employee_code || '')) ||
         String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi')
       );
+    // Gom NV theo chi nhánh: Bảng chấm công hiển thị header từng CN để dễ quan sát.
+    const attBranchKeyOf = (e: any) => String(e?.default_branch_id || e?.branch_id || '');
+    const attBranchGroupsAll = (() => {
+      const map = new Map<string, any[]>();
+      for (const e of attEmps) {
+        const bid = attBranchKeyOf(e);
+        const arr = map.get(bid) || [];
+        arr.push(e);
+        map.set(bid, arr);
+      }
+      return [...map.entries()].sort((a, b) => schedBranchRankOf(a[0]) - schedBranchRankOf(b[0]));
+    })();
+    const attBranchGroups = attBranchFilter === 'ALL'
+      ? attBranchGroupsAll
+      : attBranchGroupsAll.filter(([bid]) => bid === attBranchFilter);
     const attCellOf = (empArg: any, iso: string) => {
       const emp = typeof empArg === 'string' ? { employee_id: empArg } : empArg;
       const empId = String(emp?.employee_id || '');
@@ -12697,6 +12714,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </select>
             <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setScheduleWeekOffset(o => o - 1)}>◀</button>
             <button className="btn-primary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setScheduleWeekOffset(o => o + 1)}>▶</button>
+            <span style={{ fontSize: '12px', fontWeight: 700, marginLeft: '6px' }}>Chi nhánh:</span>
+            <select
+              value={attBranchFilter}
+              onChange={(e) => setAttBranchFilter(e.target.value)}
+              title="Tách bảng chấm công theo từng chi nhánh"
+              style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px', fontWeight: 700, maxWidth: '240px' }}
+            >
+              <option value="ALL">Tất cả chi nhánh ({attEmps.length} NV)</option>
+              {attBranchGroupsAll.map(([bid, list]) => (
+                <option key={bid || '_unknown'} value={bid}>
+                  {getDisplayBranch(bid) || 'Chưa rõ chi nhánh'} ({list.length} NV)
+                </option>
+              ))}
+            </select>
             <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
               Tuần <strong>Thứ 2 {attDays[0] ? `${attDays[0].iso.slice(8, 10)}/${attDays[0].iso.slice(5, 7)}/${attDays[0].iso.slice(0, 4)}` : '…'} → CN {attDays[6] ? `${attDays[6].iso.slice(8, 10)}/${attDays[6].iso.slice(5, 7)}/${attDays[6].iso.slice(0, 4)}` : '…'}</strong> • 1 ô = các ca trong ngày kèm đúng trạng thái • Cùng tuần với tab Lịch Làm Việc{scheduleWeekOffset < 0 ? (archiveLoading ? ' • ⏳ Đang tải ngày công tuần cũ từ kho lưu trữ...' : ' • Tuần cũ đọc từ kho lưu trữ (đủ ngày công tính lương).') : ''}
             </span>
@@ -12714,14 +12745,23 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              {attEmps.length === 0 ? (
+              {attBranchGroups.length === 0 ? (
                 <tr>
                   <td colSpan={8} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    Tuần này chưa có ca phân công hay lượt chấm công nào.
+                    {attEmps.length === 0
+                      ? 'Tuần này chưa có ca phân công hay lượt chấm công nào.'
+                      : 'Chi nhánh đang lọc không còn nhân viên — chọn chi nhánh khác hoặc "Tất cả chi nhánh".'}
                   </td>
                 </tr>
               ) : (
-                attEmps.map((emp: any) => {
+                attBranchGroups.flatMap(([bid, list]) => [
+                  <tr key={`att-branch-${bid || '_unknown'}`}>
+                    <td colSpan={8} style={{ padding: '9px 14px', backgroundColor: '#EEF2FF', color: '#3730A3', fontWeight: 800, fontSize: '12.5px', borderTop: '2px solid #C7D2FE', borderBottom: '1px solid #C7D2FE' }}>
+                      🏢 {getDisplayBranch(bid) || 'Chưa rõ chi nhánh'}
+                      <span style={{ fontWeight: 600, color: '#4F46E5', marginLeft: '8px' }}>({list.length} nhân viên)</span>
+                    </td>
+                  </tr>,
+                  ...list.map((emp: any) => {
                   const empIsOffice = isOfficeGroup(emp.group);
                   return (
                   <tr key={emp.employee_id} style={{ borderBottom: '1px solid var(--border)' }}>
@@ -12875,7 +12915,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     })}
                   </tr>
                   );
-                }))
+                  }),
+                ]))
               }
             </tbody>
           </table>
