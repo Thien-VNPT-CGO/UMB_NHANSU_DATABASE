@@ -92,6 +92,68 @@ test('tráo tay đôi cùng ngày: hoán đổi 1-1 vẫn hợp lệ (không tă
   assert.equal(repo.shifts.find((s) => s.assignment_id === 'B_CA3')!.employee_id, 'EMP_A');
 });
 
+test('HR chuyển ca hỗ trợ chi nhánh: B đã đủ 2 ca/ngày thì KHÔNG tạo được phiếu', async () => {
+  const repo = new MockSheetsAdapter();
+  const day = currentVnWeekRange().mon;
+  repo.employees.push(employee('EMP_OWNER'), employee('EMP_TARGET'));
+  repo.shifts.push(
+    shift({ assignment_id: 'O_CA3', employee_id: 'EMP_OWNER', shift_code: 'CA_3', date: day }),
+    shift({ assignment_id: 'T_CA1', employee_id: 'EMP_TARGET', shift_code: 'CA_1', date: day }),
+    shift({ assignment_id: 'T_CA2', employee_id: 'EMP_TARGET', shift_code: 'CA_2', date: day })
+  );
+
+  const svc = new SchedulesService(repo);
+  await assert.rejects(
+    () => svc.createSupportRequest({
+      requesterAssignmentId: 'O_CA3',
+      targetEmployeeId: 'EMP_TARGET',
+      reason: 'test',
+      actorId: 'HR_1',
+    }),
+    /MAX_2_SHIFTS_PER_DAY/
+  );
+  assert.equal(repo.swapRequests.length, 0, 'không được tạo phiếu hỗ trợ khi B đã đủ 2 ca');
+  assert.equal(
+    repo.shifts.find((s) => s.assignment_id === 'O_CA3')!.employee_id,
+    'EMP_OWNER',
+    'ca nhường vẫn thuộc chủ cũ khi bị chặn'
+  );
+});
+
+test('hỗ trợ chi nhánh: B phát sinh ca thứ 2 sau khi nhận phiếu thì lúc xác nhận vẫn bị chặn', async () => {
+  const repo = new MockSheetsAdapter();
+  const day = currentVnWeekRange().mon;
+  repo.employees.push(employee('EMP_OWNER'), employee('EMP_TARGET'));
+  repo.shifts.push(
+    shift({ assignment_id: 'O_CA3', employee_id: 'EMP_OWNER', shift_code: 'CA_3', date: day }),
+    shift({ assignment_id: 'T_CA1', employee_id: 'EMP_TARGET', shift_code: 'CA_1', date: day })
+  );
+
+  const svc = new SchedulesService(repo);
+  const created: any = await svc.createSupportRequest({
+    requesterAssignmentId: 'O_CA3',
+    targetEmployeeId: 'EMP_TARGET',
+    reason: 'test',
+    actorId: 'HR_1',
+  });
+  const swapId = String(created?.swap_id || created?.result?.swap_id || '');
+  assert.ok(swapId, 'phiếu hỗ trợ phải được tạo khi B còn dưới 2 ca');
+
+  // B được xếp thêm ca thứ 2 trước lúc bấm xác nhận.
+  repo.shifts.push(shift({ assignment_id: 'T_CA2', employee_id: 'EMP_TARGET', shift_code: 'CA_2', date: day }));
+
+  await assert.rejects(
+    () => svc.respondSwapPartner(swapId, 'EMP_TARGET', true),
+    /MAX_2_SHIFTS_PER_DAY/
+  );
+  assert.equal(
+    repo.shifts.find((s) => s.assignment_id === 'O_CA3')!.employee_id,
+    'EMP_OWNER',
+    'ca phải còn nguyên chủ cũ khi bị chặn lúc xác nhận'
+  );
+  assert.equal((await repo.getSwapById(swapId))!.status, 'PENDING_PARTNER', 'phiếu chưa được duyệt');
+});
+
 test('HR xếp tay ca thứ 3 trong ngày bị chặn', async () => {
   const repo = new MockSheetsAdapter();
   const day = currentVnWeekRange().mon;
