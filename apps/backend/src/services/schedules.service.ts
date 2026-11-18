@@ -286,14 +286,22 @@ export class SchedulesService {
             'SHIFT_ARCHIVED_ATTENDANCE_LOCKED: Ca tuần cũ đã lưu trữ — lượt điểm danh nằm ở kho chỉ đọc nên không chuyển sang NV khác được! Chỉ đổi được ca/chi nhánh (giữ nguyên NV), hoặc dùng phiếu bù công.'
           );
         }
-        // HR đổi NV/ngày: chặn người nhận vượt 2 ca/ngày (bỏ qua chính ca đang sửa).
+        // HR đổi NV/ngày: HR được quyền xếp ca thứ 3/ngày (quy định tối đa
+        // 2 ca/ngày chỉ áp cho NV TỰ đổi ca với nhau), nên chỉ chặn gán TRÙNG
+        // ĐÚNG MÃ CA của chính NV trong cùng ngày.
         if (newEmp !== String(sh.employee_id || '') || newDate !== oldDay) {
-          await this.assertCanReceiveShift({
-            employeeId: newEmp,
-            date: newDate,
-            shiftCode: newCode,
-            excludeAssignmentId: assignmentId,
-          });
+          const sameDay = await this.repo.getShiftsForEmployee(newEmp, newDate, newDate).catch(() => []);
+          const dupCode = (sameDay || []).find((s: any) =>
+            String((s as any)?.assignment_id || '') !== String(assignmentId) &&
+            String((s as any)?.status || '').toUpperCase() !== 'CANCELLED' &&
+            (normSheetDate((s as any)?.date) || String((s as any)?.date || '').slice(0, 10)) === String(newDate).slice(0, 10) &&
+            String((s as any)?.shift_code || '').toUpperCase() === String(newCode || '').toUpperCase()
+          );
+          if (dupCode) {
+            throw new Error(
+              `SHIFT_DUPLICATE: ${newEmp} ngày ${newDate} đã có ${newCode}, không thể gán trùng ca!`
+            );
+          }
         }
         // Dời lượt điểm danh theo ca sang NV mới (giữ nguyên giờ giấc bằng chứng).
         let movedEvents = 0;
@@ -625,18 +633,8 @@ export class SchedulesService {
             `SHIFT_DUPLICATE: ${String(data.employeeId)} ngày ${String(data.date).slice(0, 10)} đã có ${String(data.shiftCode)} (${String((dup as any)?.assignment_id || '')})! Không tạo trùng.`
           );
         }
-        // Ràng buộc cứng 2 ca/ngày: HR xếp tay cũng không được tạo ca thứ 3.
-        const liveSameDay = (sameDay || []).filter(
-          (s: any) =>
-            String((s as any)?.status || '').toUpperCase() !== 'CANCELLED' &&
-            (normSheetDate((s as any)?.date) || String((s as any)?.date || '').slice(0, 10)) === String(data.date).slice(0, 10)
-        );
-        if (liveSameDay.length >= 2) {
-          const label = liveSameDay.map((s: any) => s.shift_code).filter(Boolean).join(' + ');
-          throw new Error(
-            `MAX_2_SHIFTS_PER_DAY: ${String(data.employeeId)} ngày ${String(data.date).slice(0, 10)} đã có ${liveSameDay.length} ca (${label}) — mỗi ngày chỉ được tối đa 2 ca!`
-          );
-        }
+        // HR xếp tay được phép tạo ca thứ 3/ngày (quy định tối đa 2 ca/ngày
+        // chỉ áp cho NV TỰ đổi ca với nhau). Vẫn chặn trùng mã ca ở trên.
         // Tuần đã phát hành (có ca PUBLISHED) hoặc HR bù ca tuần trước → PUBLISHED.
         const publishNow = data.publish === true
           || (await this.isWeekPublished(data.branchId, data.date).catch(() => false));
@@ -2273,8 +2271,17 @@ export class SchedulesService {
     if (data.targetEmployeeId === ownerId) {
       throw new Error('SUPPORT_SAME_EMPLOYEE: Nhân viên nhận hỗ trợ phải khác chủ ca!');
     }
-    // Báo sớm cho HR: B đã đủ 2 ca/ngày hoặc đã có đúng ca đó ngày đó thì không nhận được.
-    await this.assertCanReceiveShift({ employeeId: data.targetEmployeeId, date: day, shiftCode });
+    // HR được quyền xếp ca thứ 3/ngày cho NV (quy định tối đa 2 ca/ngày chỉ
+    // áp cho NV TỰ đổi ca với nhau) — chỉ chặn nhận TRÙNG ĐÚNG MÃ CA.
+    const dayShifts = await this.repo.getShiftsForEmployee(data.targetEmployeeId, day, day).catch(() => []);
+    const clash = (dayShifts || []).find((s: any) =>
+      String((s as any)?.status || '').toUpperCase() !== 'CANCELLED' &&
+      (normSheetDate((s as any)?.date) || String((s as any)?.date || '').slice(0, 10)) === day &&
+      String((s as any)?.shift_code || '').toUpperCase() === String(shiftCode || '').toUpperCase()
+    );
+    if (clash) {
+      throw new Error(`SUPPORT_SHIFT_CONFLICT: Nhân viên đã có ${shiftCode} ngày ${day}, không thể nhận trùng ca!`);
+    }
     const swapId = `SUP_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_DOI_CA',
@@ -2411,11 +2418,10 @@ export class SchedulesService {
   }
 
   /**
-   * RÀNG BUỘC CỨNG: mỗi nhân viên TỐI ĐA 2 ca LIVE trên 1 ngày.
-   * Dùng cho MỌI đường chuyển ca (NV tự đổi ca, HR điều phối, hỗ trợ chi nhánh,
-   * xếp tay). Trước đây các đường này chỉ chặn TRÙNG MÃ ca nên NV đã có 2 ca
-   * vẫn nhận thêm ca thứ 3 qua đổi ca (VD 1 ngày có CA_1 + CA_2 rồi nhận tiếp
-   * CA_3) — vi phạm quy định 2 ca/ngày mà không ai chặn.
+   * RÀNG BUỘC: nhân viên TỰ đổi ca với nhau thì TỐI ĐA 2 ca LIVE/ngày.
+   * Chỉ dùng cho các luồng NV tự bấm đổi/nhận ca (đổi 1 chiều, tráo tay đôi,
+   * thêm ca thử việc). HR xếp tay / điều phối / hỗ trợ chi nhánh thì ĐƯỢC phép
+   * xếp ca thứ 3 trong ngày (chỉ chặn trùng đúng mã ca).
    * - `excludeAssignmentId`: ca đang được chuyển ĐI của chính NV đó (tráo tay
    *   đôi cùng ngày) — sau giao dịch không còn thuộc NV nên không tính.
    */
@@ -2637,8 +2643,8 @@ export class SchedulesService {
           if (empClash) {
             throw new Error(`SUPPORT_SHIFT_CONFLICT: Bạn đã có ${supCode} ngày ${supDate}, không thể nhận thêm ca hỗ trợ trùng ca!`);
           }
-          // Chặn nhận ca thứ 3 trong ngày (B đã đủ 2 ca live).
-          await this.assertCanReceiveShift({ employeeId: partnerId, date: supDate, shiftCode: supCode });
+          // HR được quyền điều ca thứ 3/ngày — không chặn MAX_2 ở luồng hỗ trợ
+          // chi nhánh (quy định 2 ca/ngày chỉ áp cho NV tự đổi ca với nhau).
           await this.repo.updateShiftAssignment(coverShift.assignment_id, {
             employee_id: partnerId,
             // Ca đã publish rồi chuyển chủ: phải giữ PUBLISHED, nếu rơi về
@@ -2984,13 +2990,17 @@ export class SchedulesService {
           if (!coverShift) {
             throw new Error('SHIFTS_NOT_FOUND_FOR_SWAP');
           }
-          // Chặn duyệt khi người nhận đã có đúng ca đó hoặc đã đủ 2 ca/ngày.
+          // HR điều phối được quyền giao ca thứ 3/ngày — chỉ chặn nếu người
+          // nhận đã có ĐÚNG MÃ CA đó trong ngày (quy định 2 ca/ngày chỉ áp
+          // cho NV tự đổi ca với nhau).
           const dispDay = String((coverShift as any).date || '').slice(0, 10);
-          await this.assertCanReceiveShift({
-            employeeId: swap.target_employee_id,
-            date: dispDay,
-            shiftCode: String((coverShift as any).shift_code || ''),
-          });
+          const dispShifts = await this.repo.getShiftsForEmployee(swap.target_employee_id, dispDay, dispDay).catch(() => []);
+          if ((dispShifts || []).some((s: any) =>
+            String((s as any)?.status || '').toUpperCase() !== 'CANCELLED' &&
+            String((s as any)?.shift_code || '') === String((coverShift as any).shift_code || '')
+          )) {
+            throw new Error(`SUPPORT_SHIFT_CONFLICT: Nhân viên đã có ${(coverShift as any).shift_code} ngày ${dispDay}, không thể nhận trùng ca!`);
+          }
           await this.repo.updateShiftAssignment(coverShift.assignment_id, {
             employee_id: swap.target_employee_id,
             status: 'PUBLISHED',

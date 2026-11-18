@@ -1723,31 +1723,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [supportTarget, setSupportTarget] = useState('');
   const [supportReason, setSupportReason] = useState('');
   const [supportBusy, setSupportBusy] = useState(false);
-  // Ca hiện có của B (tải sẵn) — HR thấy ngay B đã đủ 2 ca/ngày thì KHÔNG gửi
-  // phiếu hỗ trợ được, không phải chờ server báo lỗi.
-  const [supportTargetShifts, setSupportTargetShifts] = useState<any[]>([]);
-  const [supportTargetShiftsLoading, setSupportTargetShiftsLoading] = useState(false);
-  const loadSupportTargetShifts = async (employeeId: string) => {
-    setSupportTargetShifts([]);
-    if (!employeeId) return;
-    setSupportTargetShiftsLoading(true);
-    try {
-      const nowVn = new Date(Date.now() + 7 * 3_600_000);
-      const dow = (nowVn.getUTCDay() + 6) % 7;
-      const mon = new Date(nowVn);
-      mon.setUTCDate(mon.getUTCDate() - dow);
-      const fromD = mon.toISOString().slice(0, 10);
-      const toDt = new Date(mon);
-      toDt.setUTCDate(toDt.getUTCDate() + 60);
-      const list = await apiRequest(`/admin/employee-shifts/${employeeId}?fromDate=${fromD}&toDate=${toDt.toISOString().slice(0, 10)}`);
-      const rows = (Array.isArray(list) ? list : [])
-        .filter((s: any) => String((s as any).status || '').toUpperCase() !== 'CANCELLED')
-        .filter((s: any) => String((s as any).date || '').slice(0, 10) >= fromD);
-      setSupportTargetShifts(rows);
-    } catch { /* offline: server vẫn chặn khi gửi */ } finally {
-      setSupportTargetShiftsLoading(false);
-    }
-  };
   const loadSupportOwnerShifts = async (employeeId: string) => {
     setSupportOwnerShifts([]);
     setSupportAssign('');
@@ -10107,7 +10082,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             if (offThatDay.length > 0) {
               if (!window.confirm(`${(picked as any)?.full_name} đang có ngày OFF/nghỉ ${supDate} — xếp ca ${shiftLabel} thì ngày OFF đó tự chuyển thành ca làm việc (NV nhận thông báo). Tiếp tục?`)) return;
             } else if (shiftsThatDay.length > 0) {
-              if (!window.confirm(`${(picked as any)?.full_name} đã có ca ${String(shiftsThatDay[0]?.shift_code || '')} ngày ${supDate} — tạo thêm thành 2 ca/ngày. Tiếp tục?`)) return;
+              if (!window.confirm(`${(picked as any)?.full_name} đã có ca ${shiftsThatDay.map((s: any) => s.shift_code).join(' + ')} ngày ${supDate} — tạo thêm thành ${shiftsThatDay.length + 1} ca/ngày. Tiếp tục?`)) return;
             }
             setSupBusy(true);
             try {
@@ -10193,7 +10168,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   )}
                   {picked && shiftsThatDay.length > 0 && (
                     <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '8px 10px', lineHeight: 1.5 }}>
-                      ⚠️ {(picked as any)?.full_name} đã có ca {String(shiftsThatDay.map((s: any) => s.shift_code).join(' + '))} ngày {supDate} — tạo thêm thành 2 ca/ngày.
+                      ⚠️ {(picked as any)?.full_name} đã có ca {String(shiftsThatDay.map((s: any) => s.shift_code).join(' + '))} ngày {supDate} — tạo thêm thành {shiftsThatDay.length + 1} ca/ngày (HR được phép xếp ca thứ 3).
                     </div>
                   )}
                   <button className="btn-primary" disabled={supBusy} onClick={doSupShift} style={{ padding: '10px', fontWeight: 800, fontSize: '13px', backgroundColor: '#7C3AED' }}>
@@ -10357,7 +10332,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   )}
                   {picked && bfShiftsThatDay.length > 0 && (
                     <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '8px 10px', lineHeight: 1.5 }}>
-                      ⚠️ {(picked as any)?.full_name} đã có ca {String(bfShiftsThatDay.map((s: any) => s.shift_code).join(' + '))} ngày {bfDate} — tạo thêm thành 2 ca/ngày.
+                      ⚠️ {(picked as any)?.full_name} đã có ca {String(bfShiftsThatDay.map((s: any) => s.shift_code).join(' + '))} ngày {bfDate} — tạo thêm thành {bfShiftsThatDay.length + 1} ca/ngày (HR được phép xếp ca thứ 3).
                     </div>
                   )}
                   <button className="btn-primary" disabled={supBusy} onClick={doBfShift} style={{ padding: '10px', fontWeight: 800, fontSize: '13px', backgroundColor: '#059669' }}>
@@ -11912,29 +11887,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       const m = map[st] || { bg: '#F3F4F6', fg: '#6B7280', label: st };
       return <span className="badge" style={{ backgroundColor: m.bg, color: m.fg, fontWeight: 700 }}>{m.label}</span>;
     };
-    // Kiểm tra B NGAY trên form: B đã đủ 2 ca live/ngày hoặc đã có đúng mã ca
-    // đang chuyển thì chặn — đúng quy định tối đa 2 ca/ngày (server vẫn chặn lại).
-    const selectedOwnerShift = supportOwnerShifts.find((s: any) => s.assignment_id === supportAssign);
-    const supportDay = String(selectedOwnerShift?.date || '').slice(0, 10);
-    const targetDayShifts = supportDay
-      ? supportTargetShifts.filter((s: any) => String((s as any).date || '').slice(0, 10) === supportDay)
-      : [];
-    const targetHasSameCode = !!selectedOwnerShift &&
-      targetDayShifts.some((s: any) => String((s as any).shift_code || '') === String(selectedOwnerShift.shift_code || ''));
-    const targetOver2Shifts = targetDayShifts.length >= 2;
-    const targetConflictMsg = !supportTarget || !supportDay
-      ? ''
-      : targetHasSameCode
-        ? `${empName(supportTarget)} đã có ${shiftLabel(selectedOwnerShift?.shift_code || '')} ngày ${supportDay} — không thể nhận trùng ca!`
-        : targetOver2Shifts
-          ? `${empName(supportTarget)} đã có ${targetDayShifts.length} ca ngày ${supportDay} (${targetDayShifts.map((s: any) => s.shift_code).join(' + ')}) — quy định tối đa 2 ca/ngày, không thể nhận ca thứ 3!`
-          : '';
     const submitSupport = async () => {
       if (!supportOwner) { showToast('Vui lòng chọn nhân viên A (người nhường ca)!'); return; }
       if (!supportAssign) { showToast('Vui lòng chọn ca A nhường!'); return; }
       if (!supportTarget) { showToast('Vui lòng chọn nhân viên B chính thức nhận hỗ trợ!'); return; }
-      if (supportTargetShiftsLoading) { showToast('Đang kiểm tra lịch ca của B — vui lòng đợi vài giây!'); return; }
-      if (targetConflictMsg) { showToast(targetConflictMsg); return; }
       if (supportBusy) return;
       setSupportBusy(true);
       try {
@@ -11974,7 +11930,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>A — người nhường ca (bận việc):</label>
               <select
                 value={supportOwner}
-                onChange={(e) => { setSupportOwner(e.target.value); setSupportTarget(''); setSupportTargetShifts([]); loadSupportOwnerShifts(e.target.value); }}
+                onChange={(e) => { setSupportOwner(e.target.value); setSupportTarget(''); loadSupportOwnerShifts(e.target.value); }}
                 style={{ width: '100%' }}
               >
                 <option value="">-- Chọn nhân viên A --</option>
@@ -12002,7 +11958,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '12px' }}>
             <div>
               <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>B — nhân viên chính thức nhận làm thay:</label>
-              <select value={supportTarget} onChange={(e) => { setSupportTarget(e.target.value); loadSupportTargetShifts(e.target.value); }} style={{ width: '100%' }}>
+              <select value={supportTarget} onChange={(e) => setSupportTarget(e.target.value)} style={{ width: '100%' }}>
                 <option value="">-- Chọn nhân viên B --</option>
                 {officials.map((e: any) => (
                   <option key={e.employee_id} value={e.employee_id}>
@@ -12010,29 +11966,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   </option>
                 ))}
               </select>
-              {supportTarget && supportTargetShiftsLoading && (
-                <div style={{ marginTop: '6px', fontSize: '11.5px', fontWeight: 600, color: 'var(--text-muted)' }}>
-                  ⏳ Đang kiểm tra ca hiện có của B...
-                </div>
-              )}
-              {supportTarget && !supportTargetShiftsLoading && targetConflictMsg && (
-                <div style={{ marginTop: '6px', fontSize: '11.5px', fontWeight: 700, color: '#B91C1C', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '6px', padding: '6px 8px' }}>
-                  ⚠ {targetConflictMsg}
-                </div>
-              )}
             </div>
             <div>
               <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Lý do điều hỗ trợ:</label>
               <input type="text" value={supportReason} onChange={(e) => setSupportReason(e.target.value)} placeholder="VD: A bận việc gia đình, điều B (CN2) làm thay ca 1 CN130..." style={{ width: '100%' }} />
             </div>
           </div>
-          <button
-            className="btn-primary"
-            disabled={supportBusy || supportTargetShiftsLoading || !!targetConflictMsg}
-            onClick={submitSupport}
-            title={targetConflictMsg || undefined}
-            style={{ marginTop: '12px', padding: '9px 18px', fontSize: '13px', opacity: (supportBusy || supportTargetShiftsLoading || !!targetConflictMsg) ? 0.6 : 1 }}
-          >
+          <button className="btn-primary" disabled={supportBusy} onClick={submitSupport} style={{ marginTop: '12px', padding: '9px 18px', fontSize: '13px', opacity: supportBusy ? 0.6 : 1 }}>
             {supportBusy ? '⏳ ĐANG GỬI...' : 'Gửi Yêu Cầu Hỗ Trợ Cho Nhân Viên B'}
           </button>
         </div>

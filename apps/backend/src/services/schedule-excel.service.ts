@@ -190,8 +190,8 @@ export class ScheduleExcelService {
     }
 
     // Dropdown CA_1/CA_2/CA_3 (kể cả dòng trống dự phòng bên dưới).
-    // errorStyle 'warning' (không 'stop') để cho phép ghi 2 ca/ngày "CA_1+CA_2"
-    // — Excel chỉ cảnh báo rồi vẫn nhận giá trị combo.
+    // errorStyle 'warning' (không 'stop') để cho phép ghi nhiều ca/ngày "CA_1+CA_2"
+    // (HR có thể xếp thêm ca thứ 3) — Excel chỉ cảnh báo rồi vẫn nhận giá trị combo.
     (ws as any).dataValidations.add('D2:J300', {
       type: 'list',
       allowBlank: true,
@@ -199,7 +199,7 @@ export class ScheduleExcelService {
       showErrorMessage: true,
       errorStyle: 'warning',
       errorTitle: 'Ma ca?',
-      error: `Ma le: ${VALID_CODES.join(', ')} — 2 ca/ngày ghi "CA_1+CA_2".`,
+      error: `Ma le: ${VALID_CODES.join(', ')} — nhiều ca/ngày ghi "CA_1+CA_2" (HR có thể thêm ca thứ 3).`,
     });
 
     // Sheet hướng dẫn
@@ -210,7 +210,7 @@ export class ScheduleExcelService {
       '1. Giữ nguyên DÒNG 1 (tiêu đề): MA_NV, HO_TEN, CHI_NHANH và 7 ngày YYYY-MM-DD từ thứ Hai tới Chủ Nhật.',
       '2. Chỉ điền ở sheet LICH, từ dòng 2 trở đi. Mỗi nhân viên 1 dòng (đã điền sẵn danh sách).',
       '3. Ô ca: gõ CA_1 (07-12) / CA_2 (12-18) / CA_3 (18-23) — có dropdown gợi ý. Ô TRỐNG = không xếp ca.',
-      '   • Nhân viên làm 2 ca cùng ngày: ghi 2 mã cách nhau dấu cộng, ví dụ CA_1+CA_2 (hoặc 1+2).',
+      '   • Nhân viên làm 2 ca cùng ngày: ghi 2 mã cách nhau dấu cộng, ví dụ CA_1+CA_2 (hoặc 1+2) — HR có thể ghi thêm ca thứ 3 nếu cần.',
       '4. Không đổi cột MA_NV. Nhân viên mới chưa có trong file: bổ sung dòng mới với Mã NV đúng (UBM_NVxxxxxx).',
       '5. Xuất file giữ nguyên .xlsx, rồi bấm "Nhập lịch Excel" trên cổng Admin, chọn đúng tuần rồi Xác nhận nhập.',
       '',
@@ -417,17 +417,8 @@ export class ScheduleExcelService {
             }
             const validTargets = targets.filter((c) => VALID_CODES.includes(c));
             if (validTargets.length === 0) continue;
-            // Ràng buộc cứng: tối đa 2 ca/ngày — file ghi 3 ca thì báo lỗi, không nhập.
-            if (validTargets.length > 2) {
-              errors.push({
-                row: r,
-                maNV,
-                name: empName,
-                date,
-                message: `1 ngày tối đa 2 ca — ô đang ghi ${validTargets.length} ca (${validTargets.join('+')})`,
-              });
-              continue;
-            }
+            // HR nhập lịch được phép xếp ca thứ 3/ngày (quy định tối đa 2 ca/ngày
+            // chỉ áp cho NV TỰ đổi ca với nhau), nên không chặn số mã ca trong ô.
 
             const sameDay = (
               byEmpDate.get(`${emp.employee_id}|${date}|${canonicalBranch(branchId)}`) || []
