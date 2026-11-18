@@ -1937,7 +1937,9 @@ export function App() {
       };
       const cleanNotifs = (Array.isArray(notifs) ? notifs : []).filter((n: any) => {
         if (!n) return false;
-        if (n.type === 'CHECKIN_REMINDER' ||
+        // CHECKIN_REMINDER là thông báo nghiệp vụ chính thức (1 ca = 1 lần) -> giữ.
+        // Chỉ dọn các thông báo "nhắc ..." cũ không có type chuẩn (rác từng gửi).
+        if (n.type !== 'CHECKIN_REMINDER' &&
           /nhắc.*(?:check-?in|điểm danh)/i.test(`${n.title || ''} ${n.summary || ''}`)) return false;
         if (n.recipient_id && n.recipient_id !== 'ALL' && n.recipient_id !== meId) return false;
         if (String(n.recipient_id || '') !== 'ALL') return true;
@@ -2588,6 +2590,11 @@ export function App() {
         // đã có handler riêng (leave.updated, swap.updated, adjustment.updated...).
         if (String(p?.type || '').startsWith('emp.')) return;
         reload(undefined, p);
+        // Thông báo nhắc check-in đúng chi nhánh – ca làm: hiện toast ngay để NV
+        // không bỏ lỡ giờ vào ca (đồng thời lưu trong Hộp thư thông báo).
+        if (String(p?.type || '') === 'CHECKIN_REMINDER') {
+          showToastRef.current(String(p?.title || '⏰ Nhắc check-in ca làm!'));
+        }
         // Lịch kiểm tra đầu ra thử việc: tải ngay + báo rõ để NV không bỏ lỡ link Meet.
         if (String(p?.type || '') === 'PROBATION_ASSESSMENT') {
           fetchProbationAssessmentRef.current().catch(() => null);

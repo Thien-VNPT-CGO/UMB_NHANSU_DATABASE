@@ -377,7 +377,7 @@ Chuẩn thực thể: `id` bất biến, `version` tăng (optimistic lock), `cre
 | `interviewReminderTickSafe` | 60s | Nhắc HR trước giờ PV 15 phút |
 | `interviewNoShowTickSafe` | 5 phút | Vắng PV quá 30p → NO_SHOW + xóa slot |
 | `photoRetryTickSafe` | 5 phút | Upload lại ảnh chấm công thất bại (giữ inline `DRV_LOCAL_...`) |
-| `weeklyOffTick` + `autoRemindersTickSafe` | 60s / 5 phút | Nhắc trước 5 phút khi mở cổng OFF; nhắc check-in qua Zalo trước ca 15–20 phút; nhắc duyệt quá 24h; thử việc gần kết thúc; `autoBackupTick` 24h backup tự động + verify |
+| `weeklyOffTick` + `autoRemindersTickSafe` | 60s / 5 phút | Nhắc trước 5 phút khi mở cổng OFF; nhắc check-in **in-app + Zalo** đúng chi nhánh – ca làm cho mọi khối (Cửa hàng/Xưởng/Sale theo ca PUBLISHED, mỗi ca 1 lần; Văn Phòng theo lịch hành chính 08:00–08:30); nhắc duyệt quá 24h; thử việc gần kết thúc; `autoBackupTick` 24h backup tự động + verify |
 
 Tắt êm (SIGTERM/SIGINT): `gracefulShutdown` — `flushSheetsWrites(20s)`, `server.close`, deadline 25s để không thủng ca vừa check-in.
 

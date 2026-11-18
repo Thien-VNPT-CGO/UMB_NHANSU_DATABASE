@@ -1654,19 +1654,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     } catch (err: any) { evErr(res, err); }
   });
 
-  // Dọn dẹp/xóa mọi thông báo nhắc hẹn điểm danh khỏi bộ nhớ hệ thống
-  const purgeCheckinReminders = () => {
-    try {
-      const fallback = (adapter as any).fallbackAdapter || adapter;
-      if (Array.isArray(fallback.notificationInbox)) {
-        fallback.notificationInbox = fallback.notificationInbox.filter((n: any) =>
-          n.type !== 'CHECKIN_REMINDER' &&
-          !/nhắc.*(?:check-?in|điểm danh)/i.test(`${n.title || ''} ${n.summary || ''}`)
-        );
-      }
-    } catch {}
-  };
-  purgeCheckinReminders();
+  // Không còn dọn dẹp thông báo nhắc điểm danh: đây là thông báo nghiệp vụ chính
+  // thức, mỗi ca chỉ gửi đúng 1 lần (xem auto-reminders.service.ts).
 
   // Realtime Rich Notification Dispatcher (Gửi thông báo có âm thanh + hiệu ứng cho Admin & HR)
   // Đồng thời LƯU TRỮ các sự kiện từ cổng nhân viên (điểm danh/đổi ca/nghỉ/PIN/TEST)
@@ -8438,22 +8427,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const recipientId = req.user?.employeeId || req.user?.id || 'ALL';
       const unreadOnly = req.query.filter === 'unread';
 
-      // Tự động dọn dẹp các thông báo nhắc hẹn điểm danh khỏi bộ nhớ
-      try {
-        const fallback = (adapter as any).fallbackAdapter || adapter;
-        if (Array.isArray(fallback.notificationInbox)) {
-          fallback.notificationInbox = fallback.notificationInbox.filter((n: any) =>
-            n.type !== 'CHECKIN_REMINDER' &&
-            !/nhắc.*(?:check-?in|điểm danh)/i.test(`${n.title || ''} ${n.summary || ''}`)
-          );
-        }
-      } catch {}
-
       const items = await notificationsService.getInbox(recipientId, unreadOnly);
-      let filtered = (items || []).filter(item =>
-        item.type !== 'CHECKIN_REMINDER' &&
-        !/nhắc.*(?:check-?in|điểm danh)/i.test(`${item.title || ''} ${item.summary || ''}`)
-      );
+      // Nhắc check-in là thông báo nghiệp vụ chính thức (1 ca = 1 lần) nên hiển thị
+      // đầy đủ trong hộp thư — không lọc bỏ nữa.
+      let filtered = (items || []);
 
       // Hộp thư tự reset 23h00 mỗi ngày và pull chỉ giữ thông báo trong ngày, nên
       // thông báo lịch kiểm tra đầu ra thử việc (đặt trước nhiều ngày) sẽ biến mất

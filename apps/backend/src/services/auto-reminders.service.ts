@@ -1,11 +1,17 @@
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { NotificationsService } from './notifications.service.js';
 import { ZaloService } from './zalo.service.js';
+import { OfficeService } from './office.service.js';
+import { normSheetDate } from './employees.service.js';
+import { formatHm, officeCheckInWindowOf, officeDayRuleOfIso } from '@ubm/shared';
 import { parseUniform, uniformRefundMilestoneDate, uniformRefundTotal } from '../utils/uniform.js';
 
 /**
  * Nhắc việc tự động (chạy mỗi 5 phút từ server.ts):
- *  1. Nhắc check-in qua Zalo trước ca 15 phút (NV chưa check-in).
+ *  1. Nhắc check-in (in-app + Zalo) đúng chi nhánh – ca làm cho MỌI khối:
+ *     - Cửa hàng / Xưởng / Sale: chỉ nhắc NV có ca PUBLISHED hôm đó, mỗi ca 1 lần.
+ *     - Văn phòng: nhắc theo đúng khung điểm danh hành chính 08:00–08:30.
+ *     Khử trùng theo assignment (1 ca = 1 thông báo), lưu latch để restart không gửi lặp.
  *  2. Nhắc HR/Admin (in-app): NV chưa đổi PIN khởi tạo quá 3 ngày.
  *  3. Nhắc HR/Admin (in-app): đơn chờ duyệt quá 24h (nghỉ/đổi ca/bổ sung công).
  *  4. Nhắc hoàn thành thử việc (in-app): NV hết hạn hôm nay / còn ≤2 ngày
@@ -59,29 +65,48 @@ export function formatVnTime(epochMs: number): string {
   }
 }
 
-/** Lấy thông tin hiển thị ca chuẩn xác (Tên ca, Giờ bắt đầu) */
-export function resolveShiftInfo(shiftCode?: string, startMs?: number | null): { name: string; start: string } {
+/**
+ * Lấy thông tin hiển thị ca chuẩn xác (Tên ca, Giờ bắt đầu).
+ * `opts.isOffice` dùng lịch hành chính thật (08:00–17:00 / 08:00–12:00) thay
+ * vì mã ca CA_1 (07:00) — ca Văn Phòng lưu mã CA_1 nhưng bắt đầu 08:00.
+ */
+export function resolveShiftInfo(
+  shiftCode?: string,
+  startMs?: number | null,
+  opts?: { isOffice?: boolean; date?: string },
+): { name: string; start: string; end?: string } {
+  const actualStart = startMs ? formatVnTime(startMs) : '';
+  if (opts?.isOffice) {
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(opts.date || ''))
+      ? String(opts.date).slice(0, 10)
+      : new Date((startMs || Date.now()) + tzOffsetHours() * 3_600_000).toISOString().slice(0, 10);
+    const rule = officeDayRuleOfIso(date);
+    const start = formatHm(rule.startHour, rule.startMinute);
+    const end = formatHm(rule.endHour, rule.endMinute);
+    return { name: `Ca hành chính (${start} – ${end})`, start, end };
+  }
   if (shiftCode && SHIFT_DEFINITIONS[shiftCode]) {
     return {
       name: SHIFT_DEFINITIONS[shiftCode].name,
-      start: SHIFT_DEFINITIONS[shiftCode].start,
+      start: actualStart || SHIFT_DEFINITIONS[shiftCode].start,
+      end: SHIFT_DEFINITIONS[shiftCode].end,
     };
   }
-  const start = startMs ? formatVnTime(startMs) : '07:00';
   return {
     name: shiftCode || 'Ca làm việc',
-    start,
+    start: actualStart || '07:00',
   };
 }
 
-/** Parse giờ bắt đầu ca: Ưu tiên mã ca chuẩn (CA_1: 07:00, CA_2: 12:00, CA_3: 18:00 VN), fallback theo startAt */
+/**
+ * Parse giờ bắt đầu ca. `start_at` là giờ THẬT của ca (cổng điểm danh mở theo
+ * mốc này — xem POST /attendance/checkin), nên ưu tiên start_at; chỉ fallback
+ * theo mã ca khi ca cũ thiếu/không đọc được start_at.
+ *
+ * Trước đây ưu tiên mã ca khiến ca Văn Phòng (mã CA_1 nhưng start_at 08:00)
+ * bị nhắc lúc 07:00 — sai khung điểm danh 08:00–08:30.
+ */
 export function parseShiftStart(date: string, startAt?: string, shiftCode?: string): number | null {
-  // Ưu tiên chuẩn hóa ca hệ thống: luôn căn chuẩn theo giờ Việt Nam (UTC+7)
-  if (shiftCode && SHIFT_DEFINITIONS[shiftCode]) {
-    const h = SHIFT_DEFINITIONS[shiftCode].startHour;
-    const t = Date.parse(`${date}T${String(h).padStart(2, '0')}:00:00Z`);
-    if (Number.isFinite(t)) return t - tzOffsetHours() * 3_600_000;
-  }
   if (startAt) {
     try {
       const s = String(startAt).trim();
@@ -102,18 +127,60 @@ export function parseShiftStart(date: string, startAt?: string, shiftCode?: stri
       if (Number.isFinite(t)) return t;
     } catch {}
   }
+  // Fallback: ca cũ không có start_at -> căn theo mã ca chuẩn (giờ VN).
+  if (shiftCode && SHIFT_DEFINITIONS[shiftCode]) {
+    const h = SHIFT_DEFINITIONS[shiftCode].startHour;
+    const t = Date.parse(`${String(date).slice(0, 10)}T${String(h).padStart(2, '0')}:00:00Z`);
+    if (Number.isFinite(t)) return t - tzOffsetHours() * 3_600_000;
+  }
   return null;
 }
 
-const remindedCheckin = new Set<string>(); // `${date}:${assignment_id}:${employee_id}`
+const remindedCheckin = new Set<string>(); // `${date}:${assignment_id || employee+shift}`
 const notifiedDaily = new Set<string>(); // `${date}:${kind}`
 let notifiedDay = '';
+/** Đang chạy 1 lượt tick (chặn 2 lượt chồng nhau gửi trùng). */
+let tickInFlight = false;
+
+/** Latch bền vững: 1 ca chỉ nhắc 1 lần, kể cả khi server restart giữa cửa sổ nhắc. */
+const CHECKIN_REMINDER_LATCH_KEY = 'checkin_reminder_latch';
+let checkinLatchLoadedFor = '';
 
 function resetDaily(nowDay: string) {
   if (notifiedDay !== nowDay) {
     notifiedDay = nowDay;
     remindedCheckin.clear();
     notifiedDaily.clear();
+    // Ngày mới: phải đọc lại latch của ngày mới từ CAU_HINH_HE_THONG.
+    checkinLatchLoadedFor = '';
+  }
+}
+
+/** Nạp latch nhắc check-in của hôm nay (chỉ đọc 1 lần/ngày cho mỗi process). */
+async function ensureCheckinLatch(repo: ISheetsRepository, today: string) {
+  if (checkinLatchLoadedFor === today) return;
+  checkinLatchLoadedFor = today;
+  try {
+    const settings = await repo.getSystemSettings().catch(() => ({} as any));
+    const raw = settings?.[CHECKIN_REMINDER_LATCH_KEY];
+    if (raw && String(raw.date || '') === today && Array.isArray(raw.keys)) {
+      for (const k of raw.keys) {
+        if (k) remindedCheckin.add(String(k));
+      }
+    }
+  } catch (e: any) {
+    console.warn('[auto-reminders] đọc latch nhắc check-in lỗi:', e?.message || e);
+  }
+}
+
+/** Ghi latch sau khi đã gửi (gộp 1 lần/tick, không ghi từng ca). */
+async function saveCheckinLatch(repo: ISheetsRepository, today: string) {
+  try {
+    await repo.updateSystemSettings({
+      [CHECKIN_REMINDER_LATCH_KEY]: { date: today, keys: [...remindedCheckin] },
+    });
+  } catch (e: any) {
+    console.warn('[auto-reminders] ghi latch nhắc check-in lỗi:', e?.message || e);
   }
 }
 
@@ -126,7 +193,20 @@ async function hrAdminIds(repo: ISheetsRepository): Promise<string[]> {
   }
 }
 
-/** Gửi thông báo nhắc check-in cho 1 ca làm việc cụ thể */
+/** NV khối Văn Phòng đã có phiếu nghỉ phép ĐÃ DUYỆT trong ngày -> không nhắc điểm danh. */
+function approvedOfficeLeaveIds(settings: any, today: string): Set<string> {
+  const out = new Set<string>();
+  const rows = Array.isArray(settings?.office_leave_requests) ? settings.office_leave_requests : [];
+  for (const l of rows) {
+    if (String(l?.status || '').toUpperCase() !== 'APPROVED') continue;
+    if (normSheetDate(l?.leave_date) !== today) continue;
+    const id = String(l?.employee_id || '').trim();
+    if (id) out.add(id);
+  }
+  return out;
+}
+
+/** Gửi thông báo nhắc check-in cho 1 ca làm việc cụ thể (in-app + Zalo). */
 export async function sendCheckinReminderForShift(
   repo: ISheetsRepository,
   notifications: NotificationsService,
@@ -134,6 +214,8 @@ export async function sendCheckinReminderForShift(
   shift: {
     assignment_id?: string;
     employee_id: string;
+    branch_id?: string;
+    branch_name?: string;
     shift_code?: string;
     date: string;
     start_at?: string;
@@ -146,9 +228,7 @@ export async function sendCheckinReminderForShift(
     return { success: false, sentZalo: false, sentInApp: false, reason: 'INVALID_START_TIME' };
   }
 
-  const { name: shiftName, start: startStr } = resolveShiftInfo(shift_code, startMs);
-
-  const emp = await repo.getEmployeeById(employee_id);
+  const emp: any = await repo.getEmployeeById(employee_id);
   if (!emp) {
     return { success: false, sentZalo: false, sentInApp: false, reason: 'EMPLOYEE_NOT_FOUND' };
   }
@@ -160,21 +240,63 @@ export async function sendCheckinReminderForShift(
     }
   }
 
+  const isOffice = OfficeService.isOfficeEmployee(emp);
+  const { name: shiftName, start: startStr } = resolveShiftInfo(shift_code, startMs, { isOffice, date });
+
+  // Tên chi nhánh đầy đủ để NV biết đúng nơi điểm danh (tick truyền sẵn).
+  let branchName = String(shift.branch_name || '').trim();
+  if (!branchName) {
+    const branchId = String(shift.branch_id || emp.default_branch_id || '');
+    const branches = await repo.getBranches().catch(() => [] as any[]);
+    const found: any = (branches || []).find(
+      (b: any) => String(b?.id || b?.branch_id || '') === branchId,
+    );
+    branchName = String(found?.name || branchId || 'Chi nhánh');
+  }
+
   let sentInApp = false;
   let sentZalo = false;
 
-  // Nhắc hẹn điểm danh qua Zalo cá nhân (không tạo in-app inbox notification để tránh chiếm dụng màn hình nhân viên)
+  let title = '';
+  let summary = '';
+  let zaloText = '';
+  if (isOffice) {
+    const win = officeCheckInWindowOf(startMs, date);
+    const openStr = String(win.openAt || '').slice(11, 16) || '08:00';
+    const closeStr = String(win.closeAt || '').slice(11, 16) || '08:30';
+    title = `⏰ Nhắc điểm danh ${shiftName} — ${branchName}`;
+    summary = `Hôm nay bạn có ${shiftName} tại ${branchName}. Khung điểm danh ${openStr}–${closeStr} (giờ Việt Nam) — mở Cổng Nhân Viên → Điểm danh để VÀO CA đúng giờ.`;
+    zaloText = `⏰ [Ụm Bò Milk] Nhắc điểm danh: ${shiftName} tại ${branchName} hôm nay.\n👉 Khung điểm danh ${openStr}–${closeStr} (giờ Việt Nam). Mở Cổng Nhân Viên → Điểm danh để VÀO CA đúng giờ nhé!`;
+  } else {
+    title = `⏰ Nhắc check-in ${shiftName} — ${branchName}`;
+    summary = `Hôm nay bạn có ${shiftName} tại ${branchName}, bắt đầu lúc ${startStr}. Mở Cổng Nhân Viên → Điểm danh để check-in đúng ca (chụp ảnh áo hồng + bật GPS).`;
+    zaloText = `⏰ [Ụm Bò Milk] Nhắc check-in: ${shiftName} tại ${branchName} của ${emp.full_name || 'bạn'} bắt đầu lúc ${startStr} hôm nay.\n👉 Mở Cổng Nhân Viên, chụp ảnh áo hồng + bật GPS để điểm danh đúng ca nhé!`;
+  }
 
-  // Gửi tin nhắn Zalo cá nhân nếu có số điện thoại và Zalo đã kết nối
+  // 1) Thông báo IN-APP trong hộp thư nhân viên (realtime + lưu lịch sử).
+  // Mỗi ca chỉ gửi 1 lần nhờ latch ở autoRemindersTick.
+  try {
+    await notifications.sendNotification({
+      recipientIds: [employee_id],
+      type: 'CHECKIN_REMINDER',
+      severity: 'ACTION_REQUIRED',
+      title,
+      summary,
+      targetPath: '/attendance',
+      actorId: 'SYSTEM',
+    });
+    sentInApp = true;
+  } catch (err: any) {
+    console.warn('[auto-reminders] in-app notification error:', err?.message || err);
+  }
+
+  // 2) Zalo cá nhân (nếu có số điện thoại và Zalo đã kết nối).
   const phone = emp.phone_normalized || '';
   if (phone && zalo.isConnected()) {
     try {
       const found = await zalo.findUserByPhone(phone).catch(() => null);
       if (found?.uid) {
-        await zalo.sendText(
-          found.uid,
-          `⏰ [Ụm Bò Milk] Nhắc check-in: ${shiftName} của ${emp.full_name || 'bạn'} bắt đầu lúc ${startStr} hôm nay.\n👉 Cổng điểm danh đã mở trước ca 30 phút. Vui lòng mở Cổng Nhân Viên chụp ảnh áo hồng + bật GPS để điểm danh trước giờ vào ca nhé!`
-        );
+        await zalo.sendText(found.uid, zaloText);
         sentZalo = true;
       }
     } catch (err: any) {
@@ -191,6 +313,10 @@ export async function autoRemindersTick(
   zalo: ZaloService,
   options?: { forceCheckin?: boolean; targetEmployeeId?: string }
 ): Promise<{ checkinsSent: number }> {
+  // Chống 2 lượt tick chồng nhau (mạng chậm >5 phút) gửi trùng thông báo.
+  if (tickInFlight) return { checkinsSent: 0 };
+  tickInFlight = true;
+  try {
   const now = Date.now();
   const vn = vnNow(new Date(now));
   const today = vnDateStr(vn);
@@ -198,42 +324,135 @@ export async function autoRemindersTick(
 
   let checkinsSent = 0;
 
-  // 1. Nhắc check-in trước ca 15 phút (In-App notification + Zalo)
+  // 1. Nhắc check-in đúng chi nhánh – ca làm (In-App notification + Zalo).
+  // Lấy TOÀN BỘ ca hôm nay của mọi chi nhánh/khối trong 1 lượt: cửa hàng, xưởng,
+  // Sale (ca xếp tay) và Văn Phòng (lịch hành chính cố định).
   try {
-    const branches = await repo.getBranches();
-    for (const b of branches) {
-      let shifts: any[] = [];
-      try {
-        shifts = await repo.getShiftsForWeek(b.id, today);
-      } catch {
-        continue;
-      }
-      for (const s of shifts) {
-        if (s.date !== today || s.status !== 'PUBLISHED') continue;
-        if (options?.targetEmployeeId && s.employee_id !== options.targetEmployeeId) continue;
+    await ensureCheckinLatch(repo, today);
+    const [allShifts, branches, employees, settings] = await Promise.all([
+      repo.getShiftsForWeek('*', today).catch(() => [] as any[]),
+      repo.getBranches().catch(() => [] as any[]),
+      repo.listEmployees().catch(() => [] as any[]),
+      repo.getSystemSettings().catch(() => ({} as any)),
+    ]);
+    const canonical = (v?: string): string => {
+      const x = String(v || '').trim().toUpperCase();
+      if (x === 'CN1' || x === 'CN130') return 'CN130';
+      if (x === 'CN2' || x === 'CN261') return 'CN261';
+      if (x === 'CN3' || x === 'CN120') return 'CN120';
+      if (x === 'CN4' || x === 'CN111') return 'CN111';
+      return x;
+    };
+    const branchNames = new Map<string, string>();
+    for (const b of branches || []) {
+      const id = String((b as any)?.id || (b as any)?.branch_id || '').trim();
+      if (!id) continue;
+      const name = String((b as any)?.name || id);
+      branchNames.set(id, name);
+      branchNames.set(canonical(id), name);
+    }
+    const branchNameOf = (branchId: string, emp?: any): string =>
+      branchNames.get(branchId)
+      || branchNames.get(canonical(branchId))
+      || (emp ? String(branchNames.get(String(emp.default_branch_id || '')) || '') : '')
+      || branchId;
+    const empById = new Map<string, any>();
+    for (const e of employees || []) {
+      empById.set(String((e as any)?.employee_id || '').trim(), e);
+    }
+    /** NV đã nghỉ việc / chưa tới ngày vào làm thì không nhắc. */
+    const notYetWorking = (emp?: any): boolean => {
+      if (!emp) return false;
+      if (String(emp.employment_status || '').toUpperCase() === 'TERMINATED') return true;
+      const start = normSheetDate(emp.start_date);
+      return !!start && start > today;
+    };
+    const keyOf = (s: any): string =>
+      `${today}:${String(s.assignment_id || `${s.employee_id}:${s.shift_code || ''}:${s.start_at || ''}`)}`;
 
-        const startMs = parseShiftStart(s.date, s.start_at, s.shift_code);
-        if (startMs === null) continue;
+    let latchDirty = false;
+    const markReminded = (key: string) => {
+      remindedCheckin.add(key);
+      latchDirty = true;
+    };
 
+    // 1a. Khối Cửa hàng / Xưởng / Sale: chỉ nhắc NV có ca PUBLISHED hôm nay,
+    //     mỗi ca đúng 1 lần (NV 2 ca -> 2 thông báo).
+    for (const s of allShifts || []) {
+      if (normSheetDate((s as any)?.date) !== today) continue;
+      if (String((s as any)?.status || '').trim().toUpperCase() !== 'PUBLISHED') continue;
+      if (options?.targetEmployeeId && String((s as any)?.employee_id || '') !== String(options.targetEmployeeId)) continue;
+
+      const emp: any = empById.get(String((s as any)?.employee_id || '').trim());
+      if (notYetWorking(emp)) continue;
+
+      // Văn Phòng xử lý theo lịch hành chính ở bước 1b (không phụ thuộc ca đã xếp).
+      if (!!emp && OfficeService.isOfficeEmployee(emp)) continue;
+
+      const startMs = parseShiftStart((s as any).date, (s as any).start_at, (s as any).shift_code);
+      if (startMs === null) continue;
+
+      if (!options?.forceCheckin) {
+        // Cửa hàng / Xưởng / Sale: trước ca 20 phút → sau ca 5 phút.
         const minsToStart = (startMs - now) / 60_000;
-        if (!options?.forceCheckin) {
-          // Nhắc trong cửa sổ: từ trước ca 20 phút cho tới sau ca bắt đầu 5 phút (nếu chưa check-in)
-          if (minsToStart < -5 || minsToStart > 20) continue;
-          const key = `${today}:${s.assignment_id}:${s.employee_id}`;
-          if (remindedCheckin.has(key)) continue;
-          remindedCheckin.add(key);
-        }
+        if (minsToStart < -5 || minsToStart > 20) continue;
+        if (remindedCheckin.has(keyOf(s))) continue;
+      }
 
+      const branchId = String((s as any)?.branch_id || '').trim();
+      try {
+        const res = await sendCheckinReminderForShift(repo, notifications, zalo, {
+          ...(s as any),
+          branch_id: branchId,
+          branch_name: branchNameOf(branchId, emp),
+        }, !!options?.forceCheckin);
+        // Đánh dấu đã nhắc cả khi NV đã check-in (tránh lặp lại mỗi 5 phút).
+        if (res.success || res.reason === 'ALREADY_CHECKED_IN') markReminded(keyOf(s));
+        if (res.success) checkinsSent++;
+      } catch (e: any) {
+        console.warn('[auto-reminders] Nhắc check-in thất bại:', e?.message || e);
+      }
+    }
+
+    // 1b. Khối Văn Phòng: nhắc theo ĐÚNG lịch hành chính (T2–T6 08:00–17:00,
+    //     T7 08:00–12:00, CN nghỉ) trong khung điểm danh 08:00–08:30 — kể cả khi
+    //     NV chưa được sinh ca tự động. Mỗi NV 1 thông báo/ngày.
+    const officeWindow = officeCheckInWindowOf(now);
+    const officeReady = officeWindow.date === today
+      && officeWindow.isWorkday
+      && (officeWindow.phase === 'OPEN' || !!options?.forceCheckin);
+    if (officeReady) {
+      const leaveToday = approvedOfficeLeaveIds(settings, today);
+      for (const e of employees || []) {
+        const employeeId = String((e as any)?.employee_id || '').trim();
+        if (!employeeId) continue;
+        if (options?.targetEmployeeId && employeeId !== String(options.targetEmployeeId)) continue;
+        if (!OfficeService.isOfficeEmployee(e)) continue;
+        if (notYetWorking(e)) continue;
+        if (leaveToday.has(employeeId)) continue;
+
+        const key = `${today}:OFFICE:${employeeId}`;
+        if (!options?.forceCheckin && remindedCheckin.has(key)) continue;
+
+        const branchId = String((e as any)?.default_branch_id || '').trim();
         try {
-          const res = await sendCheckinReminderForShift(repo, notifications, zalo, s, !!options?.forceCheckin);
-          if (res.success) {
-            checkinsSent++;
-          }
-        } catch (e: any) {
-          console.warn('[auto-reminders] Nhắc check-in thất bại:', e?.message || e);
+          const res = await sendCheckinReminderForShift(repo, notifications, zalo, {
+            employee_id: employeeId,
+            branch_id: branchId,
+            branch_name: branchNameOf(branchId, e),
+            shift_code: 'CA_1',
+            date: today,
+            start_at: `${today}T08:00:00+07:00`,
+          }, !!options?.forceCheckin);
+          if (res.success || res.reason === 'ALREADY_CHECKED_IN') markReminded(key);
+          if (res.success) checkinsSent++;
+        } catch (err: any) {
+          console.warn('[auto-reminders] Nhắc điểm danh Văn Phòng thất bại:', err?.message || err);
         }
       }
     }
+
+    if (latchDirty) await saveCheckinLatch(repo, today);
   } catch (e: any) {
     console.warn('[auto-reminders] checkin tick:', e?.message || e);
   }
@@ -410,5 +629,8 @@ export async function autoRemindersTick(
   }
 
   return { checkinsSent };
+  } finally {
+    tickInFlight = false;
+  }
 }
 
