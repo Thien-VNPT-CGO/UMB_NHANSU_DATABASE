@@ -2412,6 +2412,12 @@ export function App() {
         const actor = payload?.data?.employeeId || payload?.data?.employee_id;
         if (actor && empIdRef.current && String(actor) !== String(empIdRef.current)) return;
       }
+      // Phiếu bù công / nghỉ Văn Phòng chỉ ảnh hưởng đúng nhân viên đó —
+      // không bắt toàn bộ nhân viên tải lại khi HR duyệt phiếu của người khác.
+      if (entity === 'office-adjustments' || entity === 'office-leaves') {
+        const actor = payload?.data?.employeeId || payload?.data?.employee_id;
+        if (actor && empIdRef.current && String(actor) !== String(empIdRef.current)) return;
+      }
       // Dữ liệu vừa đổi: bỏ cache đọc ngắn hạn để chắc chắn thấy bản mới.
       clearApiCache();
       pending = true;
@@ -2479,6 +2485,11 @@ export function App() {
         // Check-in/out của đồng nghiệp khác: bản đồ đã nhận 'attendance.recorded'
         // theo chi nhánh, không cần mọi NV tải lại toàn bộ dữ liệu.
         if (entity === 'attendance' || entity === 'office-attendance') {
+          const actor = p?.data?.employeeId || p?.data?.employee_id;
+          if (actor && empIdRef.current && String(actor) !== String(empIdRef.current)) return;
+        }
+        // Phiếu bù công / nghỉ Văn Phòng: chỉ máy của đúng nhân viên liên quan tải lại.
+        if (entity === 'office-adjustments' || entity === 'office-leaves') {
           const actor = p?.data?.employeeId || p?.data?.employee_id;
           if (actor && empIdRef.current && String(actor) !== String(empIdRef.current)) return;
         }
@@ -8104,7 +8115,7 @@ export function App() {
                           } catch { /* offline: vẫn cho điều hướng */ }
                         }
                         if (goTab === '/test_exam' || goTab === '/test_training') handleTabClick(isProbation ? 'test_exam' : 'test_training');
-                        else if (goTab === '/adjustment') handleTabClick(isProbation ? 'adjustment' : 'emergency_adjust');
+                        else if (goTab === '/adjustment') handleTabClick(isOffice || isProbation ? 'adjustment' : 'emergency_adjust');
                         else if (canGo) {
                           // Thông báo phát hành lịch tuần → mở tab Lịch đúng tuần sau vừa publish.
                           if ((n as any)?.type === 'schedule.published') { schedWeekTouched.current = true; setSchedWeekSel('NEXT'); }

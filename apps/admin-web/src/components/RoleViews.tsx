@@ -2681,6 +2681,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
   // Phiếu bổ sung/điều chỉnh công: HR duyệt phiếu NV gửi từ cổng nhân viên
   const [adjustments, setAdjustments] = useState<any[]>([]);
+  // Phiếu bù công Văn Phòng đang chờ (duyệt tại tab Duyệt Văn Phòng) — đếm để HR
+  // thấy đủ cả 2 luồng công ngay trong tab Bổ sung / Điều chỉnh công.
+  const [officeAdjPending, setOfficeAdjPending] = useState<any[]>([]);
   // Quota bù công ngày theo từng NV (tháng + tuần) — HR nhìn nhanh ai đã dùng
   // bao nhiêu phiếu, còn gửi được bao nhiêu (server chốt cứng khi NV gửi).
   const [buCongQuotaRows, setBuCongQuotaRows] = useState<any[]>([]);
@@ -2781,6 +2784,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       const list = await apiRequest('/attendance/adjustments');
       setAdjustments(Array.isArray(list) ? list : []);
     } catch { /* không quyền / offline */ }
+    // Phiếu bù công khối VĂN PHÒNG (duyệt ở tab "Duyệt Văn Phòng"): vẫn đếm
+    // tại đây để HR thấy đủ 2 luồng, không bỏ sót phiếu Văn Phòng đang chờ.
+    try {
+      const oa: any = await apiRequest('/office/adjustments');
+      const arr = Array.isArray(oa?.adjustments) ? oa.adjustments : (Array.isArray(oa) ? oa : []);
+      setOfficeAdjPending(arr.filter((a: any) => String(a?.status || '').toUpperCase() === 'PENDING'));
+    } catch { setOfficeAdjPending([]); }
     // Quota bù công ngày theo NV (tháng hiện tại + tuần hiện tại). Lỗi quyền
     // (STORE...) thì bỏ qua, bảng phiếu vẫn chạy bình thường.
     try {
@@ -13742,6 +13752,28 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
           );
         })()}
+        {/* PHIẾU BÙ CÔNG VĂN PHÒNG: cùng là "bổ sung công" nhưng duyệt ở tab
+            Duyệt Văn Phòng — hiện số chờ + lối tắt để HR không bỏ sót. */}
+        {officeAdjPending.length > 0 && (
+          <div style={{ backgroundColor: '#EFF6FF', border: '1.5px solid #93C5FD', borderRadius: '10px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '13px', fontWeight: 800, color: '#1E40AF' }}>
+              🏢 {officeAdjPending.length} phiếu bù công Văn Phòng đang chờ duyệt
+            </span>
+            <span style={{ fontSize: '12px', color: '#1E3A8A' }}>
+              {officeAdjPending.slice(0, 3).map((a: any) => `${a.employee_id} • ${String(a.work_date || '').split('-').reverse().join('/')}`).join(' — ')}
+              {officeAdjPending.length > 3 ? ' …' : ''}
+            </span>
+            {onNavigateTab && (
+              <button
+                className="btn-secondary"
+                style={{ marginLeft: 'auto', fontSize: '12px', padding: '6px 12px' }}
+                onClick={() => onNavigateTab('office-approvals')}
+              >
+                Mở Duyệt Văn Phòng →
+              </button>
+            )}
+          </div>
+        )}
         {/* QUOTA BÙ CÔNG NGÀY THEO TỪNG NHÂN VIÊN: tháng + tuần hiện tại.
             NV gửi phiếu vượt quota bị server chặn ngay; bảng này để HR đối soát. */}
         {(() => {

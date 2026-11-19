@@ -1938,6 +1938,18 @@ export function App() {
               window.dispatchEvent(new CustomEvent('ubm:adjustments-reload'));
             } catch { /* non-fatal */ }
           }
+          // Duyệt phiếu bù công Văn Phòng = công + vi phạm vừa đổi thật:
+          // - HR: lưới Chấm công + Báo cáo HR tháng phải nạp lại ngay.
+          // - Kế toán: bảng công/đối soát nguồn lương phải nạp lại ngay.
+          const officeAttAction = String(payload?.data?.action || '');
+          if (
+            (payload?.entity === 'office-attendance' || payload?.entity === 'office-adjustments') &&
+            (officeAttAction === 'adjustment-approved' || officeAttAction === 'adjustment-repair' || officeAttAction === 'repair')
+          ) {
+            try { window.dispatchEvent(new CustomEvent('ubm:attendance-reload')); } catch { /* non-fatal */ }
+            notifyFinTimesheetRealtime();
+            notifyReportsRealtime();
+          }
           // Realtime điểm TEST: NV nộp bài ở cổng nhân viên là bảng điểm HR tải lại ngay.
           if (payload?.entity === 'tests' || payload?.entity === 'all') {
             try {

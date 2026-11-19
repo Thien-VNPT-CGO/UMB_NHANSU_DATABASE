@@ -424,7 +424,9 @@ export default function FinanceModule(props: FinanceModuleProps) {
   }, [activeTab, loadWorkflow, loadFinSheet, loadSlips, loadRuns, loadFormula, loadInputs, isUserEditing]);
 
   const handleRealtime = useCallback((evt: CustomEvent) => {
-    const ent = String((evt.detail as any)?.entity || '');
+    // Một số tín hiệu làm mới có chủ đích (ubm:fin-timesheet-reload /
+    // ubm:payslips-reload) không kèm entity — vẫn phải nạp lại tab đang mở.
+    const ent = String((evt.detail as any)?.entity || 'all');
     if (!ent) return;
     // Mọi nguồn dữ liệu của quy trình (công, ca, nghỉ, đổi ca, lương, phiếu,
     // nhân sự) đều có thể làm đổi trạng thái bước 1–7 → nạp lại workflow ngay

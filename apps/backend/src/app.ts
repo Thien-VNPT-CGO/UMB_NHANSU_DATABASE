@@ -1681,9 +1681,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     title: string;
     message: string;
     linkTab?: string;
+    /** Đường dẫn mở từ Hộp thư nhân viên (VD '/adjustment'); mặc định lấy linkTab. */
+    targetPath?: string;
     metadata?: any;
     targetRoles?: string[];
+    /** Chỉ gửi tới đúng (các) nhân viên này thay vì phát toàn hệ thống. */
+    targetEmployeeIds?: string[];
   }) => {
+    const targetEmpIds = [...new Set((notif.targetEmployeeIds || []).map(v => String(v || '').trim()).filter(Boolean))];
     try {
       const io = app.get('io');
       if (io) {
@@ -1698,7 +1703,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           origin,
           timestamp: new Date().toISOString(),
         };
-        io.emit('system:notification', payload);
+        if (targetEmpIds.length > 0) {
+          // Phiếu bù công/nghỉ... chỉ liên quan 1 nhân viên: không phát toast
+          // "đã duyệt" cho toàn bộ nhân viên khác.
+          for (const id of targetEmpIds) io.to(`user:${id}`).emit('system:notification', payload);
+          for (const r of (notif.targetRoles || []).filter(x => x !== 'EMPLOYEE')) {
+            io.to(`role:${r}`).emit('system:notification', payload);
+          }
+        } else {
+          io.emit('system:notification', payload);
+        }
         // KHÔNG emit thêm data:updated(notifications) ở đây: notificationsService
         // đã bắn notification.created + data:updated sau khi lưu inbox, tránh
         // mỗi lượt chấm công khiến 2 cổng web tải lại 2 lần.
@@ -1712,12 +1726,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (kind) {
         notificationsService
           .sendNotification({
-            recipientIds: ['ALL'],
+            // Có nhân viên đích -> chỉ người đó nhận Hộp thư; ngược lại giữ ALL.
+            recipientIds: targetEmpIds.length > 0 ? targetEmpIds : ['ALL'],
             type: kind,
             severity: 'SYSTEM',
             title: notif.title,
             summary: notif.message,
-            targetPath: notif.linkTab,
+            targetPath: notif.targetPath || notif.linkTab,
             actorId: (notif.metadata?.employeeId || notif.metadata?.accountId || 'SYSTEM') as string,
           })
           .catch(() => null);
@@ -2779,20 +2794,24 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         id: String(req.user!.id || ''),
         role: String(req.user!.role || ''),
       }, decision, req.body?.note);
-      broadcastUpdate('office-adjustments', { action: 'reviewed', id: adj.adjustment_id, status: adj.status });
+      broadcastUpdate('office-adjustments', { action: 'reviewed', id: adj.adjustment_id, status: adj.status, employeeId: adj.employee_id, date: adj.work_date });
       // Duyệt = có công NGAY: đẩy realtime sang bảng công Văn Phòng + lưới
       // chấm công/lương chuẩn để 2 cổng không phải chờ poll.
       if (adj.status === 'APPROVED') {
         broadcastUpdate('office-attendance', { action: 'adjustment-approved', id: adj.adjustment_id, employeeId: adj.employee_id, date: adj.work_date });
-        broadcastUpdate('attendance', { action: 'adjustment-backfill', id: adj.adjustment_id, employeeId: adj.employee_id });
-        broadcastUpdate('payroll', { action: 'adjustment-backfill', id: adj.adjustment_id });
+        broadcastUpdate('attendance', { action: 'adjustment-backfill', id: adj.adjustment_id, employeeId: adj.employee_id, date: adj.work_date });
+        // Kèm employeeId để cổng nhân viên chỉ nạp lại máy của đúng người được duyệt.
+        broadcastUpdate('payroll', { action: 'adjustment-backfill', id: adj.adjustment_id, employeeId: adj.employee_id, date: adj.work_date });
         broadcastNotification({
           type: 'ADJUSTMENT',
           title: '✅ Phiếu bổ sung công đã được duyệt',
           message: `Phiếu bổ sung công ngày ${String(adj.work_date).split('-').reverse().join('/')} đã được duyệt — công và vi phạm đã cập nhật.`,
           linkTab: 'adjustment',
-          metadata: { adjustmentId: adj.adjustment_id },
-          targetRoles: ['ADMIN', 'HR', 'DIRECTOR', 'EMPLOYEE'],
+          targetPath: '/adjustment',
+          metadata: { adjustmentId: adj.adjustment_id, employeeId: adj.employee_id },
+          targetRoles: ['ADMIN', 'HR', 'DIRECTOR', 'FINANCE', 'EMPLOYEE'],
+          // Chỉ nhân viên có phiếu nhận thông báo/Hộp thư — không làm ồn cả công ty.
+          targetEmployeeIds: [adj.employee_id],
         });
       } else if (adj.status === 'REJECTED') {
         broadcastNotification({
@@ -2800,8 +2819,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           title: '❌ Phiếu bổ sung công bị từ chối',
           message: `Phiếu bổ sung công ngày ${String(adj.work_date).split('-').reverse().join('/')} bị từ chối${req.body?.note ? `: ${req.body.note}` : ''}.`,
           linkTab: 'adjustment',
-          metadata: { adjustmentId: adj.adjustment_id },
-          targetRoles: ['ADMIN', 'HR', 'DIRECTOR', 'EMPLOYEE'],
+          targetPath: '/adjustment',
+          metadata: { adjustmentId: adj.adjustment_id, employeeId: adj.employee_id },
+          targetRoles: ['ADMIN', 'HR', 'DIRECTOR', 'FINANCE', 'EMPLOYEE'],
+          targetEmployeeIds: [adj.employee_id],
         });
       }
       res.json({ success: true, adjustment: adj });
