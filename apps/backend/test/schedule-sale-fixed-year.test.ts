@@ -158,6 +158,32 @@ test('tick nền không tạo trùng sau khi đã áp dụng (through = 31/12 n�
   assert.equal(repo.shifts.length, before);
 });
 
+test('hủy ca hàng loạt: đổi trạng thái 1 lượt, idempotent, không xóa lịch sử', async () => {
+  const repo = new MockSheetsAdapter();
+  repo.employees.push(employee());
+  const svc = new SchedulesService(repo);
+  await svc.applySaleFixedShift({ employeeId: 'EMP_SALE', shiftCode: 'CA_1', actorId: 'HR_1' });
+
+  const live = repo.shifts.filter((s: any) => s.status !== 'CANCELLED');
+  const ids = live.slice(0, 12).map((s: any) => String(s.assignment_id));
+  const n1 = await repo.cancelShiftAssignmentsBulk(ids);
+  assert.equal(n1, ids.length, 'hủy đúng số ca yêu cầu');
+  assert.ok(
+    repo.shifts.filter((s: any) => ids.includes(String(s.assignment_id))).every((s: any) => s.status === 'CANCELLED'),
+    'các ca được chọn đều CANCELLED'
+  );
+  assert.equal(
+    repo.shifts.filter((s: any) => ids.includes(String(s.assignment_id))).length,
+    ids.length,
+    'giữ nguyên dòng để bảo toàn lịch sử công'
+  );
+  assert.equal(await repo.cancelShiftAssignmentsBulk(ids), 0, 'chạy lại không đổi gì');
+  assert.ok(
+    repo.shifts.filter((s: any) => !ids.includes(String(s.assignment_id))).every((s: any) => s.status !== 'CANCELLED'),
+    'không hủy oan ca khác'
+  );
+});
+
 test('ngừng ca cố định: hủy ca máy tạo tương lai và xóa rule (tick không tạo lại)', async () => {
   const repo = new MockSheetsAdapter();
   repo.employees.push(employee());

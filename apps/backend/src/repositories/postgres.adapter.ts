@@ -371,6 +371,27 @@ export class PostgresAdapter {
     return created;
   }
 
+  /**
+   * Hủy nhiều ca + ghi PostgreSQL trong MỘT transaction (đổi/ngừng ca cố định).
+   */
+  public async cancelShiftAssignmentsBulk(ids: string[]): Promise<number> {
+    const n = await (this.inner as any).cancelShiftAssignmentsBulk?.(ids);
+    const changed = Number(n) || 0;
+    if (changed <= 0) return changed;
+    this.lastWriteAt = new Date().toISOString();
+    if (!this.store.configured) return changed;
+    try {
+      const want = new Set((ids || []).map(x => String(x)));
+      const rows = ((this.inner as any).shifts || []).filter((s: any) => want.has(String(s?.assignment_id || '')));
+      await this.store.persistShiftAssignments(rows);
+    } catch (err: any) {
+      console.error('[PostgresAdapter] Persist hủy ca hàng loạt thất bại:', err?.message || err);
+      this.loadError = `PERSIST_FAILED:cancelShiftAssignmentsBulk:${err?.message || err}`;
+      throw new Error('PERSIST_FAILED:cancelShiftAssignmentsBulk');
+    }
+    return changed;
+  }
+
   private buildOverrides(): Record<string, any> {
     const self = this;
     return {
@@ -395,6 +416,7 @@ export class PostgresAdapter {
       pushCandidatesNow: () => self.pushCandidatesNow(),
       hideCandidatesFromSystem: (entries: any[]) => self.hideCandidatesFromSystem(entries),
       createShiftAssignmentsBulk: (assignments: any[]) => self.createShiftAssignmentsBulk(assignments),
+      cancelShiftAssignmentsBulk: (ids: string[]) => self.cancelShiftAssignmentsBulk(ids),
     };
   }
 

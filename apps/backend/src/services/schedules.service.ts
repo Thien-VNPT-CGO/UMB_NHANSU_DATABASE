@@ -1092,10 +1092,19 @@ export class SchedulesService {
     // Một lượt đọc điểm danh của NV (tránh O(N) theo từng ca).
     const events = (await this.repo.getAttendanceEvents(employeeId, '*').catch(() => [])) as any[];
     const locked = new Set<string>((events || []).map(e => String(e?.assignment_id || '')));
+    const ids = targets
+      .map((s: any) => String(s?.assignment_id || ''))
+      .filter((id: string) => id && !locked.has(id));
+    if (ids.length === 0) return 0;
+    // Hủy 1 lượt (1 lần đẩy Sheet) thay vì 300–700 lượt ghi từng ca.
+    const bulk = (this.repo as any).cancelShiftAssignmentsBulk;
+    if (typeof bulk === 'function') {
+      try {
+        return Number(await bulk.call(this.repo, ids)) || 0;
+      } catch { /* rơi xuống vòng lặp từng ca */ }
+    }
     let n = 0;
-    for (const s of targets) {
-      const id = String(s?.assignment_id || '');
-      if (!id || locked.has(id)) continue;
+    for (const id of ids) {
       try {
         await this.repo.updateShiftAssignment(id, { status: 'CANCELLED' });
         n += 1;
@@ -1165,6 +1174,7 @@ export class SchedulesService {
       if (targets.length > 0) {
         const events = (await this.repo.getAttendanceEvents(employeeId, '*').catch(() => [])) as any[];
         const locked = new Set<string>((events || []).map(e => String(e?.assignment_id || '')));
+        const removable: any[] = [];
         for (const s of targets) {
           const id = String(s?.assignment_id || '');
           const date = String(s?.date || '').slice(0, 10);
@@ -1173,14 +1183,39 @@ export class SchedulesService {
             warnings.push(`${date} ${String(s?.shift_code || '')}: ca đã có điểm danh — giữ nguyên để bảo toàn công/lương.`);
             continue;
           }
-          try {
-            await this.repo.updateShiftAssignment(id, { status: 'CANCELLED' });
-            cancelled += 1;
+          removable.push(s);
+        }
+        if (removable.length > 0) {
+          const ids = removable.map((s: any) => String(s?.assignment_id || ''));
+          let cancelledNow = 0;
+          let bulkOk = false;
+          // Hủy 1 lượt (1 lần đẩy Sheet) — đổi ca cả năm không được gọi 300–700 lượt.
+          const bulk = (this.repo as any).cancelShiftAssignmentsBulk;
+          if (typeof bulk === 'function') {
+            try {
+              cancelledNow = Number(await bulk.call(this.repo, ids)) || 0;
+              bulkOk = true;
+            } catch (e: any) {
+              warnings.push(`Hủy ca cũ hàng loạt: ${String(e?.message || e)}`);
+            }
+          }
+          if (!bulkOk) {
+            for (const s of removable) {
+              try {
+                await this.repo.updateShiftAssignment(String(s?.assignment_id), { status: 'CANCELLED' });
+                cancelledNow += 1;
+              } catch (e: any) {
+                warnings.push(`${String(s?.date || '').slice(0, 10)}: không hủy được ca ${String(s?.assignment_id || '')} (${String(e?.message || e)})`);
+              }
+            }
+          }
+          cancelled += cancelledNow;
+          for (const s of removable) {
+            const id = String(s?.assignment_id || '');
+            const date = String(s?.date || '').slice(0, 10);
             const rest = (liveByDate.get(date) || []).filter(x => String(x?.assignment_id || '') !== id);
             if (rest.length) liveByDate.set(date, rest);
             else liveByDate.delete(date);
-          } catch (e: any) {
-            warnings.push(`${date}: không hủy được ca ${id} (${String(e?.message || e)})`);
           }
         }
       }

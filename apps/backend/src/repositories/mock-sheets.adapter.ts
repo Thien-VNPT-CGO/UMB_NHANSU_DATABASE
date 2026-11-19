@@ -740,6 +740,29 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return out;
   }
 
+  /**
+   * Hủy nhiều ca trong MỘT lượt ghi bộ nhớ (đổi/ngừng ca cố định cả năm).
+   * Chỉ đổi trạng thái, KHÔNG xóa dòng — giữ lịch sử cho audit và bảng công.
+   * Trả về số ca thực sự chuyển sang CANCELLED (bỏ qua ca đã hủy trước đó).
+   */
+  async cancelShiftAssignmentsBulk(ids: string[]): Promise<number> {
+    this.checkErrors();
+    const want = new Set((ids || []).map(x => String(x)).filter(Boolean));
+    if (want.size === 0) return 0;
+    const now = new Date().toISOString();
+    let n = 0;
+    for (const s of this.shifts) {
+      const id = String(s?.assignment_id || '');
+      if (!id || !want.has(id)) continue;
+      if (String(s?.status || '').toUpperCase() === 'CANCELLED') continue;
+      (s as any).status = 'CANCELLED';
+      (s as any).schedule_version = Number((s as any).schedule_version || 0) + 1;
+      (s as any).updated_at = now;
+      n += 1;
+    }
+    return n;
+  }
+
   async updateShiftAssignment(id: string, updates: Partial<ShiftAssignment>): Promise<ShiftAssignment> {
     this.checkErrors();
     const shift = this.shifts.find(s => s.assignment_id === id);

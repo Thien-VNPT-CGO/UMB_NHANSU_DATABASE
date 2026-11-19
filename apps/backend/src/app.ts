@@ -4896,6 +4896,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const fromDate = (req.query.fromDate as string) || vnTodayISO();
       const toDate = (req.query.toDate as string) || '2030-12-31';
       const shifts = await schedulesService.getEmployeeShifts(employeeId, fromDate, toDate);
+      // HR vừa xếp/đổi lịch phải tới cổng NV ngay: không cho bất kỳ lớp cache
+      // (browser/proxy/CDN) giữ bản cũ của lịch làm việc.
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
       res.json(shifts);
     } catch (err: any) {
       res.status(500).json({ error: err.message });

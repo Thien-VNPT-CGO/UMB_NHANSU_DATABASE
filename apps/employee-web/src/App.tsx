@@ -2512,6 +2512,33 @@ export function App() {
         }
         reload(entity, p);
 
+        // CA CỐ ĐỊNH CẢ NĂM (Sale): HR vừa chọn/đổi/ngừng ca → cổng NV phải thấy
+        // lịch mới NGAY (không chờ nhịp 45 giây, không cần F5). Tải lại tươi ngay
+        // lập tức + nhảy về tuần hiện tại + báo toast cho nhân viên biết.
+        if (entity === 'schedules') {
+          const action = String(p?.data?.action || '');
+          if (action === 'sale-fixed-shift' || action === 'sale-fixed-shift-stop' || action === 'sale-fixed-shift-ensure') {
+            const target = String(p?.data?.employeeId || p?.data?.employee_id || '');
+            const mine = String(empIdRef.current || '');
+            const isMine = !target || (!!mine && target === mine);
+            if (isMine && mine) {
+              if (action === 'sale-fixed-shift' && String(activeTabRef.current || '') === 'schedule') {
+                // Đang mở tab Lịch: đưa về tuần hiện tại để thấy ca vừa áp dụng.
+                setSchedWeekSel('THIS');
+              }
+              // Bỏ cache đọc ngắn hạn rồi tải tươi ngay — không chờ throttle của reload.
+              clearApiCache();
+              loadEmployeeDataRef.current(mine, true).catch(() => null);
+              if (action === 'sale-fixed-shift') {
+                const code = String(p?.data?.shiftCode || '');
+                showToastRef.current(`📅 HR vừa áp dụng lịch làm việc cố định${code ? ` (${code})` : ''} cho bạn — lịch đã cập nhật ngay.`);
+              } else if (action === 'sale-fixed-shift-stop') {
+                showToastRef.current('📅 HR vừa thay đổi lịch làm việc của bạn — lịch đã cập nhật ngay.');
+              }
+            }
+          }
+        }
+
         // Admin ẩn/hiện lịch chi nhánh → cập nhật cờ schedule_visible để cổng NV
         // hiện banner "lịch đã ẩn" và tải lại lịch ngay (không cần F5).
         if (!entity || entity === 'branches' || entity === 'config' || entity === 'schedules' || entity === 'all') {

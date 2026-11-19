@@ -73,6 +73,12 @@ export interface ISheetsRepository {
    * Phải idempotent theo assignment_id và theo (NV + ngày + mã ca).
    */
   createShiftAssignmentsBulk?(assignments: Array<Omit<ShiftAssignment, 'created_at' | 'updated_at'>>): Promise<ShiftAssignment[]>;
+  /**
+   * Hủy nhiều ca trong MỘT lượt ghi (đổi/ngừng ca cố định, NV nghỉ việc).
+   * Tùy chọn: adapter không hỗ trợ thì service tự lặp updateShiftAssignment.
+   * Trả về số ca thực sự chuyển sang CANCELLED.
+   */
+  cancelShiftAssignmentsBulk?(ids: string[]): Promise<number>;
   updateShiftAssignment(id: string, updates: Partial<ShiftAssignment>): Promise<ShiftAssignment>;
   /**
    * Đánh dấu PUBLISHED hàng loạt (self-heal ca nháp lọt vào tuần đã phát hành).

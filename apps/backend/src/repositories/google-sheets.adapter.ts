@@ -1337,6 +1337,11 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   /**
    * Tạo nhiều ca + đẩy Sheet đúng 1 lần (sắp lịch cố định cả năm cho Sale).
    * Không đẩy từng ca như createShiftAssignment: 300–700 ca sẽ nghẽn quota.
+   *
+   * REALTIME: bộ nhớ là nguồn cổng nhân viên đọc (`/me/schedule`), nên trả về
+   * NGAY sau khi ghi bộ nhớ + snapshot; việc đẩy Sheet chạy nền. Nhờ vậy HR bấm
+   * lưu là cổng Sale nhận `data:updated` và thấy lịch mới trong ~1 giây, không
+   * phải chờ 300–700 dòng ghi lên Google Sheets (2–15 giây).
    */
   async createShiftAssignmentsBulk(assignments: any[]) {
     const created = await this.fallbackAdapter.createShiftAssignmentsBulk(assignments);
@@ -1344,18 +1349,35 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     // Ghi snapshot ngay để ca vừa tạo sống sót nếu deploy/restart liền sau.
     this.scheduleRuntimeSnapshot(0);
     if (this.isConfigured) {
-      try {
-        const pushed = await Promise.race([
-          this.syncService.pushShiftsTab(this.fallbackAdapter),
-          new Promise<number>(r => setTimeout(() => r(0), 30000)),
-        ]);
-        if (!pushed) throw new Error('PUSH_SHIFTS_FAILED');
-      } catch {
-        // Rớt mạng/quota: dữ liệu đã nằm trong bộ nhớ + snapshot; dồn full-sync nền.
-        this.scheduleFullSync('PHAN_CONG_CA.bulk-create');
-      }
+      // Không await: đẩy Sheet ở nền. Lỗi thì dồn full-sync nền (đọc lại bộ nhớ).
+      void this.syncService
+        .pushShiftsTab(this.fallbackAdapter)
+        .catch(() => {
+          this.scheduleFullSync('PHAN_CONG_CA.bulk-create');
+          return 0;
+        });
     }
     return created;
+  }
+
+  /**
+   * Hủy nhiều ca + đẩy Sheet đúng 1 lần (đổi/ngừng ca cố định, NV nghỉ việc).
+   * Không gọi updateShiftAssignment từng ca: mỗi ca sẽ đẩy cả tab PHAN_CONG_CA
+   * (300–700 lượt ghi, nghẽn quota + cổng NV chậm cập nhật).
+   */
+  async cancelShiftAssignmentsBulk(ids: string[]) {
+    const n = await this.fallbackAdapter.cancelShiftAssignmentsBulk(ids);
+    if (!n) return 0;
+    this.scheduleRuntimeSnapshot(0);
+    if (this.isConfigured) {
+      void this.syncService
+        .pushShiftsTab(this.fallbackAdapter)
+        .catch(() => {
+          this.scheduleFullSync('PHAN_CONG_CA.bulk-cancel');
+          return 0;
+        });
+    }
+    return n;
   }
 
   async purgeShiftAssignments(ids: string[]) {
