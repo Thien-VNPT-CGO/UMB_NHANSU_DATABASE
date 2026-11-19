@@ -2489,6 +2489,9 @@ export function App() {
             const action = String(p?.data?.action || '');
             if (action === 'inputs') {
               const per = String(p?.data?.period || '');
+              // Đang mở tab Công/Lương: nạp lại ngay số Kế toán vừa lưu (effect
+              // của tab phụ thuộc schedRefresh) — không phải chờ đổi tab / F5.
+              setSchedRefresh((k) => k + 1);
               showToastRef.current(`💰 Kế toán vừa cập nhật lương của bạn${per ? ` (kỳ ${per})` : ''} — đã đồng bộ.`);
             }
           }
