@@ -273,6 +273,15 @@ export const assignWeekBody = z
   })
   .strict();
 
+// Ca cố định CẢ NĂM cho nhân viên Sale: chọn 1 trong 4 ca, hệ thống tự xếp
+// mọi ngày (trừ ngày nghỉ phép đã duyệt) và tự nối sang năm sau.
+export const saleFixedShiftBody = z
+  .object({
+    employeeId: z.string().trim().min(1).max(64),
+    shiftCode: z.enum(['CA_1', 'CA_2', 'CA_3', 'CA_4']),
+  })
+  .strict();
+
 export const shiftUpdateBody = z
   .object({
     shiftCode: optString(16),

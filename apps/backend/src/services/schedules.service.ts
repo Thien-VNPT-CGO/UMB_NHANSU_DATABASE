@@ -7,6 +7,7 @@ import {
   shiftCodesForGroup,
   resolveShiftTemplate,
   shiftLabel,
+  isSaleGroup,
   SwapRequest,
   OFFICE_WEEK_RULES,
   officeDayRuleOfIso,
@@ -33,6 +34,46 @@ function vnDateOf(iso: string): string {
   if (!Number.isFinite(t)) return '';
   return new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
 }
+
+/** Hôm nay theo giờ VN (YYYY-MM-DD) — không phụ thuộc múi giờ máy chủ. */
+function vnTodayIso(): string {
+  return new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+}
+
+function addDaysIso(iso: string, n: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Mốc cuối của lịch cố định: 31/12 NĂM SAU. Nhờ vậy lịch luôn phủ hết năm
+ * hiện tại + trọn năm kế tiếp, sang năm mới chỉ cần nối thêm phần còn thiếu.
+ */
+function fixedShiftHorizon(todayIso: string): string {
+  return `${Number(todayIso.slice(0, 4)) + 1}-12-31`;
+}
+
+/** Ca do máy tạo từ "ca cố định" — nhận diện để thay/hủy khi đổi ca/nghỉ việc. */
+const FIXED_SHIFT_ID_PREFIX = 'SHIFT_FIXED_';
+const isFixedShiftId = (id: unknown): boolean => String(id || '').startsWith(FIXED_SHIFT_ID_PREFIX);
+function fixedShiftIdOf(employeeId: string, date: string, code: string, seq: number): string {
+  const emp = String(employeeId || '').replace(/[^A-Za-z0-9_-]/g, '');
+  return `${FIXED_SHIFT_ID_PREFIX}${emp}_${date}_${String(code).toUpperCase()}_${Date.now()}_${seq}`;
+}
+
+export interface SaleFixedShiftResult {
+  employeeId: string;
+  shiftCode: string;
+  fromDate: string;
+  toDate: string;
+  created: number;
+  kept: number;
+  skippedLeave: number;
+  cancelled: number;
+  warnings: string[];
+}
+
 
 /**
  * Ràng buộc tuần đổi/tráo ca: ca phải từ TUẦN HIỆN TẠI trở đi (Mon-Sun chứa
@@ -812,6 +853,389 @@ export class SchedulesService {
       warnings,
       updatedAt: new Date().toISOString(),
     };
+  }
+
+  /**
+   * CA CỐ ĐỊNH CẢ NĂM cho nhân viên Sale (yêu cầu HR):
+   * HR chọn 1 trong 4 ca Sale → hệ thống tạo ca cho MỌI NGÀY từ hôm nay đến
+   * 31/12 năm sau, trừ ngày nghỉ phép đã duyệt. Rule được lưu lại để tick nền
+   * tự nối dài sang năm kế tiếp cho tới khi nhân viên nghỉ việc (TERMINATED).
+   */
+  async applySaleFixedShift(data: {
+    employeeId: string;
+    shiftCode: string;
+    actorId: string;
+  }): Promise<SaleFixedShiftResult> {
+    const emp: any = await this.repo.getEmployeeById(data.employeeId).catch(() => null);
+    if (!emp) throw new Error('EMPLOYEE_NOT_FOUND: Không tìm thấy nhân viên cần áp dụng ca cố định!');
+    if (String(emp.employment_status || '').toUpperCase() === 'TERMINATED') {
+      throw new Error('EMPLOYEE_TERMINATED: Nhân viên đã nghỉ việc — không thể áp dụng ca cố định!');
+    }
+    if (!isSaleGroup(emp.group)) {
+      throw new Error(`SALE_FIXED_SHIFT_ONLY: Ca cố định cả năm chỉ áp dụng cho khối Sale (nhân viên này thuộc khối ${emp.group || 'khác'})!`);
+    }
+    const code = String(data.shiftCode || '').trim().toUpperCase();
+    const saleCodes = (shiftCodesForGroup('SALE') as string[]).map(c => String(c).toUpperCase());
+    if (!saleCodes.includes(code)) {
+      throw new Error(`SALE_FIXED_SHIFT_INVALID: Ca cố định của Sale phải là ${saleCodes.join(', ')} (nhận được ${code || '?'})!`);
+    }
+    const branchId = String(emp.default_branch_id || emp.branch_id || '').trim();
+    if (!branchId) {
+      throw new Error('EMPLOYEE_NO_BRANCH: Nhân viên chưa có chi nhánh — cập nhật hồ sơ trước khi áp dụng ca cố định!');
+    }
+    if (!resolveShiftTemplate(code as ShiftCode, 'SALE')) {
+      throw new Error(`SALE_FIXED_SHIFT_INVALID: Không tìm thấy khung giờ cho ca ${code}!`);
+    }
+
+    const queued = await singleWriterQueue.enqueue<SaleFixedShiftResult>({
+      entityType: 'PHAN_CONG_CA',
+      entityId: `SALE_FIXED_${data.employeeId}`,
+      actorId: data.actorId,
+      execute: async () => {
+        const today = vnTodayIso();
+        const to = fixedShiftHorizon(today);
+        // Lưu rule để tick nền biết cần duy trì lịch cho NV này sang năm sau.
+        const rules = await this.readSaleFixedShiftRules();
+        rules[data.employeeId] = {
+          employee_id: data.employeeId,
+          shift_code: code,
+          branch_id: branchId,
+          applied_at: new Date().toISOString(),
+          applied_by: data.actorId,
+          through: to,
+        };
+        await this.writeSaleFixedShiftRules(rules);
+
+        // Đồng bộ "Ca cố định" trên hồ sơ để BOT/hồ sơ hiển thị đúng ca đã chọn.
+        if (String(emp.default_shift_code || '').toUpperCase() !== code) {
+          try {
+            await this.repo.updateEmployee(
+              data.employeeId,
+              { default_shift_code: code as any },
+              emp.version
+            );
+          } catch {
+            // Version lệch do có người sửa hồ sơ cùng lúc: đọc lại rồi thử 1 lần.
+            const fresh: any = await this.repo.getEmployeeById(data.employeeId).catch(() => null);
+            if (fresh) {
+              await this.repo
+                .updateEmployee(data.employeeId, { default_shift_code: code as any }, fresh.version)
+                .catch(() => null);
+            }
+          }
+        }
+
+        const res = await this.materializeSaleFixedShiftWindow({
+          employeeId: data.employeeId,
+          branchId,
+          code,
+          from: today,
+          to,
+          cancelWrongAuto: true,
+        });
+
+        await this.repo.recordAuditLog({
+          log_id: `LOG_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+          actor_id: data.actorId,
+          actor_role: 'HR',
+          action: 'SALE_FIXED_SHIFT_APPLIED',
+          target_entity: 'PHAN_CONG_CA',
+          target_id: data.employeeId,
+          details: `Ca cố định ${code} cho ${emp.full_name || data.employeeId}: tạo ${res.created}, giữ ${res.kept}, bỏ qua ${res.skippedLeave} ngày nghỉ phép, hủy ${res.cancelled} ca (${today} → ${to}).`,
+        } as any).catch(() => null);
+
+        return {
+          employeeId: data.employeeId,
+          shiftCode: code,
+          fromDate: today,
+          toDate: to,
+          created: res.created,
+          kept: res.kept,
+          skippedLeave: res.skippedLeave,
+          cancelled: res.cancelled,
+          warnings: res.warnings,
+        };
+      },
+    });
+    return (queued as any)?.result ?? (queued as any);
+  }
+
+  /**
+   * Ngừng ca cố định cả năm của 1 NV: xóa rule + hủy các ca máy tạo từ hôm nay
+   * (giữ ca HR xếp tay và ca đã điểm danh). Dùng khi HR muốn dừng giữa chừng.
+   */
+  async stopSaleFixedShift(employeeId: string, actorId: string): Promise<{ employeeId: string; cancelled: number; hadRule: boolean }> {
+    const emp: any = await this.repo.getEmployeeById(employeeId).catch(() => null);
+    if (!emp) throw new Error('EMPLOYEE_NOT_FOUND: Không tìm thấy nhân viên!');
+    const rules = await this.readSaleFixedShiftRules();
+    const hadRule = !!rules[employeeId];
+    delete rules[employeeId];
+    await this.writeSaleFixedShiftRules(rules);
+    const today = vnTodayIso();
+    const cancelled = await this.cancelSaleFixedShiftFuture(employeeId, today, fixedShiftHorizon(today));
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'SALE_FIXED_SHIFT_STOPPED',
+      target_entity: 'PHAN_CONG_CA',
+      target_id: employeeId,
+      details: `Ngừng ca cố định của ${emp.full_name || employeeId}: hủy ${cancelled} ca máy tạo từ ${today}.`,
+    } as any).catch(() => null);
+    return { employeeId, cancelled, hadRule };
+  }
+
+  /**
+   * Tick nền: duy trì lịch ca cố định của Sale.
+   * - Nối thêm các ngày còn thiếu từ mốc đã tạo tới 31/12 năm sau.
+   * - NV chuyển khối / nghỉ việc: dừng rule + hủy các ca máy tạo từ hôm nay.
+   * Chạy 1 lần/ngày; idempotent nên chạy lại không sinh ca trùng.
+   */
+  async ensureSaleFixedShifts(actorId = 'SYSTEM'): Promise<{
+    employees: number;
+    created: number;
+    cancelled: number;
+    errors: string[];
+  }> {
+    const out = { employees: 0, created: 0, cancelled: 0, errors: [] as string[] };
+    const rules = await this.readSaleFixedShiftRules();
+    const ids = Object.keys(rules);
+    if (ids.length === 0) return out;
+    let rulesChanged = false;
+    for (const empId of ids) {
+      try {
+        const emp: any = await this.repo.getEmployeeById(empId).catch(() => null);
+        const terminated = !emp || String(emp?.employment_status || '').toUpperCase() === 'TERMINATED';
+        const movedGroup = !!emp && !isSaleGroup(emp.group);
+        if (terminated || movedGroup) {
+          if (emp) {
+            const today = vnTodayIso();
+            out.cancelled += await this.cancelSaleFixedShiftFuture(empId, today, fixedShiftHorizon(today));
+          }
+          delete rules[empId];
+          rulesChanged = true;
+          continue;
+        }
+        const code = String(rules[empId]?.shift_code || '').trim().toUpperCase();
+        const saleCodes = (shiftCodesForGroup('SALE') as string[]).map(c => String(c).toUpperCase());
+        if (!saleCodes.includes(code)) {
+          delete rules[empId];
+          rulesChanged = true;
+          continue;
+        }
+        const branchId = String(emp.default_branch_id || emp.branch_id || '').trim();
+        if (!branchId) {
+          out.errors.push(`${emp.full_name || empId}: thiếu chi nhánh`);
+          continue;
+        }
+        const today = vnTodayIso();
+        const horizon = fixedShiftHorizon(today);
+        const through = String(rules[empId]?.through || '').slice(0, 10);
+        const from = through && through >= today ? addDaysIso(through, 1) : today;
+        if (from > horizon) continue;
+        const res = await this.materializeSaleFixedShiftWindow({
+          employeeId: empId,
+          branchId,
+          code,
+          from,
+          to: horizon,
+          cancelWrongAuto: false,
+        });
+        out.employees += 1;
+        out.created += res.created;
+        out.cancelled += res.cancelled;
+        if (res.warnings.length) out.errors.push(...res.warnings.slice(0, 3));
+        if (String(rules[empId]?.through || '') !== horizon) {
+          rules[empId].through = horizon;
+          rulesChanged = true;
+        }
+      } catch (e: any) {
+        out.errors.push(`${empId}: ${String(e?.message || e)}`);
+      }
+    }
+    if (rulesChanged) await this.writeSaleFixedShiftRules(rules).catch(() => null);
+    if ((out.created > 0 || out.cancelled > 0) && this.io) {
+      try {
+        this.io.emit('data:updated', {
+          entity: 'schedules',
+          data: { action: 'sale-fixed-shift-ensure', created: out.created, cancelled: out.cancelled },
+          timestamp: new Date().toISOString(),
+        });
+      } catch { /* non-fatal */ }
+    }
+    return out;
+  }
+
+  private async readSaleFixedShiftRules(): Promise<Record<string, any>> {
+    const settings: any = await this.repo.getSystemSettings().catch(() => ({}));
+    const raw = settings?.sale_fixed_shift_rules;
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? { ...raw } : {};
+  }
+
+  private async writeSaleFixedShiftRules(rules: Record<string, any>): Promise<void> {
+    await this.repo.updateSystemSettings({ sale_fixed_shift_rules: rules } as any);
+  }
+
+  /** Hủy ca máy tạo (SHIFT_FIXED_*) từ hôm nay — dùng khi NV nghỉ việc/đổi khối. */
+  private async cancelSaleFixedShiftFuture(employeeId: string, from: string, to: string): Promise<number> {
+    const today = vnTodayIso();
+    const start = from >= today ? from : today;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || start > to) return 0;
+    const rows = (await this.repo.getShiftsForEmployee(employeeId, start, to).catch(() => [])) as any[];
+    const targets = (rows || []).filter(
+      (s: any) =>
+        isFixedShiftId(s?.assignment_id) &&
+        String(s?.status || '').toUpperCase() !== 'CANCELLED' &&
+        String(s?.date || '').slice(0, 10) >= today
+    );
+    if (targets.length === 0) return 0;
+    // Một lượt đọc điểm danh của NV (tránh O(N) theo từng ca).
+    const events = (await this.repo.getAttendanceEvents(employeeId, '*').catch(() => [])) as any[];
+    const locked = new Set<string>((events || []).map(e => String(e?.assignment_id || '')));
+    let n = 0;
+    for (const s of targets) {
+      const id = String(s?.assignment_id || '');
+      if (!id || locked.has(id)) continue;
+      try {
+        await this.repo.updateShiftAssignment(id, { status: 'CANCELLED' });
+        n += 1;
+      } catch { /* best-effort */ }
+    }
+    return n;
+  }
+
+  /**
+   * Tạo ca còn thiếu trong khoảng [from, to]:
+   * - Giữ nguyên ca đã có (kể cả ca HR xếp tay) — không tạo 2 ca/ngày.
+   * - Bỏ qua ngày nghỉ phép đã duyệt (và OFF tuần đã ghi nhận).
+   * - cancelWrongAuto=true: hủy ca máy tạo sai mã / rơi vào ngày nghỉ (chưa điểm danh).
+   */
+  private async materializeSaleFixedShiftWindow(args: {
+    employeeId: string;
+    branchId: string;
+    code: string;
+    from: string;
+    to: string;
+    cancelWrongAuto: boolean;
+  }): Promise<{ created: number; kept: number; skippedLeave: number; cancelled: number; warnings: string[] }> {
+    const { employeeId, branchId, code, from, to } = args;
+    const today = vnTodayIso();
+    const warnings: string[] = [];
+    const template = resolveShiftTemplate(code as ShiftCode, 'SALE');
+    if (!template) throw new Error(`SALE_FIXED_SHIFT_INVALID: Không tìm thấy khung giờ cho ca ${code}!`);
+
+    const existing = (await this.repo.getShiftsForEmployee(employeeId, from, to).catch(() => [])) as any[];
+    const liveByDate = new Map<string, any[]>();
+    for (const s of existing || []) {
+      if (String(s?.status || '').toUpperCase() === 'CANCELLED') continue;
+      const d = String(s?.date || '').slice(0, 10);
+      if (!d || d < from || d > to) continue;
+      if (!liveByDate.has(d)) liveByDate.set(d, []);
+      liveByDate.get(d)!.push(s);
+    }
+
+    // Ngày nghỉ phép đã duyệt → không xếp ca. Đơn ĐỘT XUẤT còn PENDING vẫn
+    // giữ ca (khi duyệt, luồng duyệt tự hủy ca ngày đó).
+    const leaveDates = new Set<string>();
+    const leaves = (await this.repo.listLeaveRequests(undefined, employeeId).catch(() => [])) as any[];
+    for (const l of leaves || []) {
+      const d = String(l?.requested_date || '').slice(0, 10);
+      if (!d || d < from || d > to) continue;
+      const st = String(l?.status || '').toUpperCase();
+      if (st === 'REJECTED' || st === 'CANCELLED') continue;
+      const type = String(l?.leave_type || '').toUpperCase();
+      if (type === 'DOT_XUAT' && st !== 'APPROVED') continue;
+      leaveDates.add(d);
+    }
+
+    let cancelled = 0;
+    if (args.cancelWrongAuto) {
+      const targets: any[] = [];
+      for (const [date, list] of liveByDate.entries()) {
+        for (const s of list) {
+          const id = String(s?.assignment_id || '');
+          if (!isFixedShiftId(id)) continue;
+          const wrongCode = String(s?.shift_code || '').toUpperCase() !== code;
+          const onLeave = leaveDates.has(date);
+          if (!wrongCode && !onLeave) continue;
+          if (date < today) continue; // không sửa quá khứ
+          targets.push(s);
+        }
+      }
+      if (targets.length > 0) {
+        const events = (await this.repo.getAttendanceEvents(employeeId, '*').catch(() => [])) as any[];
+        const locked = new Set<string>((events || []).map(e => String(e?.assignment_id || '')));
+        for (const s of targets) {
+          const id = String(s?.assignment_id || '');
+          const date = String(s?.date || '').slice(0, 10);
+          if (!id) continue;
+          if (locked.has(id)) {
+            warnings.push(`${date} ${String(s?.shift_code || '')}: ca đã có điểm danh — giữ nguyên để bảo toàn công/lương.`);
+            continue;
+          }
+          try {
+            await this.repo.updateShiftAssignment(id, { status: 'CANCELLED' });
+            cancelled += 1;
+            const rest = (liveByDate.get(date) || []).filter(x => String(x?.assignment_id || '') !== id);
+            if (rest.length) liveByDate.set(date, rest);
+            else liveByDate.delete(date);
+          } catch (e: any) {
+            warnings.push(`${date}: không hủy được ca ${id} (${String(e?.message || e)})`);
+          }
+        }
+      }
+    }
+
+    const sh = String(template.start_hour).padStart(2, '0');
+    const mm = String(template.start_minute || 0).padStart(2, '0');
+    const eh = String(template.end_hour).padStart(2, '0');
+    const em = String(template.end_minute || 0).padStart(2, '0');
+    const toCreate: any[] = [];
+    let kept = 0;
+    let skippedLeave = 0;
+    let seq = 0;
+    for (let d = from; d <= to; d = addDaysIso(d, 1)) {
+      if (leaveDates.has(d)) {
+        skippedLeave += 1;
+        continue;
+      }
+      if (liveByDate.has(d)) {
+        kept += 1;
+        continue;
+      }
+      toCreate.push({
+        assignment_id: fixedShiftIdOf(employeeId, d, code, seq++),
+        employee_id: employeeId,
+        branch_id: branchId,
+        shift_code: code,
+        date: d,
+        start_at: `${d}T${sh}:${mm}:00+07:00`,
+        end_at: `${d}T${eh}:${em}:00+07:00`,
+        status: 'PUBLISHED',
+        schedule_version: 1,
+      });
+      liveByDate.set(d, [toCreate[toCreate.length - 1]]);
+    }
+
+    let created = 0;
+    if (toCreate.length > 0) {
+      try {
+        const bulk = (this.repo as any).createShiftAssignmentsBulk;
+        if (typeof bulk === 'function') {
+          const rows = await bulk.call(this.repo, toCreate);
+          created = Array.isArray(rows) ? rows.length : toCreate.length;
+        } else {
+          for (const row of toCreate) {
+            await this.repo.createShiftAssignment(row);
+            created += 1;
+          }
+        }
+      } catch (e: any) {
+        warnings.push(`Tạo ca cố định: ${String(e?.message || e)}`);
+      }
+    }
+
+    return { created, kept, skippedLeave, cancelled, warnings };
   }
 
   /**

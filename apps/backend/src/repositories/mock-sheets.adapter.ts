@@ -714,6 +714,32 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return newShift;
   }
 
+  /**
+   * Tạo nhiều ca trong MỘT lượt ghi bộ nhớ (sắp lịch cố định cả năm).
+   * Idempotent: bỏ qua ca đã có cùng assignment_id hoặc cùng NV + ngày + mã ca.
+   * Chỉ trả về các ca THỰC SỰ mới tạo để caller đếm/ghi DB đúng.
+   */
+  async createShiftAssignmentsBulk(
+    assignments: Array<Omit<ShiftAssignment, 'created_at' | 'updated_at'>>
+  ): Promise<ShiftAssignment[]> {
+    this.checkErrors();
+    const out: ShiftAssignment[] = [];
+    const now = new Date().toISOString();
+    for (const assignment of assignments || []) {
+      if (!assignment) continue;
+      if (assignment.assignment_id) {
+        const sameId = this.shifts.find(s => String(s.assignment_id) === String(assignment.assignment_id));
+        if (sameId) continue;
+      }
+      const duplicate = findLiveShift(this.shifts, assignment.employee_id, assignment.date, assignment.shift_code);
+      if (duplicate) continue;
+      const newShift: ShiftAssignment = { ...assignment, created_at: now, updated_at: now };
+      this.shifts.push(newShift);
+      out.push(newShift);
+    }
+    return out;
+  }
+
   async updateShiftAssignment(id: string, updates: Partial<ShiftAssignment>): Promise<ShiftAssignment> {
     this.checkErrors();
     const shift = this.shifts.find(s => s.assignment_id === id);

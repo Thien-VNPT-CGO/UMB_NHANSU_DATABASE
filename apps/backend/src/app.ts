@@ -191,6 +191,7 @@ import {
   publishWeekParams,
   schedulesQuery,
   assignWeekBody,
+  saleFixedShiftBody,
   shiftCreateBody,
   shiftUpdateBody,
   excelImportBody,
@@ -4995,6 +4996,61 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           action: 'assign-week',
           employeeId: req.body.employeeId,
           week: (result as any)?.week,
+        });
+        res.json(result);
+      } catch (err: any) {
+        res.status(400).json({ error: err.message });
+      }
+    }
+  );
+
+  // CA CỐ ĐỊNH CẢ NĂM cho nhân viên Sale: HR chọn 1 trong 4 ca, hệ thống tự
+  // xếp mọi ngày từ hôm nay tới 31/12 năm sau (trừ ngày nghỉ phép đã duyệt) và
+  // tick nền tự nối sang năm kế tiếp cho tới khi NV nghỉ việc.
+  app.post(
+    '/schedules/sale-fixed-shift',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR']),
+    validate({ body: saleFixedShiftBody }),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const result = await schedulesService.applySaleFixedShift({
+          employeeId: req.body.employeeId,
+          shiftCode: req.body.shiftCode,
+          actorId: req.user!.id,
+        });
+        broadcastUpdate('employees', {
+          action: 'sale-fixed-shift',
+          employeeId: req.body.employeeId,
+          shiftCode: req.body.shiftCode,
+        });
+        broadcastUpdate('schedules', {
+          action: 'sale-fixed-shift',
+          employeeId: req.body.employeeId,
+          shiftCode: req.body.shiftCode,
+          created: (result as any)?.created || 0,
+        });
+        res.json(result);
+      } catch (err: any) {
+        res.status(400).json({ error: err.message });
+      }
+    }
+  );
+
+  app.delete(
+    '/schedules/sale-fixed-shift/:employeeId',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR']),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const result = await schedulesService.stopSaleFixedShift(
+          String(req.params.employeeId || ''),
+          req.user!.id
+        );
+        broadcastUpdate('schedules', {
+          action: 'sale-fixed-shift-stop',
+          employeeId: result.employeeId,
+          cancelled: result.cancelled,
         });
         res.json(result);
       } catch (err: any) {

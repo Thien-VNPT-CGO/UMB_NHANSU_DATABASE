@@ -431,6 +431,19 @@ export class PostgresStore {
   }
 
   /**
+   * Ghi nhiều ca trong MỘT transaction (sắp lịch cố định cả năm).
+   * Dùng upsertRows để gom nhiều dòng/1 câu SQL — tránh 300–700 transaction.
+   */
+  public async persistShiftAssignments(rows: any[]): Promise<void> {
+    if (!this.configured || !Array.isArray(rows) || rows.length === 0) return;
+    const def = COLLECTIONS.find(c => c.key === 'shifts');
+    if (!def) return;
+    await withTransaction(async client => {
+      await this.upsertRows(def, rows, client);
+    });
+  }
+
+  /**
    * Migration: xóa sạch dữ liệu cũ rồi ghi toàn bộ trạng thái mới.
    * CHỈ dùng khi backend đã dừng (script migrate) để tránh race với request.
    */

@@ -1094,6 +1094,24 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
   setTimeout(shiftOffSyncTickSafe, 150_000);
   setInterval(shiftOffSyncTickSafe, 60_000);
 
+  // Ca cố định CẢ NĂM của Sale: nối thêm lịch khi sang năm mới + dọn ca tương
+  // lai của NV đã nghỉ việc/đổi khối. Chạy 1 lần/ngày (kiểm tra mỗi giờ).
+  let saleFixedShiftDay = '';
+  const saleFixedShiftTickSafe = () => {
+    const vnDay = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    if (saleFixedShiftDay === vnDay) return;
+    saleFixedShiftDay = vnDay;
+    (services.schedulesService as any).ensureSaleFixedShifts('SYSTEM')
+      .then((r: any) => {
+        if (r?.created > 0 || r?.cancelled > 0) {
+          console.log(`[sale-fixed-shift] Duy trì ${r.employees} NV Sale: tạo ${r.created} ca, hủy ${r.cancelled} ca.`);
+        }
+      })
+      .catch((err: any) => console.warn('[sale-fixed-shift] tick error:', err?.message || err));
+  };
+  setTimeout(saleFixedShiftTickSafe, 180_000);
+  setInterval(saleFixedShiftTickSafe, 60 * 60_000);
+
   // Tự chữa ca DRAFT lọt vào tuần ĐÃ phát hành: dùng chung runHealDraftShifts
   // (định nghĩa đầu file, cũng được kích hoạt ngay khi pull thấy PHAN_CONG_CA đổi).
   // Chạy sớm (15s sau boot) để lịch hết "nháp" trước khi HR/NV kịp nhìn.

@@ -67,6 +67,12 @@ export interface ISheetsRepository {
   getShiftsForEmployee(employeeId: string, fromDate: string, toDate: string): Promise<ShiftAssignment[]>;
   getShiftById(assignmentId: string): Promise<ShiftAssignment | null>;
   createShiftAssignment(assignment: Omit<ShiftAssignment, 'created_at' | 'updated_at'>): Promise<ShiftAssignment>;
+  /**
+   * Tạo nhiều ca trong MỘT lượt ghi (sắp lịch cố định cả năm cho Sale).
+   * Tùy chọn: adapter không hỗ trợ thì service tự lặp createShiftAssignment.
+   * Phải idempotent theo assignment_id và theo (NV + ngày + mã ca).
+   */
+  createShiftAssignmentsBulk?(assignments: Array<Omit<ShiftAssignment, 'created_at' | 'updated_at'>>): Promise<ShiftAssignment[]>;
   updateShiftAssignment(id: string, updates: Partial<ShiftAssignment>): Promise<ShiftAssignment>;
   /**
    * Đánh dấu PUBLISHED hàng loạt (self-heal ca nháp lọt vào tuần đã phát hành).

@@ -1506,6 +1506,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [assignLoadError, setAssignLoadError] = useState('');
   const [assignOriginalCount, setAssignOriginalCount] = useState(0);
   const assignLoadSeq = useRef(0);
+  // Ca cố định CẢ NĂM cho Sale: HR chọn 1 trong 4 ca, hệ thống tự xếp mọi ngày
+  // (trừ ngày nghỉ phép đã duyệt) và tự nối sang năm sau tới khi NV nghỉ việc.
+  const [fixedOpen, setFixedOpen] = useState(false);
+  const [fixedEmpId, setFixedEmpId] = useState('');
+  const [fixedEmpSearch, setFixedEmpSearch] = useState('');
+  const [fixedCode, setFixedCode] = useState('CA_1');
+  const [fixedBusy, setFixedBusy] = useState(false);
   const [selectedRealtimeModal, setSelectedRealtimeModal] = useState<any>(null);
   // Modal ADMIN ẩn/hiện lịch theo chi nhánh (áp dụng realtime cho mọi tài khoản).
   const [branchVisOpen, setBranchVisOpen] = useState(false);
@@ -9884,6 +9891,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 >
                   🗓 Sắp Lịch Xưởng
                 </button>
+                <button
+                  className="btn-primary"
+                  style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', fontSize: '12.5px', fontWeight: 700, borderRadius: '6px', minHeight: '32px', backgroundColor: '#7C3AED' }}
+                  title="Chọn 1 trong 4 ca và áp dụng cho nhân viên Sale CẢ NĂM — lịch tự nối sang năm sau tới khi nhân viên nghỉ việc"
+                  onClick={() => {
+                    setFixedEmpId('');
+                    setFixedEmpSearch('');
+                    setFixedCode('CA_1');
+                    setFixedOpen(true);
+                  }}
+                >
+                  📌 Ca Cố Định Năm
+                </button>
               </>
             )}
             {currentUser?.role === 'ADMIN' && (
@@ -10595,6 +10615,191 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   >
                     {assignBusy ? '⏳ Đang lưu...' : '💾 Lưu Lịch Tuần'}
                   </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {fixedOpen && (() => {
+          const saleEmps = (allEmployees || []).filter((e: any) =>
+            !isEmpAccountLocked(e) &&
+            String((e as any)?.employment_status || '').toUpperCase() !== 'TERMINATED' &&
+            isSaleGroup((e as any)?.group)
+          );
+          const q = fixedEmpSearch.trim().toLowerCase();
+          const empOptions = saleEmps.filter((e: any) => {
+            if (!q) return true;
+            return `${(e as any)?.full_name || ''} ${(e as any)?.employee_code || ''} ${(e as any)?.phone_normalized || (e as any)?.phone || ''}`
+              .toLowerCase()
+              .includes(q);
+          }).slice(0, 80);
+          const picked = saleEmps.find((e: any) => String((e as any)?.employee_id || '') === String(fixedEmpId || ''));
+          const codes = shiftCodesForGroup('SALE') as string[];
+          const vnNow = new Date(Date.now() + 7 * 3_600_000);
+          const dayStr = (d: Date) => d.toISOString().slice(0, 10);
+          const todayIso = dayStr(vnNow);
+          const horizon = `${vnNow.getUTCFullYear() + 1}-12-31`;
+          const curCode = String((picked as any)?.default_shift_code || '').toUpperCase();
+          const doApply = async () => {
+            if (fixedBusy) return;
+            if (!picked) { showToast('⚠️ Vui lòng chọn nhân viên Sale!'); return; }
+            if (curCode && curCode !== fixedCode) {
+              if (!window.confirm(
+                `${(picked as any)?.full_name} đang có ca cố định ${curCode}.\n\n` +
+                `Đổi sang ${fixedCode} sẽ hủy các ca máy tạo CHƯA điểm danh và tạo lại theo ca mới.\n` +
+                `Ca HR xếp tay và ca đã điểm danh được giữ nguyên.\n\nTiếp tục?`
+              )) return;
+            }
+            setFixedBusy(true);
+            try {
+              const res: any = await apiRequest('/schedules/sale-fixed-shift', {
+                method: 'POST',
+                body: JSON.stringify({ employeeId: (picked as any).employee_id, shiftCode: fixedCode }),
+                _timeoutMs: 120000,
+              } as any);
+              const warnings: string[] = Array.isArray(res?.warnings) ? res.warnings : [];
+              showToast(
+                `✅ Đã áp dụng ${fixedCode} cho ${(picked as any)?.full_name}: tạo ${res?.created || 0} ca • giữ ${res?.kept || 0} ca` +
+                ((res?.skippedLeave || 0) > 0 ? ` • bỏ qua ${res.skippedLeave} ngày nghỉ phép` : '') +
+                ((res?.cancelled || 0) > 0 ? ` • hủy ${res.cancelled} ca cũ` : '') +
+                `. Hệ thống tự duy trì lịch sang năm sau tới khi NV nghỉ việc.` +
+                (warnings.length ? ` ⚠️ ${warnings[0]}` : '')
+              );
+              setFixedOpen(false);
+              setScheduleGroupFilter('SALE');
+              setScheduleBranchFilter('VAN_PHONG');
+              if (onRefreshData) await onRefreshData();
+            } catch (e: any) {
+              showToast(e?.message || 'Lỗi khi áp dụng ca cố định!');
+            } finally {
+              setFixedBusy(false);
+            }
+          };
+          return (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+              <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '620px', width: '100%', maxHeight: '90vh', overflow: 'auto', padding: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+                  <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>📌 Ca Cố Định Cả Năm — Khối Sale</h2>
+                  <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => setFixedOpen(false)}>Đóng</button>
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.6 }}>
+                  Chọn <strong>1 trong 4 ca</strong> cho nhân viên Sale. Hệ thống tự xếp ca cho <strong>mọi ngày</strong>,
+                  bỏ qua ngày nghỉ phép đã duyệt, và <strong>tự nối sang năm sau</strong> cho tới khi nhân viên nghỉ việc.
+                  Ngày NV đăng ký OFF tuần vẫn được tự hủy ca đúng như quy trình hiện tại.
+                </div>
+
+                <div style={{ marginTop: '14px' }}>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Nhân viên Sale:</label>
+                  <input
+                    value={fixedEmpSearch}
+                    onChange={(e) => setFixedEmpSearch(e.target.value)}
+                    placeholder="Gõ tên / mã NV / SĐT để lọc..."
+                    style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid var(--border)', marginBottom: '6px' }}
+                  />
+                  <select
+                    value={fixedEmpId}
+                    onChange={(e) => setFixedEmpId(e.target.value)}
+                    style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }}
+                  >
+                    <option value="">-- Chọn nhân viên --</option>
+                    {empOptions.map((e: any) => (
+                      <option key={(e as any)?.employee_id} value={(e as any)?.employee_id}>
+                        {(e as any)?.full_name} ({(e as any)?.employee_code}) — {getDisplayBranch((e as any)?.default_branch_id || (e as any)?.branch_id || '')}
+                        {String((e as any)?.default_shift_code || '') ? ` • đang: ${String((e as any).default_shift_code)}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {saleEmps.length === 0 && (
+                    <div style={{ fontSize: '12px', color: '#B45309', marginTop: '4px' }}>Chưa có nhân viên khối Sale nào đang làm việc.</div>
+                  )}
+                </div>
+
+                <div style={{ marginTop: '14px' }}>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '6px' }}>Chọn ca áp dụng:</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '8px' }}>
+                    {codes.map((code) => {
+                      const on = String(code) === String(fixedCode);
+                      return (
+                        <button
+                          key={code}
+                          type="button"
+                          onClick={() => setFixedCode(String(code))}
+                          style={{
+                            textAlign: 'left',
+                            padding: '10px 12px',
+                            borderRadius: '8px',
+                            border: on ? '2px solid #7C3AED' : '1px solid var(--border)',
+                            backgroundColor: on ? '#F5F3FF' : 'var(--surface)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <div style={{ fontSize: '13px', fontWeight: 800, color: on ? '#6D28D9' : 'var(--text)' }}>
+                            {on ? '● ' : '○ '}{shiftLabel(code, 'SALE')}
+                          </div>
+                          <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginTop: '2px' }}>{shiftTimeLabel(code, 'SALE')} mỗi ngày</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div style={{ marginTop: '14px', fontSize: '12px', color: 'var(--text-muted)', backgroundColor: '#F8FAFC', border: '1px solid var(--border)', borderRadius: '8px', padding: '10px 12px', lineHeight: 1.7 }}>
+                  <div>📅 Áp dụng: <strong>{todayIso}</strong> → <strong>{horizon}</strong> (hết năm sau).</div>
+                  <div>🔁 Mỗi ngày hệ thống tự kiểm tra và nối dài lịch; sang năm mới tự tạo tiếp.</div>
+                  <div>🛑 Khi nhân viên <strong>nghỉ việc</strong>, lịch cố định dừng và ca tương lai được dọn.</div>
+                  {picked && (
+                    <div style={{ marginTop: '4px' }}>
+                      Đang chọn: <strong>{(picked as any)?.full_name}</strong> — ca cố định hiện tại: <strong>{curCode || 'chưa gán'}</strong>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginTop: '16px', flexWrap: 'wrap' }}>
+                  <div>
+                    {picked && curCode && (
+                      <button
+                        className="btn-secondary"
+                        style={{ padding: '9px 14px', color: '#B91C1C', borderColor: '#FCA5A5', fontWeight: 700 }}
+                        disabled={fixedBusy}
+                        onClick={async () => {
+                          if (fixedBusy || !picked) return;
+                          if (!window.confirm(
+                            `Ngừng ca cố định của ${(picked as any)?.full_name}?\n\n` +
+                            `• Các ca máy tạo từ hôm nay sẽ bị hủy (ca đã điểm danh và ca HR xếp tay vẫn giữ).\n` +
+                            `• Hệ thống sẽ KHÔNG tự tạo tiếp lịch cho nhân viên này nữa.\n\nTiếp tục?`
+                          )) return;
+                          setFixedBusy(true);
+                          try {
+                            const res: any = await apiRequest(
+                              `/schedules/sale-fixed-shift/${encodeURIComponent((picked as any).employee_id)}`,
+                              { method: 'DELETE', _timeoutMs: 120000 } as any
+                            );
+                            showToast(`⏹ Đã ngừng ca cố định của ${(picked as any)?.full_name}: hủy ${res?.cancelled || 0} ca máy tạo.`);
+                            setFixedOpen(false);
+                            if (onRefreshData) await onRefreshData();
+                          } catch (e: any) {
+                            showToast(e?.message || 'Lỗi khi ngừng ca cố định!');
+                          } finally {
+                            setFixedBusy(false);
+                          }
+                        }}
+                      >
+                        ⏹ Ngừng ca cố định
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button className="btn-secondary" style={{ padding: '9px 14px' }} onClick={() => setFixedOpen(false)}>Hủy</button>
+                    <button
+                      className="btn-primary"
+                      disabled={fixedBusy || !picked}
+                      onClick={doApply}
+                      style={{ padding: '10px 18px', fontWeight: 800, fontSize: '13px', backgroundColor: '#7C3AED' }}
+                    >
+                      {fixedBusy ? '⏳ Đang áp dụng...' : '📌 Áp Dụng Cả Năm'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

@@ -1334,6 +1334,30 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return res;
   }
 
+  /**
+   * Tạo nhiều ca + đẩy Sheet đúng 1 lần (sắp lịch cố định cả năm cho Sale).
+   * Không đẩy từng ca như createShiftAssignment: 300–700 ca sẽ nghẽn quota.
+   */
+  async createShiftAssignmentsBulk(assignments: any[]) {
+    const created = await this.fallbackAdapter.createShiftAssignmentsBulk(assignments);
+    if (!created || created.length === 0) return created || [];
+    // Ghi snapshot ngay để ca vừa tạo sống sót nếu deploy/restart liền sau.
+    this.scheduleRuntimeSnapshot(0);
+    if (this.isConfigured) {
+      try {
+        const pushed = await Promise.race([
+          this.syncService.pushShiftsTab(this.fallbackAdapter),
+          new Promise<number>(r => setTimeout(() => r(0), 30000)),
+        ]);
+        if (!pushed) throw new Error('PUSH_SHIFTS_FAILED');
+      } catch {
+        // Rớt mạng/quota: dữ liệu đã nằm trong bộ nhớ + snapshot; dồn full-sync nền.
+        this.scheduleFullSync('PHAN_CONG_CA.bulk-create');
+      }
+    }
+    return created;
+  }
+
   async purgeShiftAssignments(ids: string[]) {
     const n = await this.fallbackAdapter.purgeShiftAssignments(ids);
     if (n > 0) this.scheduleRuntimeSnapshot();

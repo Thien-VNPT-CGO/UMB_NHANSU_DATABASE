@@ -352,6 +352,25 @@ export class PostgresAdapter {
     return { hidden, failed };
   }
 
+  /**
+   * Tạo nhiều ca + ghi PostgreSQL trong MỘT transaction (sắp lịch cố định cả năm).
+   * Không đi qua executeWrite từng ca để tránh 300–700 transaction/outbox.
+   */
+  public async createShiftAssignmentsBulk(assignments: any[]): Promise<any[]> {
+    const created = await (this.inner as any).createShiftAssignmentsBulk(assignments);
+    if (!Array.isArray(created) || created.length === 0) return Array.isArray(created) ? created : [];
+    this.lastWriteAt = new Date().toISOString();
+    if (!this.store.configured) return created;
+    try {
+      await this.store.persistShiftAssignments(created);
+    } catch (err: any) {
+      console.error('[PostgresAdapter] Persist bulk shifts thất bại:', err?.message || err);
+      this.loadError = `PERSIST_FAILED:createShiftAssignmentsBulk:${err?.message || err}`;
+      throw new Error('PERSIST_FAILED:createShiftAssignmentsBulk');
+    }
+    return created;
+  }
+
   private buildOverrides(): Record<string, any> {
     const self = this;
     return {
@@ -375,6 +394,7 @@ export class PostgresAdapter {
       scheduleFullSync: (reason?: string) => self.scheduleFullSync(reason),
       pushCandidatesNow: () => self.pushCandidatesNow(),
       hideCandidatesFromSystem: (entries: any[]) => self.hideCandidatesFromSystem(entries),
+      createShiftAssignmentsBulk: (assignments: any[]) => self.createShiftAssignmentsBulk(assignments),
     };
   }
 
