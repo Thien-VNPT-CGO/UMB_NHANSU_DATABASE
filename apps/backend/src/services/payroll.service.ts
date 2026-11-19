@@ -8,7 +8,7 @@ import {
   PayrollRunStatus,
   PayslipItem,
   PayslipSignerRole,
-  SHIFT_TEMPLATES,
+  shiftHoursOf,
   STANDARD_HOURLY_RATES,
   DEFAULT_PAYROLL_FORMULA,
   batchOfGroup,
@@ -493,8 +493,7 @@ export class PayrollService {
               (e: any) => e.type === 'CHECK_OUT' && (!e.assignment_id || e.assignment_id === s.assignment_id)
             );
             if (!hasOut) hasOut = !!orphanLegFor(dayEvents, s, dayLiveIds, statusByAssign, consumedOrphans, 'CHECK_OUT', (inEvt as any)?.assignment_id);
-            const template = SHIFT_TEMPLATES[s.shift_code];
-            const hours = template ? template.duration_hours : 5;
+            const hours = shiftHoursOf(String(s.shift_code || ''), (emp as any)?.group);
             // Đơn giá đúng giai đoạn của ngày công (TV trước official_date).
             const dayRate = rateOnDate(emp, s.date, hist, STANDARD_HOURLY_RATES.PROBATION, rate);
             const shiftPay = hours * dayRate.rate;
@@ -1456,8 +1455,7 @@ export class PayrollService {
               (e: any) => e.type === 'CHECK_OUT' && (!e.assignment_id || e.assignment_id === s.assignment_id)
             );
             if (!hasOut) hasOut = !!orphanLegFor(dayEvents, s, dayLiveIds, statusByAssign, consumedOrphans, 'CHECK_OUT', (inEvt as any)?.assignment_id);
-            const template = SHIFT_TEMPLATES[s.shift_code];
-            const hours = template ? template.duration_hours : 5;
+            const hours = shiftHoursOf(String(s.shift_code || ''), (emp as any)?.group);
             // Đơn giá đúng của ngày công: lịch sử đơn giá từng NV (Điều chỉnh lương ca
             // ghi vào lịch sử) ƯU TIÊN, công thức kỳ (rateTV/rateCT) chỉ là fallback.
             // Trước đây dùng cứng công thức kỳ → điều chỉnh đơn giá không bao giờ đổi tiền.
@@ -2782,8 +2780,7 @@ export class PayrollService {
         (e: any) => e.type === 'CHECK_OUT' && (!(e as any).assignment_id || (e as any).assignment_id === (s as any).assignment_id)
       );
       if (!hasOut) hasOut = !!orphanLegFor(dayEvents, s, dayLiveIds, statusByAssign, consumedOrphans, 'CHECK_OUT', (inEvt as any)?.assignment_id);
-      const template = (SHIFT_TEMPLATES as any)[(s as any).shift_code];
-      const h = template ? Number(template.duration_hours) || 5 : 5;
+      const h = shiftHoursOf(String((s as any).shift_code || ''), (emp as any)?.group);
       // Đơn giá đúng từng ngày: lịch sử đơn giá NV (điều chỉnh) ưu tiên,
       // công thức kỳ là dự phòng — khớp Finance (trước đây bỏ qua lịch sử).
       const dayRate = rateOnDate(emp, day, hist, fRateTV, fRateCT);
@@ -2956,8 +2953,7 @@ export class PayrollService {
         const legs = linked.get(String((s as any)?.assignment_id || '')) || ({} as any);
         const inEvt = (legs as any).CHECK_IN;
         const hasOut = !!(legs as any).CHECK_OUT;
-        const template = SHIFT_TEMPLATES[s.shift_code];
-        const h = template ? template.duration_hours : 5;
+        const h = shiftHoursOf(String(s.shift_code || ''), (emp as any)?.group);
         if (!inEvt || !hasOut) {
           absentShifts++;
           continue;
@@ -3162,8 +3158,7 @@ export class PayrollService {
         const inEvt = (legs as any).CHECK_IN;
         const hasOut = !!(legs as any).CHECK_OUT;
         const hasAbs = mine.some((e: any) => e.type === 'ABSENT');
-        const template = (SHIFT_TEMPLATES as any)[(s as any).shift_code];
-        const h = template ? Number(template.duration_hours) || 5 : 5;
+        const h = shiftHoursOf(String((s as any).shift_code || ''), (emp as any)?.group);
         // Đơn giá đúng của ngày công: lịch sử đơn giá từng NV (Điều chỉnh lương ca)
         // ưu tiên, công thức kỳ là fallback — phải khớp 100% calculateFormulaPayroll
         // để Bảng Tổng Hợp/Tính lương/Phiếu NV thấy cùng 1 số sau khi điều chỉnh.

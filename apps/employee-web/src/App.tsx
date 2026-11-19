@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { attShiftStatus, getErrorCode, inferExtraShiftCode, mergeOrphanCheckins, shiftPayInfo, toVietnameseErrorMessage } from '@ubm/shared';
+import { attShiftStatus, getErrorCode, inferExtraShiftCode, mergeOrphanCheckins, shiftPayInfo, shiftCodesForGroup, shiftLabel, shiftTimeLabel, shiftTemplatesForGroup, isSaleGroup, shiftHoursOf, toVietnameseErrorMessage } from '@ubm/shared';
 import { Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, onPinLockRequired, tryRefreshSession, clearApiCache } from './services/api';
 import { connectRealtime, stopRealtimeRevive } from './services/realtime';
@@ -433,14 +433,24 @@ function dedupeShifts(list: any[]): any[] {
   });
 }
 
+/** "07:00" (giờ VN) của mốc ISO — dùng chung cho lịch/ca Sale 4 ca. */
+function fmtVnClock(iso?: string | null): string {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return '';
+  return new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Ho_Chi_Minh' });
+}
+
 function formatShiftOption(s: any): string {
   if (!s) return '';
   const dStr = toISODate(s.date);
   const code = String(s.shift_code || '').trim().toUpperCase();
-  const shiftName = code === 'CA_1' ? 'Ca 1 (07:00 - 12:00)'
-    : code === 'CA_2' ? 'Ca 2 (12:00 - 18:00)'
-    : code === 'CA_3' ? 'Ca 3 (18:00 - 23:00)'
-    : code;
+  // Ưu tiên giờ thật lưu trên ca (Sale 4 ca 07–11/11–15/15–19/19–23, cửa hàng 3 ca).
+  const actualStart = fmtVnClock(s.start_at);
+  const actualEnd = fmtVnClock(s.end_at);
+  const shiftName = actualStart && actualEnd
+    ? `Ca ${code.replace(/[^0-9]/g, '') || '?'} (${actualStart} - ${actualEnd})`
+    : (shiftLabel(code) || code);
   if (!dStr) return shiftName;
   const parts = dStr.split('-');
   if (parts.length === 3) {
@@ -763,8 +773,7 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
-  const reRegCodeLabel = (code: string) =>
-    code === 'CA_1' ? 'Ca 1 (07–12)' : code === 'CA_2' ? 'Ca 2 (12–18)' : code === 'CA_3' ? 'Ca 3 (18–23)' : code;
+  const reRegCodeLabel = (code: string) => codeLabel(code);
   const reRegDayName = (iso: string) => {
     const d = new Date(`${iso}T00:00:00Z`).getUTCDay();
     return d === 0 ? 'CN' : `T${d + 1}`;
@@ -2881,11 +2890,9 @@ export function App() {
     }
     return days;
   }
-  const SHIFT_HOURS_LABEL: Record<string, string> = {
-    CA_1: 'Ca 1: 07:00 - 12:00',
-    CA_2: 'Ca 2: 12:00 - 18:00',
-    CA_3: 'Ca 3: 18:00 - 23:00',
-  };
+  const SHIFT_HOURS_LABEL: Record<string, string> = Object.fromEntries(
+    shiftCodesForGroup((employee as any)?.group).map((c) => [c, `Ca ${String(c).replace(/[^0-9]/g, '')}: ${shiftTimeLabel(c, (employee as any)?.group)}`])
+  );
   const shiftLabelOf = (s: any) => SHIFT_HOURS_LABEL[s?.shift_code] || (s?.shift_code ? String(s.shift_code) : '');
   // Trạng thái ca: chỉ status đúng là DRAFT mới tính là nháp (dữ liệu Sheet
   // cũ có thể ghi hoa/thường lộn xộn hoặc trống — không gắn nháp oan ca đã làm).
@@ -3740,13 +3747,16 @@ export function App() {
           direction: probationSelfSwap.direction,
           date: probationSelfSwap.date,
           reason: probationSelfSwap.reason,
-          ...(probationSelfSwap.direction === 'OFF_TO_WORK' ? { shiftCode: 'CA_1' } : {}),
+          ...(probationSelfSwap.direction === 'OFF_TO_WORK'
+            ? { shiftCode: probationWorkCode }
+            : {}),
         }),
       });
       const r = res?.result || res;
+      const workCode = probationWorkCode;
       showToast(probationSelfSwap.direction === 'WORK_TO_OFF'
         ? `✓ Đã tự chuyển nghỉ OFF ngày ${r?.date || probationSelfSwap.date}! Hệ thống tự duyệt — lịch và công đã cập nhật ngay.`
-        : `✓ Đã tự xếp đi làm Ca 1 ngày ${r?.date || probationSelfSwap.date}! Hệ thống tự duyệt — lịch và công đã cập nhật ngay.`);
+        : `✓ Đã tự xếp đi làm ${codeLabel(workCode)} ngày ${r?.date || probationSelfSwap.date}! Hệ thống tự duyệt — lịch và công đã cập nhật ngay.`);
       void loadEmployeeData(employee?.employee_id, true);
     } catch (err: any) {
       showToast(err.message || 'Lỗi khi tự đổi ca!');
@@ -3769,7 +3779,7 @@ export function App() {
         body: JSON.stringify({
           leaveType: 'DOT_XUAT',
           requestedDate: emergencyData.date,
-          reason: `[NGHỈ KHẨN CẤP] ${emergencyData.shift} - ${emergencyData.reason}`,
+          reason: `[NGHỈ KHẨN CẤP] ${codeLabel((employee as any)?.default_shift_code) || emergencyData.shift} - ${emergencyData.reason}`,
         }),
       });
       // Lượt dùng 1 lần đã bị tiêu thụ ở server — ẩn chức năng ngay lập tức.
@@ -3987,6 +3997,28 @@ export function App() {
     const g = String((employee as any)?.group ?? '').trim().toUpperCase();
     return g === 'VAN_PHONG' || g === 'VANPHONG' || g === 'OFFICE' || g.includes('VĂN PHÒNG') || g.includes('VAN PHONG');
   })();
+
+  // KHỐI SALE: giữ nguyên cổng nhân viên như khối cửa hàng, chỉ đổi ca làm thành 4 ca:
+  // Ca 1 07:00–11:00 · Ca 2 11:00–15:00 · Ca 3 15:00–19:00 · Ca 4 19:00–23:00.
+  const isSale = isSaleGroup((employee as any)?.group);
+  const empShiftCodes = shiftCodesForGroup((employee as any)?.group);
+  const codeLabel = (code?: string) => shiftLabel(code, (employee as any)?.group) || String(code || '');
+  const codeTimeLabel = (code?: string) => shiftTimeLabel(code, (employee as any)?.group) || '';
+  const codeNumLabel = (code?: string) => {
+    const m = String(code || '').match(/CA[_\s]*(\d)/i);
+    return m ? `Ca ${m[1]}` : (code || 'Ca');
+  };
+  const shiftBounds = (code?: string): [string, string] => {
+    const norm = String(code || '').toUpperCase().replace(/^CA[\s_]*/, 'CA_').replace(/\s+/g, '_');
+    const tpl = shiftTemplatesForGroup((employee as any)?.group)[norm];
+    if (!tpl) return ['', ''];
+    const p = (n: number) => String(n).padStart(2, '0');
+    return [`${p(tpl.start_hour)}:${p(tpl.start_minute)}`, `${p(tpl.end_hour)}:${p(tpl.end_minute)}`];
+  };
+  // Ca đi làm mặc định khi NV thử việc tự chuyển OFF → ĐI LÀM (Sale dùng ca đầu của khối).
+  const probationWorkCode = empShiftCodes.includes(String((employee as any)?.default_shift_code || '') as any)
+    ? String((employee as any)?.default_shift_code)
+    : (empShiftCodes[0] || 'CA_1');
 
   // Hộp thư tự reset 23h00 mỗi ngày (thông báo cũ bị dọn), còn lịch kiểm tra
   // đầu ra thì vẫn hiệu lực. Mỗi lần mở Trang chủ / Lịch / Thông báo phải tải
@@ -5110,50 +5142,25 @@ export function App() {
 
                 const getShiftMeta = (shiftCode?: string, startAt?: string, endAt?: string) => {
                   const code = String(shiftCode || '').toUpperCase();
+                  const norm = code.replace(/^CA[\s_]*/, 'CA_').replace(/\s+/g, '_');
+                  const num = String((norm.match(/CA_?(\d)/) || [])[1] || '');
                   const timeStr = (startAt && endAt) ? `${fmtHM(startAt)} – ${fmtHM(endAt)}` : '';
-                  if (code.includes('CA_1') || code.includes('CA 1') || code.includes('SANG')) {
-                    return {
-                      title: 'Ca 1 (Ca Sáng)',
-                      time: timeStr || '07:00 – 12:00',
-                      duration: '5 giờ',
-                      icon: '☀️',
-                      accent: '#D97706',
-                      bg: '#FFFDF5',
-                      border: '#FDE68A',
-                      badgeBg: '#FEF3C7',
-                      badgeFg: '#92400E',
-                    };
-                  }
-                  if (code.includes('CA_2') || code.includes('CA 2') || code.includes('CHIEU')) {
-                    return {
-                      title: 'Ca 2 (Ca Chiều)',
-                      time: timeStr || '12:00 – 18:00',
-                      duration: '6 giờ',
-                      icon: '🌤️',
-                      accent: '#0284C7',
-                      bg: '#F8FCFF',
-                      border: '#BAE6FD',
-                      badgeBg: '#E0F2FE',
-                      badgeFg: '#075985',
-                    };
-                  }
-                  if (code.includes('CA_3') || code.includes('CA 3') || code.includes('TOI')) {
-                    return {
-                      title: 'Ca 3 (Ca Tối)',
-                      time: timeStr || '18:00 – 23:00',
-                      duration: '5 giờ',
-                      icon: '🌙',
-                      accent: '#7C3AED',
-                      bg: '#FAF8FF',
-                      border: '#DDD6FE',
-                      badgeBg: '#F3E8FF',
-                      badgeFg: '#6B21A8',
-                    };
+                  const tplTime = shiftTimeLabel(norm, (employee as any)?.group)?.replace('–', ' – ') || '';
+                  const hours = shiftHoursOf(norm, (employee as any)?.group);
+                  const palette: Record<string, any> = {
+                    '1': { title: isSale ? 'Ca 1 (07:00–11:00)' : 'Ca 1 (Ca Sáng)', icon: '☀️', accent: '#D97706', bg: '#FFFDF5', border: '#FDE68A', badgeBg: '#FEF3C7', badgeFg: '#92400E' },
+                    '2': { title: isSale ? 'Ca 2 (11:00–15:00)' : 'Ca 2 (Ca Chiều)', icon: '🌤️', accent: '#0284C7', bg: '#F8FCFF', border: '#BAE6FD', badgeBg: '#E0F2FE', badgeFg: '#075985' },
+                    '3': { title: isSale ? 'Ca 3 (15:00–19:00)' : 'Ca 3 (Ca Tối)', icon: '🌙', accent: '#7C3AED', bg: '#FAF8FF', border: '#DDD6FE', badgeBg: '#F3E8FF', badgeFg: '#6B21A8' },
+                    '4': { title: 'Ca 4 (19:00–23:00)', icon: '🌙', accent: '#BE185D', bg: '#FFF7FA', border: '#FBCFE8', badgeBg: '#FCE7F0', badgeFg: '#9D174D' },
+                  };
+                  const p = palette[num];
+                  if (p) {
+                    return { ...p, time: timeStr || tplTime || 'Theo phân công', duration: hours ? `${hours} giờ` : '' };
                   }
                   return {
                     title: shiftCode || 'Ca Làm Việc',
-                    time: timeStr || 'Theo phân công',
-                    duration: '',
+                    time: timeStr || tplTime || 'Theo phân công',
+                    duration: hours ? `${hours} giờ` : '',
                     icon: '💼',
                     accent: '#E85D92',
                     bg: '#FFF8FA',
@@ -5431,7 +5438,7 @@ export function App() {
                               <div style={{ minHeight: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 {dayShifts.length > 0 ? (
                                   <span style={{ fontSize: '9px', fontWeight: 800, color: dayDraftOnly ? '#92400E' : '#7C3AED', backgroundColor: dayDraftOnly ? '#FEF3C7' : '#F3E8FF', borderRadius: '4px', padding: '1px 4px' }}>
-                                    {dayShifts[0].shift_code === 'CA_1' ? 'Ca 1' : dayShifts[0].shift_code === 'CA_2' ? 'Ca 2' : dayShifts[0].shift_code === 'CA_3' ? 'Ca 3' : `${dayShifts.length} ca`}
+                                    {empShiftCodes.includes(String(dayShifts[0].shift_code) as any) ? codeNumLabel(dayShifts[0].shift_code) : `${dayShifts.length} ca`}
                                     {dayDraftOnly ? ' • Nháp' : ''}
                                   </span>
                                 ) : isOffDay ? (
@@ -6078,7 +6085,11 @@ export function App() {
             checkInTime: shiftIn?.client_time ? new Date(shiftIn.client_time).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : undefined,
             checkOutTime: shiftOut?.client_time ? new Date(shiftOut.client_time).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : undefined,
           };
-          const shiftStartHour = todayShift?.shift_code === 'CA_1' ? 7 : todayShift?.shift_code === 'CA_2' ? 12 : todayShift?.shift_code === 'CA_3' ? 18 : undefined;
+          const shiftStartHour = (() => {
+            const b = shiftBounds(todayShift?.shift_code)[0];
+            const h = b ? Number(b.slice(0, 2)) : NaN;
+            return Number.isFinite(h) ? h : undefined;
+          })();
           const shiftStart = todayShift?.start_at ? new Date(todayShift.start_at).getTime() : 0;
           const openTime = shiftStart ? shiftStart - checkInWindowMinutes * 60 * 1000 : 0;
           const isEarly = shiftStart > 0 && vnNowMs() < openTime;
@@ -6134,7 +6145,7 @@ export function App() {
                         4. Điểm Danh Ca Làm Hôm Nay
                       </h3>
                       <div style={{ fontSize: '12px', color: 'var(--brand)', fontWeight: 700, marginTop: '2px' }}>
-                        {todayShift.shift_code} • {todayShift.branch_id || employee?.default_branch_id} ({shiftStartStr} - {todayShift.end_at ? new Date(todayShift.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (todayShift.shift_code === 'CA_1' ? '12:00' : todayShift.shift_code === 'CA_2' ? '18:00' : todayShift.shift_code === 'CA_3' ? '23:00' : '')})
+                        {todayShift.shift_code} • {todayShift.branch_id || employee?.default_branch_id} ({shiftStartStr} - {todayShift.end_at ? new Date(todayShift.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (shiftBounds(todayShift.shift_code)[1] || '')})
                       </div>
                     </div>
                     <span className="badge badge-brand">GPS + Camera</span>
@@ -6153,7 +6164,7 @@ export function App() {
                       >
                         {todayShifts.map((s: any) => (
                           <option key={s.assignment_id} value={s.assignment_id}>
-                            {s.shift_code} • {s.date} ({s.start_at ? new Date(s.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (s.shift_code === 'CA_1' ? '07:00' : s.shift_code === 'CA_2' ? '12:00' : s.shift_code === 'CA_3' ? '18:00' : '')} - {s.end_at ? new Date(s.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (s.shift_code === 'CA_1' ? '12:00' : s.shift_code === 'CA_2' ? '18:00' : s.shift_code === 'CA_3' ? '23:00' : '')})
+                            {s.shift_code} • {s.date} ({s.start_at ? new Date(s.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (shiftBounds(s.shift_code)[0] || '')} - {s.end_at ? new Date(s.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (shiftBounds(s.shift_code)[1] || '')})
                           </option>
                         ))}
                       </select>
@@ -6532,7 +6543,7 @@ export function App() {
                     if (!Number.isFinite(ms)) return '';
                     return new Date(ms).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
                   };
-                  const shiftNameOf = (code?: string) => code === 'CA_1' ? 'Ca 1' : code === 'CA_2' ? 'Ca 2' : code === 'CA_3' ? 'Ca 3' : (code || 'Ca');
+                  const shiftNameOf = (code?: string) => codeNumLabel(code) || 'Ca';
                   const money = (n: number) => Number(n || 0).toLocaleString('vi-VN');
                   const wdName = (iso: string) => {
                     const d = new Date(`${iso}T00:00:00Z`).getUTCDay();
@@ -6687,7 +6698,7 @@ export function App() {
                         badge = '⏳ Chờ duyệt (chưa tính công)'; bg = '#F1F5F9'; fg = '#475569'; border = '1px solid #CBD5E1';
                       } else if (st.key === 'COMPLETED') {
                         cDone++;
-                        payTotal += srvNetOf((sh as any)?.assignment_id, date, shiftPayInfo((sh as any)?.shift_code, srvRateOf(date), ci, co, (sh as any)?.start_at).net);
+                        payTotal += srvNetOf((sh as any)?.assignment_id, date, shiftPayInfo((sh as any)?.shift_code, srvRateOf(date), ci, co, (sh as any)?.start_at, (employee as any)?.group).net);
                         badge = '✓ Đủ công'; bg = '#ECFDF5'; fg = '#047857'; border = '1px solid #A7F3D0';
                       } else if (st.key === 'MISSING_OUT') {
                         cMissingOut++;
@@ -6755,8 +6766,8 @@ export function App() {
                       if (x.st?.key !== 'COMPLETED') continue;
                       const xci = x.list.find((e: any) => e.type === 'CHECK_IN');
                       const xco = x.list.find((e: any) => e.type === 'CHECK_OUT');
-                      const xcode = inferExtraShiftCode(xci, (employee as any)?.default_shift_code);
-                      payTotal += srvNetOf((xci as any)?.assignment_id, date, shiftPayInfo(xcode, srvRateOf(date), xci, xco, xci?.client_time).net);
+                      const xcode = inferExtraShiftCode(xci, (employee as any)?.default_shift_code, (employee as any)?.group);
+                      payTotal += srvNetOf((xci as any)?.assignment_id, date, shiftPayInfo(xcode, srvRateOf(date), xci, xco, xci?.client_time, (employee as any)?.group).net);
                     }
                     return { date, y, m, dd, rows, orphans: finalExtras };
                   }).filter((blk: any) => (blk.rows || []).length > 0);
@@ -6818,9 +6829,9 @@ export function App() {
                           {blk.orphans.map((x: any, xi: number) => {
                             const xci = x.list.find((e: any) => e.type === 'CHECK_IN');
                             const xco = x.list.find((e: any) => e.type === 'CHECK_OUT');
-                            const xcode = inferExtraShiftCode(xci, (employee as any)?.default_shift_code);
+                            const xcode = inferExtraShiftCode(xci, (employee as any)?.default_shift_code, (employee as any)?.group);
                             const xpay = x.st?.key === 'COMPLETED'
-                              ? shiftPayInfo(xcode, srvRateOf(blk.date), xci, xco, xci?.client_time)
+                              ? shiftPayInfo(xcode, srvRateOf(blk.date), xci, xco, xci?.client_time, (employee as any)?.group)
                               : null;
                             return (
                               <div key={`x_${xi}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
@@ -6925,7 +6936,7 @@ export function App() {
                     style={{ width: '100%' }}
                   >
                     <option value="WORK_TO_OFF">Chuyển từ CA LÀM ➔ sang NGHỈ OFF</option>
-                    <option value="OFF_TO_WORK">Chuyển từ NGHỈ OFF ➔ sang ĐI LÀM (Ca Sáng 07:00-12:00)</option>
+                    <option value="OFF_TO_WORK">Chuyển từ NGHỈ OFF ➔ sang ĐI LÀM ({codeLabel(probationWorkCode)})</option>
                   </select>
                 </div>
 
@@ -6988,9 +6999,9 @@ export function App() {
                           onChange={(e) => setExtraShift({ ...extraShift, shiftCode: e.target.value })}
                           style={{ width: '100%' }}
                         >
-                          <option value="CA_1">Ca 1 (07:00 - 12:00)</option>
-                          <option value="CA_2">Ca 2 (12:00 - 18:00)</option>
-                          <option value="CA_3">Ca 3 (18:00 - 23:00)</option>
+                          {empShiftCodes.map((c) => (
+                            <option key={c} value={c}>{codeLabel(c)}</option>
+                          ))}
                         </select>
                       </div>
                     </div>
@@ -7068,7 +7079,7 @@ export function App() {
                   {mySwaps.filter((s: any) => s.target_employee_id === employee?.employee_id && s.status === 'PENDING_PARTNER').map((s: any) => {
                     const reqName = s.requester_name || (branchColleagues || []).find((c: any) => c.employee_id === s.requester_id)?.full_name || s.requester_id;
                     const isSupport = (s as any).swap_kind === 'HR_SUPPORT';
-                    const supShiftLabel = (c?: string) => c === 'CA_1' ? 'Ca 1 (07-12)' : c === 'CA_2' ? 'Ca 2 (12-18)' : c === 'CA_3' ? 'Ca 3 (18-23)' : (c || '');
+                    const supShiftLabel = (c?: string) => shiftLabel(c, (employee as any)?.group) || (c || '');
                     return (
                     <div key={s.swap_id} style={{ backgroundColor: '#FFF', borderRadius: '8px', padding: '10px', fontSize: '12px', border: isSupport ? '1.5px solid #2563EB' : undefined }}>
                       {isSupport ? (
@@ -7517,7 +7528,7 @@ export function App() {
                 style={{ width: '100%', marginTop: '4px', padding: '10px 12px', fontSize: '14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', backgroundColor: '#fff' }}
               />
               <div style={{ display: 'flex', gap: '6px', marginTop: '10px', flexWrap: 'wrap' }}>
-                {['CA_1', 'CA_2', 'CA_3'].map((c) => {
+                {empShiftCodes.map((c) => {
                   const on = reRegCodes.includes(c);
                   return (
                     <button
@@ -7663,7 +7674,7 @@ export function App() {
                       >
                         {dayShifts.map((s: any) => (
                           <option key={s.assignment_id} value={s.assignment_id}>
-                            {s.shift_code} ({s.start_at ? new Date(s.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (s.shift_code === 'CA_1' ? '07:00' : s.shift_code === 'CA_2' ? '12:00' : s.shift_code === 'CA_3' ? '18:00' : '')} - {s.end_at ? new Date(s.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (s.shift_code === 'CA_1' ? '12:00' : s.shift_code === 'CA_2' ? '18:00' : s.shift_code === 'CA_3' ? '23:00' : '')})
+                            {s.shift_code} ({s.start_at ? new Date(s.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (shiftBounds(s.shift_code)[0] || '')} - {s.end_at ? new Date(s.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (shiftBounds(s.shift_code)[1] || '')})
                           </option>
                         ))}
                       </select>

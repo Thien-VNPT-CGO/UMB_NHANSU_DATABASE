@@ -1,4 +1,5 @@
-export type ShiftCode = 'CA_1' | 'CA_2' | 'CA_3';
+/** CA_4 chỉ dùng cho khối Sale (19:00–23:00); cửa hàng/xưởng giữ 3 ca. */
+export type ShiftCode = 'CA_1' | 'CA_2' | 'CA_3' | 'CA_4';
 
 export interface ShiftTemplate {
   code: ShiftCode;

@@ -1,4 +1,4 @@
-import { ShiftCode, SHIFT_TEMPLATES } from '@ubm/shared';
+import { ShiftCode, SHIFT_TEMPLATES, resolveShiftTemplate, shiftCodesForGroup } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
 import { weekRangeOf } from './weekly-off.service.js';
@@ -60,7 +60,7 @@ export interface AutoPlanResult {
   stats: AutoPlanEmpStat[];
 }
 
-const ACTIVE_SHIFTS: ShiftCode[] = ['CA_1', 'CA_2', 'CA_3'];
+const ACTIVE_SHIFTS: ShiftCode[] = ['CA_1', 'CA_2', 'CA_3', 'CA_4'];
 
 /**
  * Sàn ngày công tháng: BOT đảm bảo mỗi NV chính thức đủ tối thiểu 10 ngày/tháng.
@@ -139,8 +139,9 @@ export async function buildAutoPlan(
       (branchId === '*' || sameBranch(e.default_branch_id, branchId))
   );
 
-  const noShift = officials.filter((e: any) => !e.default_shift_code || !ACTIVE_SHIFTS.includes(e.default_shift_code));
-  const schedulable = officials.filter((e: any) => e.default_shift_code && ACTIVE_SHIFTS.includes(e.default_shift_code));
+  const codesOf = (e: any): string[] => shiftCodesForGroup(e?.group) as string[];
+  const noShift = officials.filter((e: any) => !e.default_shift_code || !codesOf(e).includes(e.default_shift_code));
+  const schedulable = officials.filter((e: any) => e.default_shift_code && codesOf(e).includes(e.default_shift_code));
 
   // Lấy toàn bộ rồi lọc bằng sameBranch ở dưới (lý do như listEmployees:
   // adapter so sánh strict nên lọc trước sẽ mất phiếu OFF lưu mã CN cũ).
@@ -226,7 +227,7 @@ export async function buildAutoPlan(
     });
   } else if (branchId !== '*' && schedulable.length === 0) {
     warnings.push({
-      message: `Chi nhánh ${branchId} không có nhân viên nào gán ca cố định (CA_1/CA_2/CA_3) — BOT không xếp được ca nào, HR/Store gán ca rồi PUBLISH lại.`,
+      message: `Chi nhánh ${branchId} không có nhân viên nào gán ca cố định (CA_1/CA_2/CA_3, riêng khối Sale có CA_4) — BOT không xếp được ca nào, HR/Store gán ca rồi PUBLISH lại.`,
     });
   }
   for (const e of noShift) {
@@ -391,8 +392,11 @@ export class AutoScheduleService {
       actorId,
       execute: async () => {
         const out: any[] = [];
+        const emps = (await this.repo.listEmployees().catch(() => [])) as any[];
+        const groupById = new Map<string, string>();
+        for (const e of emps || []) groupById.set(String((e as any)?.employee_id || ''), String((e as any)?.group || ''));
         for (const it of plan.items) {
-          const template = SHIFT_TEMPLATES[it.shift_code];
+          const template = resolveShiftTemplate(it.shift_code, groupById.get(String(it.employee_id))) || SHIFT_TEMPLATES[it.shift_code];
           const sh = String(template.start_hour).padStart(2, '0');
           const eh = String(template.end_hour).padStart(2, '0');
           out.push(

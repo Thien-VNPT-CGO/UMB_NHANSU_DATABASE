@@ -285,7 +285,7 @@ export class EmployeesService {
     startDate?: string;
     officialDate?: string;
     ratePerHour?: number;
-    defaultShiftCode?: 'CA_1' | 'CA_2' | 'CA_3';
+    defaultShiftCode?: 'CA_1' | 'CA_2' | 'CA_3' | 'CA_4';
     bankName?: string;
     bankAccount?: string;
     bankHolder?: string;
@@ -650,7 +650,7 @@ export class EmployeesService {
   }
 
   /** Gán / đổi ca cố định cho nhân viên (BOT dựa vào đây để tự xếp lịch). */
-  async setDefaultShift(employeeId: string, shiftCode: 'CA_1' | 'CA_2' | 'CA_3' | null, actorId: string) {
+  async setDefaultShift(employeeId: string, shiftCode: 'CA_1' | 'CA_2' | 'CA_3' | 'CA_4' | null, actorId: string) {
     const emp = await this.repo.getEmployeeById(employeeId);
     if (!emp) throw new Error('EMPLOYEE_NOT_FOUND');
     return singleWriterQueue.enqueue({
@@ -678,7 +678,7 @@ export class EmployeesService {
       branchId?: string;
       group?: 'STORE' | 'XUONG' | 'VAN_PHONG' | 'SALE';
       ratePerHour?: number;
-      defaultShiftCode?: 'CA_1' | 'CA_2' | 'CA_3' | null;
+      defaultShiftCode?: 'CA_1' | 'CA_2' | 'CA_3' | 'CA_4' | null;
       startDate?: string;
       officialDate?: string;
       email?: string;

@@ -963,6 +963,11 @@ import {
   uniformRefundReminderDate,
   uniformRefundTotal,
   isBranchScheduleHidden,
+  shiftCodesForGroup,
+  shiftLabel,
+  shiftTimeLabel,
+  shiftTemplatesForGroup,
+  isSaleGroup,
 } from '@ubm/shared';
 
 /** Chuẩn hóa mã chi nhánh (Sheets có thể ghi CN1..CN4, hệ thống dùng CN130/261/120/111). */
@@ -1185,9 +1190,9 @@ export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
                 style={{ padding: '4px 8px', fontSize: '12px', borderRadius: '6px' }}
               >
                 <option value="">— Chưa gán —</option>
-                <option value="CA_1">Ca 1 (07–12)</option>
-                <option value="CA_2">Ca 2 (12–18)</option>
-                <option value="CA_3">Ca 3 (18–23)</option>
+                {shiftCodesForGroup((e as any).group).map((c) => (
+                  <option key={c} value={c}>{shiftLabel(c, (e as any).group)}</option>
+                ))}
               </select>
             </div>
           ))}
@@ -3170,18 +3175,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     setEdEmpId(info.empId || '');
     setEdEmpSearch('');
     setEdDate(info.date || '');
-    setEdShift(['CA_1', 'CA_2', 'CA_3'].includes(info.shiftCode) ? info.shiftCode : 'CA_1');
+    const emp = (allEmployees || []).find((e: any) => String((e as any)?.employee_id || '') === String(info.empId || ''));
+    const codes = shiftCodesForGroup((emp as any)?.group) as string[];
+    setEdShift(codes.includes(info.shiftCode) ? info.shiftCode : (codes[0] || 'CA_1'));
     setEdBranch(info.branch || 'CN130');
   };
   const doEditShift = async () => {
     if (!editShiftOpen || edBusy) return;
     if (!edEmpId) { showToast('⚠️ Vui lòng chọn nhân viên!'); return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(edDate || '')) { showToast('⚠️ Vui lòng chọn ngày (YYYY-MM-DD)!'); return; }
-    if (!['CA_1', 'CA_2', 'CA_3'].includes(edShift)) { showToast('⚠️ Vui lòng chọn ca 1/2/3!'); return; }
+    const empSel: any = (allEmployees || []).find((e: any) => String((e as any)?.employee_id || '') === String(edEmpId || ''));
+    const edCodes = shiftCodesForGroup(empSel?.group) as string[];
+    if (!edCodes.includes(edShift)) { showToast(`⚠️ Vui lòng chọn ca ${edCodes.map((c) => String(c).replace(/[^0-9]/g, '')).join('/')}!`); return; }
     // Thẻ ngoài lịch chưa có ca -> lưu là TẠO ca mới (nháp) từ lượt điểm danh.
     const isNew = !editShiftOpen.assignmentId;
     const hadAtt = ['COMPLETED', 'CHECKED_IN', 'MISSING_OUT'].includes(String(editShiftOpen.status || ''));
-    const shiftLabel = edShift === 'CA_1' ? 'Ca 1 (07–12)' : edShift === 'CA_2' ? 'Ca 2 (12–18)' : 'Ca 3 (18–23)';
+    const shiftLabelText = shiftLabel(edShift, empSel?.group);
     if (isNew) {
       const existing = (schedAllShifts || []).filter((s: any) =>
         String((s as any)?.employee_id || '') === String(edEmpId || '') &&
@@ -3189,8 +3198,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         String((s as any)?.status || '') !== 'CANCELLED');
       if (existing.length > 0) {
         if (!window.confirm(`NV đã có ca ${existing.map((s: any) => String((s as any)?.shift_code || '')).join(' + ')} ngày ${edDate} — tạo thêm thành ${existing.length + 1} ca/ngày. Tiếp tục?`)) return;
-      } else if (!window.confirm(`Tạo ca ${shiftLabel} ngày ${edDate} từ lượt điểm danh ngoài lịch (ca nháp — cần Phát Hành để tính công chính thức)?`)) return;
-    } else if (!window.confirm(`Cập nhật ca thành ${shiftLabel} ngày ${edDate} cho NV đã chọn${hadAtt ? ' (ca ĐÃ ĐIỂM DANH — lượt check-in/out giữ nguyên theo ca, lương tính lại realtime)' : ''}?\nTiếp tục?`)) return;
+      } else if (!window.confirm(`Tạo ca ${shiftLabelText} ngày ${edDate} từ lượt điểm danh ngoài lịch (ca nháp — cần Phát Hành để tính công chính thức)?`)) return;
+    } else if (!window.confirm(`Cập nhật ca thành ${shiftLabelText} ngày ${edDate} cho NV đã chọn${hadAtt ? ' (ca ĐÃ ĐIỂM DANH — lượt check-in/out giữ nguyên theo ca, lương tính lại realtime)' : ''}?\nTiếp tục?`)) return;
     setEdBusy(true);
     try {
       if (isNew) {
@@ -3198,7 +3207,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           method: 'POST',
           body: JSON.stringify({ employeeId: edEmpId, branchId: edBranch || 'CN130', shiftCode: edShift, date: edDate }),
         });
-        showToast(`✅ Đã tạo ${shiftLabel} ngày ${edDate} (nháp) — lượt điểm danh tự gộp vào ca, bấm Phát Hành Lịch để chốt công!`);
+        showToast(`✅ Đã tạo ${shiftLabelText} ngày ${edDate} (nháp) — lượt điểm danh tự gộp vào ca, bấm Phát Hành Lịch để chốt công!`);
       } else {
         const res: any = await apiRequest(`/schedules/shifts/${encodeURIComponent(editShiftOpen.assignmentId)}`, {
           method: 'PUT',
@@ -4027,12 +4036,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Thứ tự chi nhánh cố định: CN1 (130 Vạn Kiếp) → CN2 (261 Tô Hiến Thành) →
   // CN3 (120 Hoàng Diệu 2) → CN4 (111 Tôn Đản).
   const BRANCH_RANK: Record<string, number> = { CN130: 1, CN261: 2, CN120: 3, CN111: 4 };
-  const SHIFT_RANK: Record<string, number> = { CA_1: 1, CA_2: 2, CA_3: 3 };
-  // Chuẩn hóa mã ca về CA_1/CA_2/CA_3 để xếp hàng đúng nhóm (chịu được biến thể
+  const SHIFT_RANK: Record<string, number> = { CA_1: 1, CA_2: 2, CA_3: 3, CA_4: 4 };
+  // Chuẩn hóa mã ca về CA_1..CA_4 để xếp hàng đúng nhóm (chịu được biến thể
   // Sheet tay như "CA1", "Ca 2 (12-18)"). Lạ thì giữ nguyên (rớt cuối chi nhánh).
   const normShiftCode = (c?: string): string => {
     const s = String(c || '').toUpperCase();
-    const m = s.match(/CA\s*[_-]?\s*([123])\b/);
+    const m = s.match(/CA\s*[_-]?\s*([1234])\b/);
     if (m) return `CA_${m[1]}`;
     return s.trim();
   };
@@ -7883,7 +7892,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Chi nhánh<select value={editEmpForm.branchId || 'CN130'} onChange={e => setEditEmpForm({ ...editEmpForm, branchId: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="CN130">CN130</option><option value="CN120">CN120</option><option value="CN261">CN261</option><option value="CN111">CN111</option></select></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Khối<select value={['STORE', 'XUONG', 'VAN_PHONG', 'SALE'].includes(editEmpForm.group) ? editEmpForm.group : 'STORE'} onChange={e => setEditEmpForm({ ...editEmpForm, group: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="STORE">Cửa hàng</option><option value="XUONG">Xưởng</option><option value="VAN_PHONG">Văn phòng</option><option value="SALE">Sale</option></select></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Lương giờ (đ/h)<input type="number" value={isOfficeGroup(editEmpForm.group) ? 0 : (editEmpForm.rate || 21000)} onChange={e => setEditEmpForm({ ...editEmpForm, rate: Number(e.target.value) })} disabled={isOfficeGroup(editEmpForm.group)} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
-                <label style={{ fontSize: '12px', fontWeight: 700 }}>Ca cố định<select value={editEmpForm.shift || ''} onChange={e => setEditEmpForm({ ...editEmpForm, shift: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="">— Chưa gán —</option><option value="CA_1">Ca 1 (07–12)</option><option value="CA_2">Ca 2 (12–18)</option><option value="CA_3">Ca 3 (18–23)</option></select></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Ca cố định<select value={editEmpForm.shift || ''} onChange={e => setEditEmpForm({ ...editEmpForm, shift: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="">— Chưa gán —</option>{shiftCodesForGroup(editEmpForm.group).map((c) => (<option key={c} value={c}>{shiftLabel(c, editEmpForm.group)}</option>))}</select></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày bắt đầu<input type="date" value={editEmpForm.startDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, startDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày chính thức<input type="date" value={editEmpForm.officialDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, officialDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                 <label style={{ fontSize: '12px', fontWeight: 700, gridColumn: '1 / -1' }}>Email<input value={editEmpForm.email || ''} onChange={e => setEditEmpForm({ ...editEmpForm, email: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
@@ -8461,7 +8470,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Chi nhánh<select value={editEmpForm.branchId || 'CN130'} onChange={e => setEditEmpForm({ ...editEmpForm, branchId: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="CN130">CN130</option><option value="CN120">CN120</option><option value="CN261">CN261</option><option value="CN111">CN111</option></select></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Khối<select value={['STORE', 'XUONG', 'VAN_PHONG', 'SALE'].includes(editEmpForm.group) ? editEmpForm.group : 'STORE'} onChange={e => setEditEmpForm({ ...editEmpForm, group: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="STORE">Cửa hàng</option><option value="XUONG">Xưởng</option><option value="VAN_PHONG">Văn phòng</option><option value="SALE">Sale</option></select></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Lương giờ (đ/h)<input type="number" value={isOfficeGroup(editEmpForm.group) ? 0 : (editEmpForm.rate || 25500)} onChange={e => setEditEmpForm({ ...editEmpForm, rate: Number(e.target.value) })} disabled={isOfficeGroup(editEmpForm.group)} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
-                <label style={{ fontSize: '12px', fontWeight: 700 }}>Ca cố định<select value={editEmpForm.shift || ''} onChange={e => setEditEmpForm({ ...editEmpForm, shift: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="">— Chưa gán —</option><option value="CA_1">Ca 1 (07–12)</option><option value="CA_2">Ca 2 (12–18)</option><option value="CA_3">Ca 3 (18–23)</option></select></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Ca cố định<select value={editEmpForm.shift || ''} onChange={e => setEditEmpForm({ ...editEmpForm, shift: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="">— Chưa gán —</option>{shiftCodesForGroup(editEmpForm.group).map((c) => (<option key={c} value={c}>{shiftLabel(c, editEmpForm.group)}</option>))}</select></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày bắt đầu<input type="date" value={editEmpForm.startDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, startDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày chính thức<input type="date" value={editEmpForm.officialDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, officialDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                 <label style={{ fontSize: '12px', fontWeight: 700, gridColumn: '1 / -1' }}>Email<input value={editEmpForm.email || ''} onChange={e => setEditEmpForm({ ...editEmpForm, email: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
@@ -8962,7 +8971,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <select
                 style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }}
                 value={edEmpId}
-                onChange={(e) => setEdEmpId(e.target.value)}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setEdEmpId(id);
+                  const empNext: any = (allEmployees || []).find((x: any) => String((x as any)?.employee_id || '') === String(id || ''));
+                  const nextCodes = shiftCodesForGroup(empNext?.group) as string[];
+                  if (!nextCodes.includes(edShift)) setEdShift(nextCodes[0] || 'CA_1');
+                }}
               >
                 <option value="">-- Chọn nhân viên --</option>
                 {empOptions.map((e: any) => (
@@ -8980,9 +8995,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <div>
                 <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ca làm:</label>
                 <select style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }} value={edShift} onChange={(e) => setEdShift(e.target.value)}>
-                  <option value="CA_1">Ca 1 (07–12)</option>
-                  <option value="CA_2">Ca 2 (12–18)</option>
-                  <option value="CA_3">Ca 3 (18–23)</option>
+                  {shiftCodesForGroup((picked as any)?.group).map((c) => (
+                    <option key={c} value={c}>{shiftLabel(c, (picked as any)?.group)}</option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -9223,9 +9238,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           const startMs = sh?.start_at ? new Date(sh.start_at).getTime() : NaN;
           const locked = (attEventsSynced || schedAllEvents.length > 0) && !ci && Number.isFinite(startMs) && Date.now() - (startMs as number) > 3 * 60 * 60 * 1000;
           let shiftName = sh?.shift_code;
-          if (shiftName === 'CA_1') shiftName = 'Ca 1 (07-12)';
-          else if (shiftName === 'CA_2') shiftName = 'Ca 2 (12-18)';
-          else if (shiftName === 'CA_3') shiftName = 'Ca 3 (18-23)';
+          const shiftNumOf = String(sh?.shift_code || '').match(/CA[_\s-]?(\d)/i)?.[1];
+          const hmOf = (iso?: string) => {
+            const t = new Date(iso || '').getTime();
+            if (!Number.isFinite(t)) return '';
+            return new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Ho_Chi_Minh' });
+          };
+          const actualHM = sh?.start_at && sh?.end_at ? `${hmOf(sh.start_at)}-${hmOf(sh.end_at)}` : shiftTimeLabel(sh?.shift_code);
+          if (shiftNumOf) shiftName = `Ca ${shiftNumOf}${actualHM ? ` (${actualHM})` : ''}`;
           else if (sh?.isExtra) shiftName = 'Ca làm (Tự điểm danh)';
 
           if (ci) {
@@ -9474,14 +9494,17 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       (allEmployees || []).find((e: any) => e.employee_id === empId)?.default_shift_code;
     // Ca sắp xếp = ca cố định đã chuẩn hóa — NV chưa gán về '' (hạng 9, cuối CN).
     const sortShiftOf = (item: any): string => normShiftCode(empShiftOf(item.empId));
-    const SHIFT_LABEL: Record<string, string> = { CA_1: 'Ca 1 (07–12)', CA_2: 'Ca 2 (12–18)', CA_3: 'Ca 3 (18–23)' };
+    const SHIFT_LABEL: Record<string, string> = Object.fromEntries(
+      ['CA_1', 'CA_2', 'CA_3', 'CA_4'].map((c) => [c, shiftLabel(c)])
+    );
     // Tóm tắt ca làm trong tuần đang xem: "Ca 1 ×4 • Ca 2 ×1" (theo ca thật từng ngày).
     const weekShiftSummary = (item: any): string => {
       const counts: Record<string, number> = {};
       (item.weekShiftCodes || []).forEach((c: string) => { counts[c] = (counts[c] || 0) + 1; });
+      const empGroup = (allEmployees || []).find((e: any) => String(e.employee_id) === String(item.empId))?.group;
       const parts = Object.keys(counts)
         .sort((a, b) => (SHIFT_RANK[normShiftCode(a)] ?? 9) - (SHIFT_RANK[normShiftCode(b)] ?? 9))
-        .map((c) => `${SHIFT_LABEL[c] || c} ×${counts[c]}`);
+        .map((c) => `${shiftLabel(c, empGroup) || SHIFT_LABEL[c] || c} ×${counts[c]}`);
       return parts.join(' • ');
     };
     const sortedSchedule = [...scheduleItems].sort((a: any, b: any) =>
@@ -9697,7 +9720,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <button
                 className="btn-primary"
                 style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', fontSize: '12.5px', fontWeight: 700, borderRadius: '6px', minHeight: '32px', backgroundColor: '#0EA5E9' }}
-                title="Nhập lịch làm việc cả tuần cho nhân viên bằng file Excel (.xlsx) — tải file mẫu đã điền sẵn nhân viên, điền ca (CA_1/CA_2/CA_3) rồi nhập. Chỉ tài khoản ADMIN."
+                title="Nhập lịch làm việc cả tuần cho nhân viên bằng file Excel (.xlsx) — tải file mẫu đã điền sẵn nhân viên, điền ca (Cửa hàng/Xưởng/Văn phòng: CA_1/CA_2/CA_3 — Sale: CA_1/CA_2/CA_3/CA_4) rồi nhập. Chỉ tài khoản ADMIN."
                 onClick={() => {
                   setXlWeek(weekDays?.[0]?.isoDate || new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10));
                   setXlFile(null);
@@ -9969,7 +9992,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => setXlOpen(false)}>Đóng</button>
                 </div>
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.6 }}>
-                  Bước 1: tải file mẫu (điền sẵn Mã NV / Họ tên / Chi nhánh + 7 ngày ISO của tuần). Bước 2: điền ca vào từng ô — <b>CA_1 (07–12), CA_2 (12–18), CA_3 (18–23)</b>, nhân viên làm 2 ca ghi <b>CA_1+CA_2</b> (hoặc 1+2), ô trống = không xếp ca. Bước 3: chọn file .xlsx rồi "Xác nhận nhập". Ca nhập là <b>nháp (DRAFT)</b> — bấm "Phát Hành Lịch (PUBLISH)" để duyệt như xếp tay.
+                  Bước 1: tải file mẫu (điền sẵn Mã NV / Họ tên / Chi nhánh + 7 ngày ISO của tuần). Bước 2: điền ca vào từng ô — <b>Cửa hàng/Xưởng/Văn phòng: CA_1 (07–12), CA_2 (12–18), CA_3 (18–23)</b>; <b>Khối Sale: CA_1 (07–11), CA_2 (11–15), CA_3 (15–19), CA_4 (19–23)</b>. Nhân viên làm 2 ca ghi <b>CA_1+CA_2</b> (hoặc 1+2), ô trống = không xếp ca. Bước 3: chọn file .xlsx rồi "Xác nhận nhập". Ca nhập là <b>nháp (DRAFT)</b> — bấm "Phát Hành Lịch (PUBLISH)" để duyệt như xếp tay.
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '14px' }}>
                   <div>
@@ -10061,8 +10084,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           }).slice(0, 60);
           const picked = empList.find((e: any) => String((e as any)?.employee_id || '') === String(supEmpId || ''));
           const pickedBranch = String((picked as any)?.default_branch_id || (picked as any)?.branch_id || 'CN130');
-          const pickedShift = ['CA_1', 'CA_2', 'CA_3'].includes(String((picked as any)?.default_shift_code || '')) ? String((picked as any)?.default_shift_code) : supShift;
-          const shiftLabel = supShift === 'CA_1' ? 'Ca 1 (07–12)' : supShift === 'CA_2' ? 'Ca 2 (12–18)' : 'Ca 3 (18–23)';
+          const pickedCodes = shiftCodesForGroup((picked as any)?.group) as string[];
+          const pickedShift = pickedCodes.includes(String((picked as any)?.default_shift_code || '')) ? String((picked as any)?.default_shift_code) : (pickedCodes.includes(supShift) ? supShift : (pickedCodes[0] || 'CA_1'));
+          const shiftLabelText = shiftLabel(supShift, (picked as any)?.group);
           // Cảnh báo trước khi xếp: ngày OFF sẽ bị hủy / đã có ca cùng ngày.
           const offThatDay = (picked && /^\d{4}-\d{2}-\d{2}$/.test(supDate || ''))
             ? (leaves || []).filter((l: any) =>
@@ -10080,9 +10104,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             if (supBusy) return;
             if (!picked) { showToast('⚠️ Vui lòng chọn nhân viên!'); return; }
             if (!/^\d{4}-\d{2}-\d{2}$/.test(supDate || '')) { showToast('⚠️ Vui lòng chọn ngày (YYYY-MM-DD)!'); return; }
-            if (!['CA_1', 'CA_2', 'CA_3'].includes(supShift)) { showToast('⚠️ Vui lòng chọn ca 1/2/3!'); return; }
+            if (!pickedCodes.includes(supShift)) { showToast(`⚠️ Vui lòng chọn ca ${pickedCodes.map((c) => String(c).replace(/[^0-9]/g, '')).join('/')}!`); return; }
             if (offThatDay.length > 0) {
-              if (!window.confirm(`${(picked as any)?.full_name} đang có ngày OFF/nghỉ ${supDate} — xếp ca ${shiftLabel} thì ngày OFF đó tự chuyển thành ca làm việc (NV nhận thông báo). Tiếp tục?`)) return;
+              if (!window.confirm(`${(picked as any)?.full_name} đang có ngày OFF/nghỉ ${supDate} — xếp ca ${shiftLabelText} thì ngày OFF đó tự chuyển thành ca làm việc (NV nhận thông báo). Tiếp tục?`)) return;
             } else if (shiftsThatDay.length > 0) {
               if (!window.confirm(`${(picked as any)?.full_name} đã có ca ${shiftsThatDay.map((s: any) => s.shift_code).join(' + ')} ngày ${supDate} — tạo thêm thành ${shiftsThatDay.length + 1} ca/ngày. Tiếp tục?`)) return;
             }
@@ -10097,7 +10121,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   date: supDate,
                 }),
               });
-              showToast(`✅ Đã bổ sung ${shiftLabel} ngày ${supDate} cho ${(picked as any)?.full_name} (ca nháp — bấm Phát Hành Lịch để duyệt)! Ca đã đồng bộ realtime sang Bảng Chấm Công và Cổng NV.`);
+              showToast(`✅ Đã bổ sung ${shiftLabelText} ngày ${supDate} cho ${(picked as any)?.full_name} (ca nháp — bấm Phát Hành Lịch để duyệt)! Ca đã đồng bộ realtime sang Bảng Chấm Công và Cổng NV.`);
               setSupShiftOpen(false);
               if (onRefreshData) await onRefreshData();
             } catch (e: any) {
@@ -10133,7 +10157,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         setSupEmpId(id);
                         const emp = empList.find((x: any) => String((x as any)?.employee_id || '') === String(id || ''));
                         const code = String((emp as any)?.default_shift_code || '');
-                        if (['CA_1', 'CA_2', 'CA_3'].includes(code)) setSupShift(code);
+                        const allowed = shiftCodesForGroup((emp as any)?.group) as string[];
+                        if (allowed.includes(code)) setSupShift(code);
+                        else setSupShift(allowed[0] || 'CA_1');
                       }}
                     >
                       <option value="">-- Chọn nhân viên --</option>
@@ -10156,10 +10182,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     </div>
                     <div>
                       <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ca làm:</label>
-                      <select style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }} value={['CA_1', 'CA_2', 'CA_3'].includes(pickedShift) ? pickedShift : supShift} onChange={(e) => setSupShift(e.target.value)}>
-                        <option value="CA_1">Ca 1 (07–12)</option>
-                        <option value="CA_2">Ca 2 (12–18)</option>
-                        <option value="CA_3">Ca 3 (18–23)</option>
+                      <select style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }} value={pickedCodes.includes(pickedShift) ? pickedShift : (pickedCodes[0] || supShift)} onChange={(e) => setSupShift(e.target.value)}>
+                        {pickedCodes.map((c) => (
+                          <option key={c} value={c}>{shiftLabel(c, (picked as any)?.group)}</option>
+                        ))}
                       </select>
                     </div>
                   </div>
@@ -10174,7 +10200,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     </div>
                   )}
                   <button className="btn-primary" disabled={supBusy} onClick={doSupShift} style={{ padding: '10px', fontWeight: 800, fontSize: '13px', backgroundColor: '#7C3AED' }}>
-                    {supBusy ? '⏳ Đang xếp...' : `Xếp ${shiftLabel} Lên Lịch`}
+                    {supBusy ? '⏳ Đang xếp...' : `Xếp ${shiftLabelText} Lên Lịch`}
                   </button>
                 </div>
               </div>
@@ -10192,7 +10218,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           const yesterday = yd.toISOString().slice(0, 10);
           const picked = (bfCandidates || []).find((e: any) => String((e as any)?.employee_id || '') === String(bfEmpId || ''));
           const pickedBranch = String((picked as any)?.default_branch_id || (picked as any)?.branch_id || 'CN130');
-          const shiftLabel = bfShift === 'CA_1' ? 'Ca 1 (07–12)' : bfShift === 'CA_2' ? 'Ca 2 (12–18)' : 'Ca 3 (18–23)';
+          const bfCodes = shiftCodesForGroup((picked as any)?.group) as string[];
+          const shiftLabelText = shiftLabel(bfShift, (picked as any)?.group);
           const bfOffThatDay = (picked && /^\d{4}-\d{2}-\d{2}$/.test(bfDate || ''))
             ? (leaves || []).filter((l: any) =>
               String((l as any)?.employee_id || '') === String((picked as any)?.employee_id || '') &&
@@ -10231,7 +10258,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             if (!/^\d{4}-\d{2}-\d{2}$/.test(bfDate || '')) { showToast('⚠️ Vui lòng chọn ngày (YYYY-MM-DD)!'); return; }
             if (bfDate > yesterday) { showToast('⚠️ Modal này chỉ bù tuần trước (đến hết hôm qua)! Ca hôm nay/tương lai dùng nút Bổ Sung Lịch NV.'); return; }
             if ((picked as any)?.official_date && bfDate >= String((picked as any).official_date).slice(0, 10)) { showToast(`⚠️ Modal này chỉ bù ca THỬ VIỆC (trước ${String((picked as any).official_date).slice(0, 10)})! Từ ngày chính thức trở đi dùng nút Bổ Sung Lịch NV.`); return; }
-            if (!['CA_1', 'CA_2', 'CA_3'].includes(bfShift)) { showToast('⚠️ Vui lòng chọn ca 1/2/3!'); return; }
+            if (!bfCodes.includes(bfShift)) { showToast(`⚠️ Vui lòng chọn ca ${bfCodes.map((c) => String(c).replace(/[^0-9]/g, '')).join('/')}!`); return; }
             setSupBusy(true);
             try {
               await apiRequest('/schedules/shifts', {
@@ -10244,7 +10271,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   publish: true,
                 }),
               });
-              showToast(`✅ Đã bù ${shiftLabel} thử việc ngày ${bfDate} cho ${(picked as any)?.full_name} (chốt luôn)! Admin sang tab Bổ sung công → Hoàn thành ca để NV hưởng lương thử việc.`);
+              showToast(`✅ Đã bù ${shiftLabelText} thử việc ngày ${bfDate} cho ${(picked as any)?.full_name} (chốt luôn)! Admin sang tab Bổ sung công → Hoàn thành ca để NV hưởng lương thử việc.`);
               await refreshBfCandidates();
               if (onRefreshData) await onRefreshData();
             } catch (e: any) {
@@ -10296,7 +10323,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         if (emp) {
                           setBfDate(String(((emp as any)?.missingDates || [])[0] || ''));
                           const code = String((emp as any)?.shift_code || '');
-                          if (['CA_1', 'CA_2', 'CA_3'].includes(code)) setBfShift(code);
+                          const allowed = shiftCodesForGroup((emp as any)?.group) as string[];
+                          if (allowed.includes(code)) setBfShift(code);
+                          else setBfShift(allowed[0] || 'CA_1');
                         }
                       }}
                     >
@@ -10320,10 +10349,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     </div>
                     <div>
                       <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ca làm:</label>
-                      <select style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }} value={bfShift} onChange={(e) => setBfShift(e.target.value)}>
-                        <option value="CA_1">Ca 1 (07–12)</option>
-                        <option value="CA_2">Ca 2 (12–18)</option>
-                        <option value="CA_3">Ca 3 (18–23)</option>
+                      <select style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }} value={bfCodes.includes(bfShift) ? bfShift : (bfCodes[0] || 'CA_1')} onChange={(e) => setBfShift(e.target.value)}>
+                        {bfCodes.map((c) => (
+                          <option key={c} value={c}>{shiftLabel(c, (picked as any)?.group)}</option>
+                        ))}
                       </select>
                     </div>
                   </div>
@@ -10338,7 +10367,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     </div>
                   )}
                   <button className="btn-primary" disabled={supBusy} onClick={doBfShift} style={{ padding: '10px', fontWeight: 800, fontSize: '13px', backgroundColor: '#059669' }}>
-                    {supBusy ? '⏳ Đang bù...' : `Xếp ${shiftLabel} Ngày ${bfDate || '...'}`}
+                    {supBusy ? '⏳ Đang bù...' : `Xếp ${shiftLabelText} Ngày ${bfDate || '...'}`}
                   </button>
                   {picked && ((picked as any)?.missingDates || []).length > 1 && (
                     <button className="btn-secondary" disabled={supBusy} onClick={doBfAll} style={{ padding: '10px', fontWeight: 800, fontSize: '13px' }}>
@@ -11890,8 +11919,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         (branchLabel(a[0]) || 'Chưa rõ chi nhánh').localeCompare(branchLabel(b[0]) || 'Chưa rõ chi nhánh', 'vi')
       );
     };
-    const shiftLabel = (code: string) =>
-      code === 'CA_1' ? 'Ca 1 (07-12)' : code === 'CA_2' ? 'Ca 2 (12-18)' : code === 'CA_3' ? 'Ca 3 (18-23)' : (code || '');
+    const groupOfEmp = (id?: string) => (allEmployees || []).find((e: any) => String((e as any)?.employee_id || '') === String(id || ''))?.group;
+    const swapShiftLabel = (code: string, empId?: string) => shiftLabel(code, groupOfEmp(empId)) || (code || '');
     const statusBadge = (st: string) => {
       const map: Record<string, { bg: string; fg: string; label: string }> = {
         PENDING_PARTNER: { bg: '#FEF3C7', fg: '#92400E', label: 'Chờ NV B xác nhận' },
@@ -11968,7 +11997,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 </option>
                 {supportOwnerShifts.map((s: any) => (
                   <option key={s.assignment_id} value={s.assignment_id}>
-                    {String(s.date || '').slice(0, 10)} • {shiftLabel(s.shift_code)} • {branchLabel(s.branch_id || '')}
+                    {String(s.date || '').slice(0, 10)} • {swapShiftLabel(s.shift_code, s.employee_id || supportOwner)} • {branchLabel(s.branch_id || '')}
                   </option>
                 ))}
               </select>
@@ -12027,7 +12056,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <td style={{ padding: '12px 20px', fontWeight: 700 }}>
                       {empName(sw.requester_id)}
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>
-                        {branchLabel((sw as any).support_branch_id || '')} • {String((sw as any).support_date || '').slice(0, 10)} • {shiftLabel((sw as any).support_shift_code || '')}
+                        {branchLabel((sw as any).support_branch_id || '')} • {String((sw as any).support_date || '').slice(0, 10)} • {swapShiftLabel((sw as any).support_shift_code || '', (sw as any).support_employee_id || (sw as any).requester_id)}
                       </div>
                     </td>
                     <td style={{ padding: '12px 20px', fontWeight: 700 }}>
@@ -12093,13 +12122,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           const waiting = list.filter((s: any) => s.status === 'PENDING_PARTNER');
           const done = list.filter((s: any) => !['PENDING_PARTNER', 'PARTNER_ACCEPTED'].includes(s.status));
           const empName = (id: string) => (allEmployees || []).find((e: any) => e.employee_id === id)?.full_name || id;
-          const shiftNameOf = (code: string) =>
-            code === 'CA_1' ? 'Ca 1 (07-12)' : code === 'CA_2' ? 'Ca 2 (12-18)' : code === 'CA_3' ? 'Ca 3 (18-23)' : (code || '');
+          const shiftNameOf = (code: string, empId?: string) => shiftLabel(code, (allEmployees || []).find((e: any) => String((e as any)?.employee_id || '') === String(empId || ''))?.group) || (code || '');
           // Mã SHIFT_AUTO_xxx là mã ca do BOT tự xếp sinh ra (không phải lỗi).
           // Danh sách ca chỉ tải tuần hiện tại nên ca tuần khác hiện gọn + tooltip mã đầy đủ.
           const shiftInfo = (aid: string) => {
             const s = (shifts || []).find((x: any) => x.assignment_id === aid);
-            if (s) return `${shiftNameOf(s.shift_code)} • ${s.date}`;
+            if (s) return `${shiftNameOf(s.shift_code, s.employee_id)} • ${s.date}`;
             if (!aid) return '—';
             const tail = String(aid).slice(-5);
             return `Ca #${tail} (tuần khác)`;
@@ -12174,7 +12202,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               const isDispatch = type.code === 'HR_DISPATCH';
               const isSupport = type.code === 'HR_SUPPORT';
               const supportInfo = isSupport
-                ? `${(sw as any).support_branch_id || ''} • ${String((sw as any).support_date || '').slice(0, 10)} • ${shiftNameOf((sw as any).support_shift_code || '')}`
+                ? `${(sw as any).support_branch_id || ''} • ${String((sw as any).support_date || '').slice(0, 10)} • ${shiftNameOf((sw as any).support_shift_code || '', (sw as any).support_employee_id || (sw as any).requester_id)}`
                 : '';
               return (
               <tr key={sw.swap_id} style={{ borderBottom: '1px solid var(--border)', backgroundColor: sw.status === 'PARTNER_ACCEPTED' ? '#EFF6FF' : undefined }}>
@@ -12978,10 +13006,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     };
     // --- Hiển thị "Ca cần bổ sung" cho HR: tra ca theo assignment_id, rớt về
     // ngày trong lý do ([TYPE] YYYY-MM-DD) nếu ca thuộc tuần khác chưa tải.
-    const adjShiftLabel = (code: string) =>
-      code === 'CA_1' ? 'Ca 1 (07:00–12:00)' : code === 'CA_2' ? 'Ca 2 (12:00–18:00)' : code === 'CA_3' ? 'Ca 3 (18:00–23:00)' : (code || 'Ca ?');
-    const adjShiftBg = (code: string) => (code === 'CA_1' ? '#DCFCE7' : code === 'CA_2' ? '#DBEAFE' : code === 'CA_3' ? '#EDE9FE' : '#F3F4F6');
-    const adjShiftFg = (code: string) => (code === 'CA_1' ? '#166534' : code === 'CA_2' ? '#1D4ED8' : code === 'CA_3' ? '#6D28D9' : '#4B5563');
+    const adjShiftLabel = (code: string, group?: string) =>
+      shiftLabel(code, group) || (code || 'Ca ?');
+    const adjShiftBg = (code: string) => (code === 'CA_1' ? '#DCFCE7' : code === 'CA_2' ? '#DBEAFE' : code === 'CA_3' ? '#EDE9FE' : code === 'CA_4' ? '#FCE7F3' : '#F3F4F6');
+    const adjShiftFg = (code: string) => (code === 'CA_1' ? '#166534' : code === 'CA_2' ? '#1D4ED8' : code === 'CA_3' ? '#6D28D9' : code === 'CA_4' ? '#9D174D' : '#4B5563');
     // Ngày ISO "YYYY-MM-DD" -> { vi: "T2 03/11/2026", short: "03/11" } (null nếu không rõ ngày)
     const adjFmtDay = (iso?: string): { vi: string; short: string; iso: string } | null => {
       const s = String(iso || '').slice(0, 10);
@@ -13050,7 +13078,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               {shiftInfo.found ? (
                 <>
                   <span className="badge" style={{ backgroundColor: adjShiftBg(shiftInfo.code), color: adjShiftFg(shiftInfo.code), fontWeight: 800 }}>
-                    🕒 {adjShiftLabel(shiftInfo.code)}
+                    🕒 {adjShiftLabel(shiftInfo.code, (emp as any)?.group)}
                   </span>
                   <div style={{ fontSize: '12px', fontWeight: 700, marginTop: '4px' }}>{shiftInfo.day?.vi || 'Ngày —'}</div>
                   {(shiftInfo.time || shiftInfo.status) && (
@@ -13531,7 +13559,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   {selShift.found ? (
                     <>
                       <div style={{ fontWeight: 800 }}>
-                        <span className="badge" style={{ backgroundColor: adjShiftBg(selShift.code), color: adjShiftFg(selShift.code), fontWeight: 800 }}>{adjShiftLabel(selShift.code)}</span>
+                        <span className="badge" style={{ backgroundColor: adjShiftBg(selShift.code), color: adjShiftFg(selShift.code), fontWeight: 800 }}>{adjShiftLabel(selShift.code, (selEmp as any)?.group)}</span>
                         <span style={{ marginLeft: '8px' }}>{selShift.day?.vi || 'Ngày —'}{selShift.time ? ` • ${selShift.time}` : ''}</span>
                       </div>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
@@ -17896,7 +17924,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Chi nhánh<select value={editEmpForm.branchId || 'CN130'} onChange={e => setEditEmpForm({ ...editEmpForm, branchId: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}>{(branches || []).length > 0 ? (branches || []).map((b: any) => <option key={b.branch_id || b.id} value={b.branch_id || b.id}>{b.branch_id || b.id}</option>) : (<><option value="CN130">CN130</option><option value="CN120">CN120</option><option value="CN261">CN261</option><option value="CN111">CN111</option></>)}</select></label>
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Khối<select value={['STORE', 'XUONG', 'VAN_PHONG', 'SALE'].includes(editEmpForm.group) ? editEmpForm.group : 'STORE'} onChange={e => setEditEmpForm({ ...editEmpForm, group: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="STORE">Cửa hàng</option><option value="XUONG">Xưởng</option><option value="VAN_PHONG">Văn phòng</option><option value="SALE">Sale</option></select></label>
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Lương giờ (đ/h)<input type="number" value={isOfficeGroup(editEmpForm.group) ? 0 : (editEmpForm.rate || 21000)} onChange={e => setEditEmpForm({ ...editEmpForm, rate: Number(e.target.value) })} disabled={isOfficeGroup(editEmpForm.group)} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
-                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Ca cố định<select value={editEmpForm.shift || ''} onChange={e => setEditEmpForm({ ...editEmpForm, shift: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="">— Chưa gán —</option><option value="CA_1">Ca 1 (07–12)</option><option value="CA_2">Ca 2 (12–18)</option><option value="CA_3">Ca 3 (18–23)</option></select></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Ca cố định<select value={editEmpForm.shift || ''} onChange={e => setEditEmpForm({ ...editEmpForm, shift: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="">— Chưa gán —</option>{shiftCodesForGroup(editEmpForm.group).map((c) => (<option key={c} value={c}>{shiftLabel(c, editEmpForm.group)}</option>))}</select></label>
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày bắt đầu<input type="date" value={editEmpForm.startDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, startDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày chính thức<input type="date" value={editEmpForm.officialDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, officialDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                     <label style={{ fontSize: '12px', fontWeight: 700, gridColumn: '1 / -1' }}>Email<input value={editEmpForm.email || ''} onChange={e => setEditEmpForm({ ...editEmpForm, email: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>

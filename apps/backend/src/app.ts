@@ -274,7 +274,7 @@ import {
   requireRole,
   enforceBranchScope,
 } from './middlewares/rbac.middleware.js';
-import { BRANCHES, ERROR_CODES, SHIFT_TEMPLATES, isBranchScheduleHidden, toVietnameseErrorMessage } from '@ubm/shared';
+import { BRANCHES, ERROR_CODES, shiftCodesForGroup, shiftHoursOf, isBranchScheduleHidden, toVietnameseErrorMessage } from '@ubm/shared';
 import { SHEETS_DEFINITIONS } from './services/google-sheets-sync.service.js';
 import {
   addDaysIso,
@@ -3512,7 +3512,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         bankName: b.bankName || b.bank_name,
         bankAccount: b.bankAccount || b.bank_account,
         bankHolder: b.bankHolder || b.bank_holder,
-        defaultShiftCode: ['CA_1', 'CA_2', 'CA_3'].includes(String(b.defaultShiftCode || b.default_shift_code || '').toUpperCase())
+        defaultShiftCode: shiftCodesForGroup(b.group || 'STORE').includes(String(b.defaultShiftCode || b.default_shift_code || '').toUpperCase() as any)
           ? String(b.defaultShiftCode || b.default_shift_code).toUpperCase() as any
           : undefined,
         actorId: req.user!.id,
@@ -3662,8 +3662,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // Chuẩn hóa ở service (chấp nhận tên tiếng Việt từ dữ liệu cũ).
       const group = b.group ? String(b.group) : undefined;
       const shiftRaw = b.defaultShiftCode !== undefined ? String(b.defaultShiftCode || '').toUpperCase() : undefined;
-      if (shiftRaw !== undefined && shiftRaw !== '' && !['CA_1', 'CA_2', 'CA_3'].includes(shiftRaw)) {
-        return res.status(400).json({ error: 'INVALID_SHIFT_CODE: ca cố định phải là CA_1, CA_2 hoặc CA_3.' });
+      const effectiveGroup = group || beforeEmp?.group || 'STORE';
+      if (shiftRaw !== undefined && shiftRaw !== '' && !shiftCodesForGroup(effectiveGroup).includes(shiftRaw as any)) {
+        return res.status(400).json({ error: `INVALID_SHIFT_CODE: ca cố định của khối ${effectiveGroup} phải là ${shiftCodesForGroup(effectiveGroup).join(', ')}.` });
       }
       const result = await employeesService.updateEmployee(
         req.params.id,
@@ -4117,11 +4118,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const raw = String(req.body?.shiftCode || req.body?.shift_code || '').trim().toUpperCase();
       const shiftCode = raw === '' ? null : raw;
-      if (shiftCode !== null && shiftCode !== 'CA_1' && shiftCode !== 'CA_2' && shiftCode !== 'CA_3') {
-        return res.status(400).json({ error: 'INVALID_SHIFT_CODE: ca cố định phải là CA_1, CA_2 hoặc CA_3.' });
-      }
       const emp = await employeesService.getEmployee(req.params.id);
       if (!emp) return res.status(404).json({ error: 'EMPLOYEE_NOT_FOUND' });
+      const empCodes = shiftCodesForGroup((emp as any).group) as string[];
+      if (shiftCode !== null && !empCodes.includes(shiftCode)) {
+        return res.status(400).json({ error: `INVALID_SHIFT_CODE: ca cố định của khối ${(emp as any).group || 'nhân viên'} phải là ${empCodes.join(', ')}.` });
+      }
       if (req.user?.role === 'STORE' && req.user.branchScope !== '*' && emp.default_branch_id !== req.user.branchScope) {
         return res.status(403).json({ error: 'BRANCH_SCOPE_FORBIDDEN' });
       }
@@ -5835,8 +5837,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       let lateNote = '';
       if ((result.result as any).is_late) {
         const mins = Number((result.result as any).minutes_deviation) || 0;
-        const tpl = (SHIFT_TEMPLATES as any)[(existingShift as any)?.shift_code];
-        const shiftPay = (tpl ? tpl.duration_hours : 5) * (Number((checkinEmp as any)?.current_rate_per_hour) || 25500);
+        const shiftPay = shiftHoursOf(String((existingShift as any)?.shift_code || ''), (checkinEmp as any)?.group) * (Number((checkinEmp as any)?.current_rate_per_hour) || 25500);
         const fine = lateFineFor(mins, shiftPay);
         lateNote = fine.unpaid
           ? ` Trễ ${mins}p: phạt 100% lương ca!`

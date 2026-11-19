@@ -3,7 +3,7 @@ import { NotificationsService } from './notifications.service.js';
 import { ZaloService } from './zalo.service.js';
 import { OfficeService } from './office.service.js';
 import { normSheetDate } from './employees.service.js';
-import { formatHm, officeCheckInWindowOf, officeDayRuleOfIso } from '@ubm/shared';
+import { formatHm, officeCheckInWindowOf, officeDayRuleOfIso, shiftLabel, shiftTemplatesForGroup } from '@ubm/shared';
 import { parseUniform, uniformRefundMilestoneDate, uniformRefundTotal } from '../utils/uniform.js';
 
 /**
@@ -48,6 +48,7 @@ export const SHIFT_DEFINITIONS: Record<string, ShiftDefinition> = {
   CA_1: { code: 'CA_1', name: 'Ca 1 (07:00 - 12:00)', start: '07:00', end: '12:00', startHour: 7 },
   CA_2: { code: 'CA_2', name: 'Ca 2 (12:00 - 18:00)', start: '12:00', end: '18:00', startHour: 12 },
   CA_3: { code: 'CA_3', name: 'Ca 3 (18:00 - 23:00)', start: '18:00', end: '23:00', startHour: 18 },
+  CA_4: { code: 'CA_4', name: 'Ca 4 (19:00 - 23:00)', start: '19:00', end: '23:00', startHour: 19 },
 };
 
 /** Format giờ theo múi giờ Việt Nam (Asia/Ho_Chi_Minh, UTC+7) */
@@ -73,7 +74,7 @@ export function formatVnTime(epochMs: number): string {
 export function resolveShiftInfo(
   shiftCode?: string,
   startMs?: number | null,
-  opts?: { isOffice?: boolean; date?: string },
+  opts?: { isOffice?: boolean; date?: string; group?: string },
 ): { name: string; start: string; end?: string } {
   const actualStart = startMs ? formatVnTime(startMs) : '';
   if (opts?.isOffice) {
@@ -84,6 +85,16 @@ export function resolveShiftInfo(
     const start = formatHm(rule.startHour, rule.startMinute);
     const end = formatHm(rule.endHour, rule.endMinute);
     return { name: `Ca hành chính (${start} – ${end})`, start, end };
+  }
+  // Mẫu ca theo khối: Sale có 4 ca 07–11/11–15/15–19/19–23.
+  const tpl = shiftCode ? shiftTemplatesForGroup(opts?.group)[String(shiftCode).toUpperCase()] : undefined;
+  if (tpl) {
+    const p = (n: number) => String(n).padStart(2, '0');
+    return {
+      name: shiftLabel(shiftCode, opts?.group),
+      start: actualStart || `${p(tpl.start_hour)}:${p(tpl.start_minute)}`,
+      end: `${p(tpl.end_hour)}:${p(tpl.end_minute)}`,
+    };
   }
   if (shiftCode && SHIFT_DEFINITIONS[shiftCode]) {
     return {
@@ -106,7 +117,7 @@ export function resolveShiftInfo(
  * Trước đây ưu tiên mã ca khiến ca Văn Phòng (mã CA_1 nhưng start_at 08:00)
  * bị nhắc lúc 07:00 — sai khung điểm danh 08:00–08:30.
  */
-export function parseShiftStart(date: string, startAt?: string, shiftCode?: string): number | null {
+export function parseShiftStart(date: string, startAt?: string, shiftCode?: string, group?: string): number | null {
   if (startAt) {
     try {
       const s = String(startAt).trim();
@@ -127,7 +138,12 @@ export function parseShiftStart(date: string, startAt?: string, shiftCode?: stri
       if (Number.isFinite(t)) return t;
     } catch {}
   }
-  // Fallback: ca cũ không có start_at -> căn theo mã ca chuẩn (giờ VN).
+  // Fallback: ca cũ không có start_at -> căn theo mẫu ca đúng khối (giờ VN).
+  const tpl = shiftCode ? shiftTemplatesForGroup(group)[String(shiftCode).toUpperCase()] : undefined;
+  if (tpl) {
+    const t = Date.parse(`${String(date).slice(0, 10)}T${String(tpl.start_hour).padStart(2, '0')}:${String(tpl.start_minute).padStart(2, '0')}:00Z`);
+    if (Number.isFinite(t)) return t - tzOffsetHours() * 3_600_000;
+  }
   if (shiftCode && SHIFT_DEFINITIONS[shiftCode]) {
     const h = SHIFT_DEFINITIONS[shiftCode].startHour;
     const t = Date.parse(`${String(date).slice(0, 10)}T${String(h).padStart(2, '0')}:00:00Z`);
@@ -223,14 +239,13 @@ export async function sendCheckinReminderForShift(
   force = false
 ): Promise<{ success: boolean; sentZalo: boolean; sentInApp: boolean; reason?: string }> {
   const { employee_id, shift_code, date, start_at, assignment_id } = shift;
-  const startMs = parseShiftStart(date, start_at, shift_code);
-  if (startMs === null) {
-    return { success: false, sentZalo: false, sentInApp: false, reason: 'INVALID_START_TIME' };
-  }
-
   const emp: any = await repo.getEmployeeById(employee_id);
   if (!emp) {
     return { success: false, sentZalo: false, sentInApp: false, reason: 'EMPLOYEE_NOT_FOUND' };
+  }
+  const startMs = parseShiftStart(date, start_at, shift_code, (emp as any)?.group);
+  if (startMs === null) {
+    return { success: false, sentZalo: false, sentInApp: false, reason: 'INVALID_START_TIME' };
   }
 
   if (!force) {
@@ -241,7 +256,7 @@ export async function sendCheckinReminderForShift(
   }
 
   const isOffice = OfficeService.isOfficeEmployee(emp);
-  const { name: shiftName, start: startStr } = resolveShiftInfo(shift_code, startMs, { isOffice, date });
+  const { name: shiftName, start: startStr } = resolveShiftInfo(shift_code, startMs, { isOffice, date, group: (emp as any)?.group });
 
   // Tên chi nhánh đầy đủ để NV biết đúng nơi điểm danh (tick truyền sẵn).
   let branchName = String(shift.branch_name || '').trim();

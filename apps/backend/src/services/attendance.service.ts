@@ -7,7 +7,7 @@ import {
   BRANCHES,
   ERROR_CODES,
   GPSStatus,
-  SHIFT_TEMPLATES,
+  shiftHoursOf,
   isBranchGpsEnabled,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
@@ -139,7 +139,7 @@ export class AttendanceService {
               if (sDone) continue;
               if (nowMs - sStartMs > 3 * 60 * 60 * 1000) continue;
               if (nowMs < sStartMs - 30 * 60 * 1000) continue;
-              const code = String((s as any).shift_code || '').replace('CA_1', 'Ca 1').replace('CA_2', 'Ca 2').replace('CA_3', 'Ca 3');
+              const code = String((s as any).shift_code || '').replace('CA_1', 'Ca 1').replace('CA_2', 'Ca 2').replace('CA_3', 'Ca 3').replace('CA_4', 'Ca 4');
               throw new Error(`CHECKIN_WRONG_SHIFT_ORDER: Hôm nay bạn có 2 ca — ${code} ngày ${shiftDay} còn chờ check-in, vui lòng check-in ca trước rồi mới check-in ca này (không check-in ca sau trước)!`);
             }
           }
@@ -229,7 +229,7 @@ export class AttendanceService {
           try {
             const emp = await this.repo.getEmployeeById(data.employeeId).catch(() => null);
             const rate = Number((emp as any)?.current_rate_per_hour) || 0;
-            const hours = (SHIFT_TEMPLATES as any)[shift.shift_code]?.duration_hours || 5;
+            const hours = shiftHoursOf(String(shift.shift_code || ''), (emp as any)?.group);
             const fine = lateFineFor(minutesDeviation, hours * rate);
             fineTier = fine.tier;
             fineAmount = fine.unpaid ? hours * rate : fine.deduction;
@@ -1847,8 +1847,7 @@ export class AttendanceService {
           const m = linked.get(String((s as any)?.assignment_id || '')) || ({} as any);
           const inEvt = (m as any).CHECK_IN;
           const outEvt = (m as any).CHECK_OUT;
-          const tpl = (SHIFT_TEMPLATES as any)[(s as any)?.shift_code];
-          const h = tpl ? Number(tpl.duration_hours) || 5 : 5;
+          const h = shiftHoursOf(String((s as any)?.shift_code || ''), (emp as any)?.group);
           const flags: string[] = [];
           // Chân nào bù từ pool mồ côi (không gắn cứng assignment ca này)?
           const strictIn = dayEvents.find(

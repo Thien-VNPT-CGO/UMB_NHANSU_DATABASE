@@ -1,4 +1,4 @@
-import { ShiftTemplate } from '../types/schedules.js';
+import { ShiftCode, ShiftTemplate } from '../types/schedules.js';
 
 export const DESIGN_TOKENS = {
   colors: {
@@ -183,7 +183,116 @@ export const SHIFT_TEMPLATES: Record<string, ShiftTemplate> = {
     end_minute: 0,
     duration_hours: 5,
   },
+  // CA_4 mặc định 19:00–23:00 (4h) — dùng cho khối Sale.
+  CA_4: {
+    code: 'CA_4',
+    name: 'Ca 4 (Tối muộn)',
+    start_hour: 19,
+    start_minute: 0,
+    end_hour: 23,
+    end_minute: 0,
+    duration_hours: 4,
+  },
 };
+
+/**
+ * Ca làm RIÊNG của khối Sale: chia 4 ca, mỗi ca 4 giờ.
+ *   Ca 1: 07:00–11:00 · Ca 2: 11:00–15:00 · Ca 3: 15:00–19:00 · Ca 4: 19:00–23:00
+ * Cửa hàng/Xưởng/Văn phòng vẫn dùng SHIFT_TEMPLATES (3 ca) như cũ.
+ */
+export const SALE_SHIFT_TEMPLATES: Record<string, ShiftTemplate> = {
+  CA_1: {
+    code: 'CA_1',
+    name: 'Ca 1 (07:00–11:00)',
+    start_hour: 7,
+    start_minute: 0,
+    end_hour: 11,
+    end_minute: 0,
+    duration_hours: 4,
+  },
+  CA_2: {
+    code: 'CA_2',
+    name: 'Ca 2 (11:00–15:00)',
+    start_hour: 11,
+    start_minute: 0,
+    end_hour: 15,
+    end_minute: 0,
+    duration_hours: 4,
+  },
+  CA_3: {
+    code: 'CA_3',
+    name: 'Ca 3 (15:00–19:00)',
+    start_hour: 15,
+    start_minute: 0,
+    end_hour: 19,
+    end_minute: 0,
+    duration_hours: 4,
+  },
+  CA_4: {
+    code: 'CA_4',
+    name: 'Ca 4 (19:00–23:00)',
+    start_hour: 19,
+    start_minute: 0,
+    end_hour: 23,
+    end_minute: 0,
+    duration_hours: 4,
+  },
+};
+
+/** Khối Sale / Marketing (group = SALE, MKT, SALES...). */
+export function isSaleGroup(group?: unknown): boolean {
+  const g = String(group ?? '').trim().toUpperCase();
+  if (!g) return false;
+  return (
+    g === 'SALE' ||
+    g === 'SALES' ||
+    g === 'MKT' ||
+    g === 'MARKETING' ||
+    g === 'SALES/MKT' ||
+    g.includes('SALE') ||
+    g.includes('MARKETING') ||
+    g.includes('KINH DOANH') ||
+    g.includes('BÁN HÀNG') ||
+    g.includes('BAN HANG')
+  );
+}
+
+/** Bộ ca làm theo khối: Sale = 4 ca (07–11, 11–15, 15–19, 19–23), còn lại = 3 ca cũ. */
+export function shiftTemplatesForGroup(group?: unknown): Record<string, ShiftTemplate> {
+  return isSaleGroup(group) ? SALE_SHIFT_TEMPLATES : SHIFT_TEMPLATES;
+}
+
+/** Mã ca hợp lệ theo khối (Sale có CA_4). */
+export function shiftCodesForGroup(group?: unknown): ShiftCode[] {
+  return Object.keys(shiftTemplatesForGroup(group)) as ShiftCode[];
+}
+
+/** Mẫu ca theo khối + mã ca; trả undefined nếu mã không thuộc khối đó. */
+export function resolveShiftTemplate(code?: unknown, group?: unknown): ShiftTemplate | undefined {
+  const c = String(code ?? '').trim().toUpperCase();
+  if (!c) return undefined;
+  return shiftTemplatesForGroup(group)[c];
+}
+
+/** "07:00–11:00" của một mã ca theo khối. */
+export function shiftTimeLabel(code?: unknown, group?: unknown): string {
+  const t = resolveShiftTemplate(code, group);
+  if (!t) return '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(t.start_hour)}:${p(t.start_minute)}–${p(t.end_hour)}:${p(t.end_minute)}`;
+}
+
+/** "Ca 1 (07:00–11:00)" của một mã ca theo khối. */
+export function shiftLabel(code?: unknown, group?: unknown): string {
+  const c = String(code ?? '').trim().toUpperCase();
+  if (!c) return '';
+  const t = resolveShiftTemplate(c, group);
+  const time = shiftTimeLabel(c, group);
+  const num = c.replace(/^CA_/, '').replace(/^CA\s*/, '');
+  if (t && time) return `Ca ${num} (${time})`;
+  return c.replace('_', ' ');
+}
+
 
 export const STANDARD_HOURLY_RATES = {
   PROBATION: 21000,

@@ -2,7 +2,8 @@
  * ScheduleExcelService — Nhập / tải mẫu LỊCH LÀM VIỆC TUẦN bằng file Excel.
  *
  * - File mẫu: điền sẵn toàn bộ nhân viên (Mã NV, Họ tên, Chi nhánh) + 7 cột
- *   ngày ISO T2→CN + dropdown (CA_1/CA_2/CA_3) + sheet HƯỚNG DẪN.
+ *   ngày ISO T2→CN + dropdown (CA_1..CA_4) + sheet HƯỚNG DẪN. Khối Sale dùng
+ *   4 ca (07–11/11–15/15–19/19–23), khối khác dùng CA_1..CA_3.
  * - Import: đọc file .xlsx (base64 JSON — cùng pattern avatar), khớp nhân viên
  *   theo Mã NV, rồi tạo / sửa / giữ ca trong MỘT task hàng đợi duy nhất
  *   (chỉ 1 lần đọc tuần — tránh N×rate-limit 1100ms gây timeout proxy).
@@ -12,7 +13,7 @@
  *   ô trống = không xếp ca; mã ca sai → báo lỗi dòng.
  */
 import ExcelJS from 'exceljs';
-import { SHIFT_TEMPLATES } from '@ubm/shared';
+import { SHIFT_TEMPLATES, shiftCodesForGroup, resolveShiftTemplate } from '@ubm/shared';
 import type { ShiftCode } from '@ubm/shared';
 import { canonicalBranch } from './auto-schedule.service.js';
 import { SchedulesService } from './schedules.service.js';
@@ -57,8 +58,8 @@ function normalizeCode(v: string): string {
     .trim()
     .toUpperCase()
     .replace(/\s+/g, '_');
-  if (/^CA_?[123]$/.test(t)) return `CA_${t.slice(-1)}`;
-  if (t === '1' || t === '2' || t === '3') return `CA_${t}`;
+  if (/^CA_?[1234]$/.test(t)) return `CA_${t.slice(-1)}`;
+  if (t === '1' || t === '2' || t === '3' || t === '4') return `CA_${t}`;
   return t;
 }
 
@@ -105,8 +106,8 @@ export class ScheduleExcelService {
     return Array.from({ length: 7 }, (_, i) => this.addDaysIso(monIso, i));
   }
 
-  private hoursOf(code: string): { startAt: string; endAt: string } | null {
-    const t = SHIFT_TEMPLATES[code as keyof typeof SHIFT_TEMPLATES];
+  private hoursOf(code: string, group?: string): { startAt: string; endAt: string } | null {
+    const t = resolveShiftTemplate(code, group) || SHIFT_TEMPLATES[code as keyof typeof SHIFT_TEMPLATES];
     if (!t) return null;
     const p = (n: number) => String(n).padStart(2, '0');
     const startHour = p(t.start_hour);
@@ -189,13 +190,14 @@ export class ScheduleExcelService {
       }
     }
 
-    // Dropdown CA_1/CA_2/CA_3 (kể cả dòng trống dự phòng bên dưới).
+    // Dropdown CA_1..CA_4 (kể cả dòng trống dự phòng bên dưới). Khối Sale dùng
+    // CA_4; khối khác bị chặn khi import nếu chọn CA_4 (validate theo từng NV).
     // errorStyle 'warning' (không 'stop') để cho phép ghi nhiều ca/ngày "CA_1+CA_2"
     // (HR có thể xếp thêm ca thứ 3) — Excel chỉ cảnh báo rồi vẫn nhận giá trị combo.
     (ws as any).dataValidations.add('D2:J300', {
       type: 'list',
       allowBlank: true,
-      formulae: ['"CA_1,CA_2,CA_3"'],
+      formulae: ['"CA_1,CA_2,CA_3,CA_4"'],
       showErrorMessage: true,
       errorStyle: 'warning',
       errorTitle: 'Ma ca?',
@@ -210,6 +212,7 @@ export class ScheduleExcelService {
       '1. Giữ nguyên DÒNG 1 (tiêu đề): MA_NV, HO_TEN, CHI_NHANH và 7 ngày YYYY-MM-DD từ thứ Hai tới Chủ Nhật.',
       '2. Chỉ điền ở sheet LICH, từ dòng 2 trở đi. Mỗi nhân viên 1 dòng (đã điền sẵn danh sách).',
       '3. Ô ca: gõ CA_1 (07-12) / CA_2 (12-18) / CA_3 (18-23) — có dropdown gợi ý. Ô TRỐNG = không xếp ca.',
+      '   • Riêng KHỐI SALE dùng 4 ca: CA_1 (07-11) / CA_2 (11-15) / CA_3 (15-19) / CA_4 (19-23).',
       '   • Nhân viên làm 2 ca cùng ngày: ghi 2 mã cách nhau dấu cộng, ví dụ CA_1+CA_2 (hoặc 1+2) — HR có thể ghi thêm ca thứ 3 nếu cần.',
       '4. Không đổi cột MA_NV. Nhân viên mới chưa có trong file: bổ sung dòng mới với Mã NV đúng (UBM_NVxxxxxx).',
       '5. Xuất file giữ nguyên .xlsx, rồi bấm "Nhập lịch Excel" trên cổng Admin, chọn đúng tuần rồi Xác nhận nhập.',
@@ -400,22 +403,23 @@ export class ScheduleExcelService {
             canonicalBranch(String(row.getCell(3).value ?? '').trim().toUpperCase()) ||
             canonicalBranch(emp.default_branch_id) ||
             'CN130';
+          const empValidCodes = shiftCodesForGroup((emp as any).group) as string[];
 
           for (let i = 0; i < 7; i++) {
             const date = weekDates[i];
             // 1 ô = 1..n mã ca ("CA_1", "CA_1+CA_2", "1+2", "1,2"...) — trống = nghỉ
             const targets = parseCellCodes(row.getCell(4 + i).value);
             if (targets.length === 0) continue; // ô trống = không xếp ca
-            for (const bad of targets.filter((c) => !VALID_CODES.includes(c))) {
+            for (const bad of targets.filter((c) => !empValidCodes.includes(c))) {
               errors.push({
                 row: r,
                 maNV,
                 name: empName,
                 date,
-                message: `Mã ca "${bad}" không hợp lệ (dùng CA_1/CA_2/CA_3, 2 ca ghi CA_1+CA_2)`,
+                message: `Mã ca "${bad}" không hợp lệ với khối ${(emp as any).group || 'nhân viên'} (dùng ${empValidCodes.join('/')}, 2 ca ghi ${empValidCodes[0]}+${empValidCodes[1] || empValidCodes[0]})`,
               });
             }
-            const validTargets = targets.filter((c) => VALID_CODES.includes(c));
+            const validTargets = targets.filter((c) => empValidCodes.includes(c));
             if (validTargets.length === 0) continue;
             // HR nhập lịch được phép xếp ca thứ 3/ngày (quy định tối đa 2 ca/ngày
             // chỉ áp cho NV TỰ đổi ca với nhau), nên không chặn số mã ca trong ô.
@@ -464,7 +468,7 @@ export class ScheduleExcelService {
                   });
                   continue;
                 }
-                const hours = this.hoursOf(code)!;
+                const hours = this.hoursOf(code, (emp as any).group)!;
                 await this.repo.updateShiftAssignment(String(cur.assignment_id), {
                   shift_code: code as ShiftCode,
                   start_at: `${date}T${hours.startAt}`,
@@ -477,7 +481,7 @@ export class ScheduleExcelService {
               }
 
               // (c) Không còn ca hiện có để đè → tạo ca mới (DRAFT, tự hủy OFF trúng ngày)
-              const hours = this.hoursOf(code)!;
+              const hours = this.hoursOf(code, (emp as any).group)!;
               await this.repo.createShiftAssignment({
                 assignment_id: `SHIFT_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
                 employee_id: String(emp.employee_id),

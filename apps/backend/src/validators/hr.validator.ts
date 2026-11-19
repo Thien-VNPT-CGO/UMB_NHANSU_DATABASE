@@ -371,7 +371,7 @@ export const probationOffBody = z.object({
 // NV thử việc TỰ thêm ca đẩy nhanh (không cần HR duyệt, tối đa 2 ca/ngày).
 export const probationExtraShiftBody = z.object({
   date: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải dạng YYYY-MM-DD'),
-  shiftCode: z.enum(['CA_1', 'CA_2', 'CA_3']),
+  shiftCode: z.enum(['CA_1', 'CA_2', 'CA_3', 'CA_4']),
 });
 
 // BETA — Phiếu "Cập Nhật Ca Làm" tự phục vụ: NV khai lại ca trong đợt
@@ -379,7 +379,7 @@ export const probationExtraShiftBody = z.object({
 export const reRegSlipBody = z.object({
   entries: z.array(z.object({
     date: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải dạng YYYY-MM-DD'),
-    codes: z.array(z.enum(['CA_1', 'CA_2', 'CA_3'])).min(1).max(2),
+    codes: z.array(z.enum(['CA_1', 'CA_2', 'CA_3', 'CA_4'])).min(1).max(2),
   })).min(1).max(180),
 });
 
@@ -396,7 +396,7 @@ export const probationSelfSwapBody = z.object({
   direction: z.enum(['WORK_TO_OFF', 'OFF_TO_WORK']),
   date: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải dạng YYYY-MM-DD'),
   reason: optString(500),
-  shiftCode: z.enum(['CA_1', 'CA_2', 'CA_3']).optional(),
+  shiftCode: z.enum(['CA_1', 'CA_2', 'CA_3', 'CA_4']).optional(),
 });
 
 // HR tạo phiếu điều phối nhường ca (người nhận hưởng lương ca, không phụ cấp)

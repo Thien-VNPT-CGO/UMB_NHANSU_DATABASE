@@ -163,7 +163,7 @@ export const ERROR_CODE_MESSAGES: Record<string, string> = {
 
   // ---------------------------------------------------------------- Ca làm việc / chấm công
   SHIFT_NOT_FOUND: 'Không tìm thấy ca làm việc.',
-  INVALID_SHIFT_CODE: 'Mã ca cố định không hợp lệ. Chỉ chấp nhận CA_1, CA_2 hoặc CA_3.',
+  INVALID_SHIFT_CODE: 'Mã ca cố định không hợp lệ. Chấp nhận CA_1, CA_2, CA_3 (khối Sale có thêm CA_4).',
   EVENT_NOT_FOUND: 'Không tìm thấy bản ghi điểm danh. Vui lòng tải lại danh sách.',
   RECONCILE_BAD_RANGE: 'Khoảng ngày đối soát không hợp lệ. Vui lòng chọn từ ngày đến ngày đúng định dạng.',
   WINDOW_OUT_OF_RANGE: 'Ngày đã chọn nằm ngoài đợt đăng ký.',

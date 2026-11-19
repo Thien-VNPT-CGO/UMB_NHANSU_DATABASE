@@ -20,7 +20,7 @@
  *    tab chưa có trên Sheet thì hệ thống TỰ TẠO bảng + đủ cột (self-heal
  *    SHEETS_DEFINITIONS, tính cả health sheetsCount).
  */
-import { SHIFT_TEMPLATES } from '@ubm/shared';
+import { shiftCodesForGroup, resolveShiftTemplate } from '@ubm/shared';
 import type { ShiftCode } from '@ubm/shared';
 import { SchedulesService } from './schedules.service.js';
 import { EmployeesService } from './employees.service.js';
@@ -28,7 +28,6 @@ import { AttendanceService } from './attendance.service.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
 
 const TAB_SLIP = 'PHIEU_NV_CAP_NHAT_CA';
-const VALID_CODES = Object.keys(SHIFT_TEMPLATES) as ShiftCode[];
 
 export type ReRegOutcome = 'CREATED' | 'UPDATED' | 'KEPT' | 'ERROR';
 export type ReRegAttendance = 'COMPLETED' | 'PENDING' | 'SKIPPED' | 'ERROR';
@@ -185,6 +184,7 @@ export class ShiftReRegService {
     const win = { from, to, today };
     const emp: any = await this.employeesService.getEmployee(employeeId).catch(() => null);
     if (!emp) throw new Error('EMPLOYEE_NOT_FOUND: không tìm thấy hồ sơ nhân viên!');
+    const validCodes = shiftCodesForGroup((emp as any).group) as string[];
 
     // Chuẩn hóa + gộp trùng (1 ô ca duy nhất cho cặp ngày|ca)
     const byDate = new Map<string, Set<ShiftCode>>();
@@ -195,7 +195,7 @@ export class ShiftReRegService {
       }
       if (!byDate.has(date)) byDate.set(date, new Set());
       for (const c of e?.codes || []) {
-        if (VALID_CODES.includes(String(c) as ShiftCode)) byDate.get(date)!.add(String(c) as ShiftCode);
+        if (validCodes.includes(String(c) as ShiftCode)) byDate.get(date)!.add(String(c) as ShiftCode);
       }
     }
     if (byDate.size === 0) {
@@ -239,7 +239,7 @@ export class ShiftReRegService {
           const hasAttend = (dayEvents || []).length > 0;
 
           for (const code of codes) {
-            const template = SHIFT_TEMPLATES[code];
+            const template = resolveShiftTemplate(code, (emp as any).group);
             const hours = Number((template as any)?.duration_hours) || 5;
             const startAt = `${date}T${String((template as any).start_hour).padStart(2, '0')}:00:00+07:00`;
             const endAt = `${date}T${String((template as any).end_hour).padStart(2, '0')}:00:00+07:00`;

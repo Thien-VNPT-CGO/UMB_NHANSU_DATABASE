@@ -16,6 +16,7 @@ import {
   AuditLogEntry,
   CandidateApplication,
   BRANCHES,
+  shiftCodesForGroup,
   toVietnameseErrorMessage,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
@@ -3381,7 +3382,7 @@ export class GoogleSheetsSyncService {
             const startDate = normSheetDate(r[8]) || new Date().toISOString().split('T')[0];
             const version = Number(r[9]) || 1;
             const shiftRaw = (r[10] || '').trim().toUpperCase();
-            const defaultShift = shiftRaw === 'CA_1' || shiftRaw === 'CA_2' || shiftRaw === 'CA_3' ? shiftRaw : undefined;
+            const defaultShift = (shiftCodesForGroup(group) as string[]).includes(shiftRaw) ? shiftRaw : undefined;
             // Cột M/N (sheet mới): Ngày Chính Thức + Email — sheet cũ thiếu thì giữ rỗng,
             // merge version bên dưới sẽ giữ bản bộ nhớ khi version bộ nhớ >= sheet.
             const officialDate = normSheetDate(r[11]);
@@ -7253,7 +7254,7 @@ export class GoogleSheetsSyncService {
       let shiftCode = 'Chua phan ca';
       try {
         const sh: any = first.assignment_id ? await (repo as any).getShiftById(first.assignment_id).catch(() => null) : null;
-        if (sh?.shift_code) shiftCode = safe(String(sh.shift_code).replace('CA_1', 'Ca 1 (07-12)').replace('CA_2', 'Ca 2 (12-18)').replace('CA_3', 'Ca 3 (18-23)'));
+        if (sh?.shift_code) shiftCode = safe(String(sh.shift_code).replace('CA_1', 'Ca 1 (07-12)').replace('CA_2', 'Ca 2 (12-18)').replace('CA_3', 'Ca 3 (18-23)').replace('CA_4', 'Ca 4 (19-23)'));
       } catch { /* giữ mặc định */ }
       const branch = safe(first.branch_id || emp?.default_branch_id || 'CN');
       const folder = `${root}/${branch}/${shiftCode}/${empName} (${empCode})`;
@@ -7308,7 +7309,7 @@ export class GoogleSheetsSyncService {
     const shiftLabel = (code?: string) => {
       const c = String(code || '');
       if (!c) return 'Ngoai lich';
-      return safe(c.replace('CA_1', 'Ca 1 (07-12)').replace('CA_2', 'Ca 2 (12-18)').replace('CA_3', 'Ca 3 (18-23)'));
+      return safe(c.replace('CA_1', 'Ca 1 (07-12)').replace('CA_2', 'Ca 2 (12-18)').replace('CA_3', 'Ca 3 (18-23)').replace('CA_4', 'Ca 4 (19-23)'));
     };
     const [y, m, d0] = date.split('-').map(Number);
     const base = Date.UTC(y, m - 1, d0);
@@ -7372,14 +7373,14 @@ export class GoogleSheetsSyncService {
       const lateMin = inEvt?.is_late ? Number(inEvt.minutes_deviation) || 0 : 0;
       rows.push([
         empName, empCode, branch,
-        code ? code.replace('CA_1', 'Ca 1').replace('CA_2', 'Ca 2').replace('CA_3', 'Ca 3') : 'Ngoai lich',
+        code ? code.replace('CA_1', 'Ca 1').replace('CA_2', 'Ca 2').replace('CA_3', 'Ca 3').replace('CA_4', 'Ca 4') : 'Ngoai lich',
         fmtDT(inEvt?.client_time), fmtDT(outEvt?.client_time), status,
         inEvt ? 'GPS hop le' : '', dist === '' ? '' : `${dist}m`,
         inEvt?.uniform_pink_ratio ?? '',
         lateMin > 0 ? `Tre ${lateMin}p` : '',
       ]);
       // Folder: chi nhánh -> tên NV -> ca làm -> ảnh + file txt.
-      const caName = code ? code.replace('CA_1', 'Ca 1').replace('CA_2', 'Ca 2').replace('CA_3', 'Ca 3') : 'Ngoai lich';
+      const caName = code ? code.replace('CA_1', 'Ca 1').replace('CA_2', 'Ca 2').replace('CA_3', 'Ca 3').replace('CA_4', 'Ca 4') : 'Ngoai lich';
       const folder = `${root}/${safe(branch)}/${safe(empName)} (${safe(empCode)})/${shiftLabel(code)}`;
       const txtLines = [
         `Nhan vien: ${empName} (${empCode})`,

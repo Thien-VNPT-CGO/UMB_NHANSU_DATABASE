@@ -4,7 +4,9 @@ import {
   LeaveType,
   ShiftAssignment,
   ShiftCode,
-  SHIFT_TEMPLATES,
+  shiftCodesForGroup,
+  resolveShiftTemplate,
+  shiftLabel,
   SwapRequest,
   OFFICE_WEEK_RULES,
   officeDayRuleOfIso,
@@ -218,22 +220,24 @@ export class SchedulesService {
         if (need(data.branchId)) scopeOf(data.branchId);
 
         const newCode = need(data.shiftCode) ? String(data.shiftCode).trim().toUpperCase() : String(sh.shift_code || '');
-        if (!SHIFT_TEMPLATES[newCode as ShiftCode]) {
-          throw new Error(`Mã ca ${data.shiftCode || '?'} không hợp lệ (chỉ CA_1/CA_2/CA_3)!`);
+        let newEmp = String(sh.employee_id || '');
+        if (need(data.employeeId)) {
+          newEmp = String(data.employeeId).trim();
+        }
+        const targetEmp: any = await this.repo.getEmployeeById(newEmp).catch(() => null);
+        if (need(data.employeeId)) {
+          if (!targetEmp) throw new Error(`EMPLOYEE_NOT_FOUND: Không tìm thấy nhân viên ${newEmp}.`);
+          if (String((targetEmp as any).employment_status || '') === 'TERMINATED') {
+            throw new Error(`EMPLOYMENT_NOT_ELIGIBLE: ${newEmp} đã nghỉ việc, không thể gán ca!`);
+          }
+        }
+        if (!resolveShiftTemplate(newCode, targetEmp?.group)) {
+          throw new Error(`Mã ca ${data.shiftCode || '?'} không hợp lệ với khối ${targetEmp?.group || 'nhân viên'} (${shiftCodesForGroup(targetEmp?.group).join('/')})!`);
         }
         const oldDay = String(sh.date || '').slice(0, 10);
         const newDate = need(data.date) ? String(data.date).slice(0, 10) : oldDay;
         if (need(data.date) && !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
           throw new Error(`Ngày ${data.date || '?'} phải dạng YYYY-MM-DD!`);
-        }
-        let newEmp = String(sh.employee_id || '');
-        if (need(data.employeeId)) {
-          newEmp = String(data.employeeId).trim();
-          const emp: any = await this.repo.getEmployeeById(newEmp).catch(() => null);
-          if (!emp) throw new Error(`EMPLOYEE_NOT_FOUND: Không tìm thấy nhân viên ${newEmp}.`);
-          if (String((emp as any).employment_status || '') === 'TERMINATED') {
-            throw new Error(`EMPLOYMENT_NOT_ELIGIBLE: ${newEmp} đã nghỉ việc, không thể gán ca!`);
-          }
         }
         const newBranch = need(data.branchId) ? canonicalBranch(String(data.branchId)) : String(sh.branch_id || '');
 
@@ -268,7 +272,7 @@ export class SchedulesService {
           );
         }
 
-        const tpl = SHIFT_TEMPLATES[newCode as ShiftCode];
+        const tpl = resolveShiftTemplate(newCode, targetEmp?.group)!;
         const pad = (n: number) => String(n).padStart(2, '0');
         const patch: any = {
           shift_code: newCode,
@@ -597,14 +601,16 @@ export class SchedulesService {
     /** Ca quá khứ (bù tuần trước) chốt PUBLISHED luôn — tuần đã qua không còn nháp. */
     publish?: boolean;
   }) {
-    // Validate cứng ngay từ đầu: mã ca phải có trong template, ngày YYYY-MM-DD.
-    if (!SHIFT_TEMPLATES[data.shiftCode]) {
-      throw new Error(`Mã ca ${data.shiftCode || '?'} không hợp lệ!`);
+    const shiftEmp: any = await this.repo.getEmployeeById(data.employeeId).catch(() => null);
+    const empGroup = shiftEmp?.group;
+    // Validate cứng ngay từ đầu: mã ca phải thuộc khối của NV, ngày YYYY-MM-DD.
+    if (!resolveShiftTemplate(data.shiftCode, empGroup)) {
+      throw new Error(`Mã ca ${data.shiftCode || '?'} không hợp lệ với khối ${empGroup || 'nhân viên'} (${shiftCodesForGroup(empGroup).join('/')})!`);
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(data.date || '').slice(0, 10))) {
       throw new Error(`Ngày ${data.date || '?'} phải dạng YYYY-MM-DD!`);
     }
-    const template = SHIFT_TEMPLATES[data.shiftCode];
+    const template = resolveShiftTemplate(data.shiftCode, empGroup)!;
     const startHourStr = template.start_hour.toString().padStart(2, '0');
     const endHourStr = template.end_hour.toString().padStart(2, '0');
     const startAt = `${data.date}T${startHourStr}:00:00+07:00`;
@@ -1032,7 +1038,7 @@ export class SchedulesService {
     employeeId: string,
     branchId: string,
     date: string
-  ): Promise<{ name: string; slot: string } | null> {
+  ): Promise<{ name: string; slot: string; group?: string } | null> {
     const d = normSheetDate(date);
     if (!d) return null;
     const [emps, leaves] = await Promise.all([
@@ -1061,15 +1067,15 @@ export class SchedulesService {
       if (canonicalBranch(o.default_branch_id || o.branch_id) !== myBranch) continue;
       const oShifts = await this.shiftsOfDay(o.employee_id, d, o.default_shift_code);
       const common = myShifts.find(s => oShifts.includes(s));
-      if (common) return { name: String(o.full_name || o.employee_id), slot: common };
+      if (common) return { name: String(o.full_name || o.employee_id), slot: common, group: (me as any).group };
     }
     return null;
   }
 
   /** Câu lỗi chuẩn khi trùng OFF cùng ca (chứa 'đăng ký lại' để UI toast + bắt chọn ngày khác). */
-  private sameShiftOffError(date: string, clash: { name: string; slot: string }): Error {
+  private sameShiftOffError(date: string, clash: { name: string; slot: string; group?: string }): Error {
     const dd = `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}`;
-    const label = clash.slot === 'CA_1' ? 'Ca 1 (07–12)' : clash.slot === 'CA_2' ? 'Ca 2 (12–18)' : clash.slot === 'CA_3' ? 'Ca 3 (18–23)' : clash.slot;
+    const label = shiftLabel(clash.slot, clash.group) || clash.slot;
     return new Error(`⛔ Ngày ${dd} đã có ${clash.name} cùng ${label} đăng ký OFF trước! Vui lòng đăng ký lại ngày khác để không trống ca.`);
   }
 
@@ -1739,11 +1745,11 @@ export class SchedulesService {
     if (already.length > 0) {
       throw new Error('Bạn đã đăng ký 5 ngày OFF thử việc rồi! Muốn đổi ngày liên hệ Store/HR.');
     }
-    const shiftCode = (['CA_1', 'CA_2', 'CA_3'] as string[]).includes((emp as any).default_shift_code)
+    const shiftCode = (shiftCodesForGroup((emp as any).group) as string[]).includes((emp as any).default_shift_code)
       ? ((emp as any).default_shift_code as ShiftCode)
-      : 'CA_1';
+      : (shiftCodesForGroup((emp as any).group)[0] as ShiftCode);
     const shiftFallback = !(emp as any).default_shift_code;
-    const template = SHIFT_TEMPLATES[shiftCode];
+    const template = resolveShiftTemplate(shiftCode, (emp as any).group)!;
     const branchId = data.branchId || (emp as any).default_branch_id || 'CN130';
     const offSet = new Set(dates);
     const workDays = windowDays.filter(d => !offSet.has(d));
@@ -1866,9 +1872,9 @@ export class SchedulesService {
     if (date < today) {
       throw new Error(`Ngày ${date} đã qua — chỉ được thêm ca từ hôm nay trở đi!`);
     }
-    const template = SHIFT_TEMPLATES[data.shiftCode];
+    const template = resolveShiftTemplate(data.shiftCode, (emp as any).group);
     if (!template) {
-      throw new Error(`Mã ca ${data.shiftCode} không hợp lệ!`);
+      throw new Error(`Mã ca ${data.shiftCode} không hợp lệ với khối ${(emp as any).group || 'nhân viên'}!`);
     }
     const branchId = (emp as any).default_branch_id || 'CN130';
     return singleWriterQueue.enqueue({
@@ -2001,12 +2007,13 @@ export class SchedulesService {
         if (dayShifts.length > 0) {
           throw new Error(`Ngày ${date} bạn đang có ca ${dayShifts.map((s: any) => (s as any)?.shift_code).join(' + ')} — muốn nghỉ thì chọn chiều Ca làm → Nghỉ OFF!`);
         }
-        const code: ShiftCode = (['CA_1', 'CA_2', 'CA_3'] as string[]).includes(String(data.shiftCode || ''))
+        const validCodes = shiftCodesForGroup((emp as any)?.group) as string[];
+        const code: ShiftCode = validCodes.includes(String(data.shiftCode || ''))
           ? (data.shiftCode as ShiftCode)
-          : (['CA_1', 'CA_2', 'CA_3'] as string[]).includes(String((emp as any)?.default_shift_code || ''))
+          : validCodes.includes(String((emp as any)?.default_shift_code || ''))
             ? ((emp as any).default_shift_code as ShiftCode)
-            : 'CA_1';
-        const template = SHIFT_TEMPLATES[code];
+            : (validCodes[0] as ShiftCode);
+        const template = resolveShiftTemplate(code, (emp as any)?.group)!;
         const created = await this.repo.createShiftAssignment({
           assignment_id: `SHIFT_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
           employee_id: data.employeeId,
@@ -3186,13 +3193,14 @@ export class SchedulesService {
       }
       if (missing.length === 0) continue;
       const defShift = String((e as any)?.default_shift_code || '').toUpperCase();
+      const empCodes = shiftCodesForGroup((e as any).group) as string[];
       out.push({
         employee_id: empId,
         full_name: (e as any)?.full_name || empId,
         employee_code: (e as any)?.employee_code || '',
         branch_id: branchId,
         official_date: off,
-        shift_code: ['CA_1', 'CA_2', 'CA_3'].includes(defShift) ? defShift : 'CA_1',
+        shift_code: empCodes.includes(defShift) ? defShift : (empCodes[0] || 'CA_1'),
         missingDates: missing,
       });
     }

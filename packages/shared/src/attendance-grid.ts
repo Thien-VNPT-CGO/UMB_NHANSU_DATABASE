@@ -4,6 +4,7 @@
  * mồ côi, đơn giá đúng giai đoạn và lương/phạt tạm tính KHỚP NHAU 100% realtime.
  * Finance vẫn chốt số chính thức ở kỳ lương.
  */
+import { isSaleGroup } from './constants/index.js';
 
 /** Ngày Việt Nam (UTC+7) của 1 mốc ISO. */
 export function vnDayOf(iso: string): string {
@@ -101,7 +102,15 @@ export function mergeOrphanCheckins(
  * Finance chốt số chính thức ở kỳ lương):
  * trễ <10p: không phạt; 10–29p: -30k; 30–59p: -50% lương ca; ≥60p hoặc thiếu in/out: 0đ.
  */
-export const SHIFT_HOURS_MAP: Record<string, number> = { CA_1: 5, CA_2: 6, CA_3: 5 };
+export const SHIFT_HOURS_MAP: Record<string, number> = { CA_1: 5, CA_2: 6, CA_3: 5, CA_4: 4 };
+/** Số giờ mỗi ca của khối Sale (4 ca × 4 giờ). */
+export const SALE_SHIFT_HOURS_MAP: Record<string, number> = { CA_1: 4, CA_2: 4, CA_3: 4, CA_4: 4 };
+/** Số giờ ca theo khối (Sale = 4h/ca, còn lại theo bảng cũ). */
+export function shiftHoursOf(shiftCode: string, group?: unknown): number {
+  const isSale = isSaleGroup(group);
+  const map = isSale ? SALE_SHIFT_HOURS_MAP : SHIFT_HOURS_MAP;
+  return map[shiftCode] ?? (isSale ? 4 : 5);
+}
 /** Đơn giá thử việc chuẩn (đồng bộ STANDARD_HOURLY_RATES.PROBATION của server). */
 export const TV_RATE_VND = 21000;
 /** Đơn giá đúng giai đoạn của ngày công (mirror backend rateOnDate cho hiển thị realtime):
@@ -122,28 +131,36 @@ export function lateMinOf(inEvt: any, shiftStartAt?: string): number {
   return 0;
 }
 
-/** Suy ca ngoài lịch từ giờ check-in VN (realtime, chỉ để tạm tính hiển thị — không đổi công/lương chính thức). */
-export function inferExtraShiftCode(inEvt: any, empDefaultShift?: string): string {
+/** Suy ca ngoài lịch từ giờ check-in VN (realtime, chỉ để tạm tính hiển thị — không đổi công/lương chính thức).
+ *  Truyền `group` = SALE để suy đúng 4 ca (07–11, 11–15, 15–19, 19–23). */
+export function inferExtraShiftCode(inEvt: any, empDefaultShift?: string, group?: string): string {
+  const isSale = isSaleGroup(group);
   try {
     const t = new Date(inEvt?.client_time || '').getTime();
     if (Number.isFinite(t)) {
       const vn = new Date(t + 7 * 3_600_000);
       const h = vn.getUTCHours() + vn.getUTCMinutes() / 60;
+      if (isSale) {
+        if (h >= 7 && h < 11) return 'CA_1';
+        if (h >= 11 && h < 15) return 'CA_2';
+        if (h >= 15 && h < 19) return 'CA_3';
+        return 'CA_4';
+      }
       if (h >= 5 && h < 11.5) return 'CA_1';
       if (h >= 11.5 && h < 17.5) return 'CA_2';
       return 'CA_3';
     }
   } catch { /* fallback bên dưới */ }
   const d = String(empDefaultShift || '');
-  if (['CA_1', 'CA_2', 'CA_3'].includes(d)) return d;
-  return 'CA_2';
+  if (['CA_1', 'CA_2', 'CA_3', 'CA_4'].includes(d)) return d;
+  return isSale ? 'CA_2' : 'CA_2';
 }
 
-export function shiftPayInfo(shiftCode: string, ratePerHour: number, inEvt: any, outEvt: any, shiftStartAt?: string): {
+export function shiftPayInfo(shiftCode: string, ratePerHour: number, inEvt: any, outEvt: any, shiftStartAt?: string, group?: string): {
   hours: number; rate: number; shiftPay: number; lateMin: number;
   fineLabel: string; deduction: number; net: number; unpaid: boolean;
 } {
-  const hours = SHIFT_HOURS_MAP[shiftCode] ?? 5;
+  const hours = shiftHoursOf(shiftCode, group);
   const rate = Number(ratePerHour) || 0;
   const shiftPay = hours * rate;
   const lateMin = lateMinOf(inEvt, shiftStartAt);
