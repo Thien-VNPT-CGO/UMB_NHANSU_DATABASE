@@ -1022,6 +1022,9 @@ export function App() {
 
   // Attendance tracking state
   const [attendanceActionType, setAttendanceActionType] = useState<'CHECK_IN' | 'CHECK_OUT'>('CHECK_IN');
+  // Đồng hồ nhẹ cho tab Điểm danh: nút RA CA tự mở đúng giờ tan ca mà không
+  // cần F5 (chỉ tick khi đang mở tab, 5 giây/lần).
+  const [attNow, setAttNow] = useState(() => Date.now());
   // GPS thật từ thiết bị (null = chưa đo được, KHÔNG dùng số giả lập)
   const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
   // Cấu hình chi nhánh của NV: Admin có thể TẮT định vị GPS cho chi nhánh.
@@ -1846,6 +1849,15 @@ export function App() {
     if ((activeTab === 'attendance' || activeTab === 'schedule') && employee?.employee_id) {
       loadEmployeeData(employee.employee_id);
     }
+  }, [activeTab]);
+
+  // Tab Điểm danh: tick 5 giây để nút VÀO CA mở đúng cổng (trước ca 30 phút) và
+  // nút RA CA tự bấm được đúng giờ tan ca — không cần tải lại trang.
+  useEffect(() => {
+    if (activeTab !== 'attendance') return;
+    setAttNow(Date.now());
+    const t = setInterval(() => setAttNow(Date.now()), 5000);
+    return () => clearInterval(t);
   }, [activeTab]);
   useEffect(() => {
     if (!activeTestId) {
@@ -3438,10 +3450,17 @@ export function App() {
       } catch { /* không chặn luồng chính */ }
       // GPS yếu/vượt phạm vi bị server từ chối thẳng (không ghi nhận) nên không còn nhánh này.
       const gpsNote = gpsEnabled ? '' : ' (chi nhánh đã tắt định vị GPS)';
-      showToast(attendanceActionType === 'CHECK_IN'
-        ? `✓ Điểm danh Check-in thành công!${gpsEnabled ? ' GPS thật + ảnh thật đã ghi nhận.' : ''}${gpsNote}`
-        : `✓ Điểm danh Check-out thành công! Ca làm việc đã ghi nhận vào Google Sheets.${gpsNote}`
-      );
+      const receipt: any = res?.receipt || {};
+      const lateMinutes = Math.max(0, Math.round(Number(receipt?.minutes_deviation) || 0));
+      if (attendanceActionType === 'CHECK_IN' && (receipt?.is_late === true || lateMinutes > 0)) {
+        // Vào ca trễ: cảnh báo rõ cho NV; server đã tự gửi thông báo cho HR/Store.
+        showToast(`⚠️ BẠN ĐÃ VÀO CA TRỄ ${lateMinutes || 1} PHÚT — hệ thống đã gửi cảnh báo tới HR và ghi nhận mức phạt trễ theo quy chế!`);
+      } else {
+        showToast(attendanceActionType === 'CHECK_IN'
+          ? `✓ Điểm danh Check-in thành công!${gpsEnabled ? ' GPS thật + ảnh thật đã ghi nhận.' : ''}${gpsNote}`
+          : `✓ Điểm danh Check-out thành công! Ca làm việc đã ghi nhận vào Google Sheets.${gpsNote}`
+        );
+      }
       void loadEmployeeData(employee?.employee_id, true);
     } catch (err: any) {
       // Không hiện mã lỗi thô (VD WEEKLY_OFF_REGISTRATION_REQUIRED): dịch sang
@@ -6184,6 +6203,24 @@ export function App() {
           const shiftStartStr = shiftStartHour !== undefined
             ? `${String(shiftStartHour).padStart(2, '0')}:00`
             : (shiftStart > 0 ? new Date(shiftStart).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : '');
+          // Giờ tan ca + trạng thái nút RA CA (Sale): chỉ mở khi đã hết ca.
+          const shiftEndMs = todayShift?.end_at ? new Date(todayShift.end_at).getTime() : NaN;
+          const endTimeStr = Number.isFinite(shiftEndMs)
+            ? new Date(shiftEndMs).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' })
+            : (shiftBounds(todayShift?.shift_code)[1] || '');
+          const minsToEnd = Number.isFinite(shiftEndMs) ? Math.max(0, Math.ceil((shiftEndMs - Math.max(vnNowMs(), attNow)) / 60000)) : 0;
+          const outOpen = !Number.isFinite(shiftEndMs) || Math.max(vnNowMs(), attNow) >= shiftEndMs;
+          // Số phút vào ca trễ (dương) — dùng để cảnh báo NV; HR đã nhận thông báo tự động.
+          const lateMin = shiftIn
+            ? Math.max(
+                0,
+                Number(shiftIn?.minutes_deviation) > 0
+                  ? Math.round(Number(shiftIn.minutes_deviation))
+                  : (shiftIn?.client_time && Number.isFinite(shiftStartMs)
+                      ? Math.round((new Date(shiftIn.client_time).getTime() - shiftStartMs) / 60000)
+                      : 0)
+              )
+            : 0;
 
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -6286,6 +6323,22 @@ export function App() {
                     )}
                   </div>
 
+                  {/* CẢNH BÁO VÀO CA TRỄ: HR đã nhận thông báo tự động ngay lúc check-in */}
+                  {tabAtt.checkedIn && lateMin > 0 && (
+                    <div style={{
+                      backgroundColor: '#FEF2F2',
+                      border: '1.5px solid #FCA5A5',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '10px 12px',
+                      marginBottom: '14px',
+                      fontSize: '12px',
+                      lineHeight: 1.5,
+                      color: '#B91C1C',
+                      fontWeight: 700,
+                    }}>
+                      ⚠️ BẠN ĐÃ VÀO CA TRỄ {lateMin} PHÚT so với giờ ca ({shiftStartStr}). Hệ thống đã tự động gửi cảnh báo tới HR và ghi nhận mức phạt trễ theo quy chế.
+                    </div>
+                  )}
                   {/* RÀNG BUỘC ĐẶC BIỆT: ÁO HỒNG + BẢNG TÊN (chỉ NV chính thức — thử việc được miễn) */}
                   {!isProbation && (
                   <div style={{
@@ -6399,74 +6452,149 @@ export function App() {
                   {/* Attendance Action Controller */}
                   {attendanceStep === 'IDLE' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      {/* NÚT CHECK-IN ĐẦU CA */}
-                      {!tabAtt.checkedIn ? (
-                        <button
-                          className="btn-primary"
-                          disabled={isEarly}
-                          onClick={() => handleStartAttendance('CHECK_IN')}
-                          style={{
-                            width: '100%',
-                            fontSize: '15px',
+                      {isSale ? (
+                        /* ------------------------------------------------------------
+                           SALE: CHỈ 1 NÚT DUY NHẤT (VÀO CA → RA CA).
+                           - Chưa vào ca: nút VÀO CA, mở trước giờ ca 30 phút.
+                           - Đã vào ca: nút chuyển thành RA CA nhưng KHÓA, chỉ bấm
+                             được khi hết ca (end_at). Tự mở đúng giờ nhờ tick 5s.
+                           ------------------------------------------------------------ */
+                        tabAtt.checkedOut ? (
+                          <div style={{
+                            padding: '10px 12px',
+                            backgroundColor: '#ECFDF5',
+                            border: '1.5px solid #10B981',
+                            borderRadius: 'var(--radius-sm)',
+                            fontSize: '13px',
+                            color: '#065F46',
                             fontWeight: 800,
-                            opacity: isEarly ? 0.6 : 1,
-                            cursor: isEarly ? 'not-allowed' : 'pointer',
-                          }}
-                        >
-                          <MapPin size={18} style={{ marginRight: '8px' }} />
-                          {isEarly ? `CHƯA ĐẾN GIỜ (MỞ LÚC ${openTimeStr})` : 'BẮT ĐẦU CHECK-IN ĐẦU CA (BƯỚC 1)'}
-                        </button>
+                            textAlign: 'center',
+                          }}>
+                            🎉 BẠN ĐÃ HOÀN TẤT CA LÀM VIỆC HÔM NAY! (VÀO CA: {tabAtt.checkInTime} • RA CA: {tabAtt.checkOutTime})
+                          </div>
+                        ) : !tabAtt.checkedIn ? (
+                          <>
+                            <button
+                              className="btn-primary"
+                              disabled={isEarly || shiftLocked}
+                              onClick={() => handleStartAttendance('CHECK_IN')}
+                              style={{
+                                width: '100%',
+                                fontSize: '16px',
+                                fontWeight: 900,
+                                padding: '14px',
+                                opacity: (isEarly || shiftLocked) ? 0.55 : 1,
+                                cursor: (isEarly || shiftLocked) ? 'not-allowed' : 'pointer',
+                              }}
+                            >
+                              <MapPin size={18} style={{ marginRight: '8px' }} />
+                              {isEarly
+                                ? `VÀO CA — MỞ LÚC ${openTimeStr}`
+                                : shiftLocked
+                                  ? 'VÀO CA — CA ĐÃ KHÓA (QUÁ 3 GIỜ)'
+                                  : 'VÀO CA'}
+                            </button>
+                            <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', textAlign: 'center' }}>
+                              Cổng vào ca mở trước giờ ca <strong>{checkInWindowMinutes} phút</strong> • Ca bắt đầu <strong>{shiftStartStr}</strong>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              className="btn-primary"
+                              disabled={!outOpen}
+                              onClick={() => handleStartAttendance('CHECK_OUT')}
+                              style={{
+                                width: '100%',
+                                fontSize: '16px',
+                                fontWeight: 900,
+                                padding: '14px',
+                                backgroundColor: outOpen ? '#2563EB' : '#94A3B8',
+                                opacity: outOpen ? 1 : 0.65,
+                                cursor: outOpen ? 'pointer' : 'not-allowed',
+                              }}
+                            >
+                              {outOpen
+                                ? 'RA CA'
+                                : `RA CA — MỞ LÚC ${endTimeStr}${minsToEnd > 0 ? ` (còn ${minsToEnd} phút)` : ''}`}
+                            </button>
+                            <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', textAlign: 'center' }}>
+                              ✓ Đã vào ca lúc <strong>{tabAtt.checkInTime}</strong> • Nút <strong>RA CA</strong> chỉ bấm được khi hết ca (<strong>{endTimeStr}</strong>)
+                            </div>
+                          </>
+                        )
                       ) : (
-                        <div style={{
-                          padding: '10px 12px',
-                          backgroundColor: '#F0FDF4',
-                          border: '1px solid #86EFAC',
-                          borderRadius: 'var(--radius-sm)',
-                          fontSize: '12px',
-                          color: '#15803D',
-                          fontWeight: 700,
-                          textAlign: 'center',
-                        }}>
-                          ✓ ĐÃ HOÀN TẤT CHECK-IN VÀO CA LÚC {tabAtt.checkInTime || '07:00'} (ÁO HỒNG + BẢNG TÊN ĐÃ XÁC THỰC)
-                        </div>
-                      )}
-
-                      {/* NÚT CHECK-OUT TAN CA (RÀNG BUỘC: CHECK-IN XONG MỚI ĐƯỢC CHECK-OUT) */}
-                      {!tabAtt.checkedOut ? (
-                        <button
-                          className="btn-secondary"
-                          disabled={!tabAtt.checkedIn}
-                          onClick={() => handleStartAttendance('CHECK_OUT')}
-                          style={{
-                            width: '100%',
-                            fontSize: '14px',
-                            fontWeight: 800,
-                            color: tabAtt.checkedIn ? '#2563EB' : '#94A3B8',
-                            borderColor: tabAtt.checkedIn ? '#2563EB' : '#CBD5E1',
-                            backgroundColor: tabAtt.checkedIn ? '#EFF6FF' : '#F8FAFC',
-                            cursor: tabAtt.checkedIn ? 'pointer' : 'not-allowed',
-                            opacity: tabAtt.checkedIn ? 1 : 0.6,
-                          }}
-                        >
-                          {tabAtt.checkedIn ? (
-                            '🏁 CHECK-OUT KẾT THÚC CA LÀM (BƯỚC 2)'
+                        <>
+                          {/* NÚT CHECK-IN ĐẦU CA */}
+                          {!tabAtt.checkedIn ? (
+                            <button
+                              className="btn-primary"
+                              disabled={isEarly}
+                              onClick={() => handleStartAttendance('CHECK_IN')}
+                              style={{
+                                width: '100%',
+                                fontSize: '15px',
+                                fontWeight: 800,
+                                opacity: isEarly ? 0.6 : 1,
+                                cursor: isEarly ? 'not-allowed' : 'pointer',
+                              }}
+                            >
+                              <MapPin size={18} style={{ marginRight: '8px' }} />
+                              {isEarly ? `CHƯA ĐẾN GIỜ (MỞ LÚC ${openTimeStr})` : 'BẮT ĐẦU CHECK-IN ĐẦU CA (BƯỚC 1)'}
+                            </button>
                           ) : (
-                            '🔒 CHECK-OUT (BẮT BUỘC CHECK-IN TRƯỚC)'
+                            <div style={{
+                              padding: '10px 12px',
+                              backgroundColor: '#F0FDF4',
+                              border: '1px solid #86EFAC',
+                              borderRadius: 'var(--radius-sm)',
+                              fontSize: '12px',
+                              color: '#15803D',
+                              fontWeight: 700,
+                              textAlign: 'center',
+                            }}>
+                              ✓ ĐÃ HOÀN TẤT CHECK-IN VÀO CA LÚC {tabAtt.checkInTime || '07:00'} (ÁO HỒNG + BẢNG TÊN ĐÃ XÁC THỰC)
+                            </div>
                           )}
-                        </button>
-                      ) : (
-                        <div style={{
-                          padding: '10px 12px',
-                          backgroundColor: '#ECFDF5',
-                          border: '1.5px solid #10B981',
-                          borderRadius: 'var(--radius-sm)',
-                          fontSize: '13px',
-                          color: '#065F46',
-                          fontWeight: 800,
-                          textAlign: 'center',
-                        }}>
-                          🎉 BẠN ĐÃ HOÀN TẤT CA LÀM VIỆC HÔM NAY! (CHECK-IN: {tabAtt.checkInTime} • CHECK-OUT: {tabAtt.checkOutTime})
-                        </div>
+
+                          {/* NÚT CHECK-OUT TAN CA (RÀNG BUỘC: CHECK-IN XONG MỚI ĐƯỢC CHECK-OUT) */}
+                          {!tabAtt.checkedOut ? (
+                            <button
+                              className="btn-secondary"
+                              disabled={!tabAtt.checkedIn}
+                              onClick={() => handleStartAttendance('CHECK_OUT')}
+                              style={{
+                                width: '100%',
+                                fontSize: '14px',
+                                fontWeight: 800,
+                                color: tabAtt.checkedIn ? '#2563EB' : '#94A3B8',
+                                borderColor: tabAtt.checkedIn ? '#2563EB' : '#CBD5E1',
+                                backgroundColor: tabAtt.checkedIn ? '#EFF6FF' : '#F8FAFC',
+                                cursor: tabAtt.checkedIn ? 'pointer' : 'not-allowed',
+                                opacity: tabAtt.checkedIn ? 1 : 0.6,
+                              }}
+                            >
+                              {tabAtt.checkedIn ? (
+                                '🏁 CHECK-OUT KẾT THÚC CA LÀM (BƯỚC 2)'
+                              ) : (
+                                '🔒 CHECK-OUT (BẮT BUỘC CHECK-IN TRƯỚC)'
+                              )}
+                            </button>
+                          ) : (
+                            <div style={{
+                              padding: '10px 12px',
+                              backgroundColor: '#ECFDF5',
+                              border: '1.5px solid #10B981',
+                              borderRadius: 'var(--radius-sm)',
+                              fontSize: '13px',
+                              color: '#065F46',
+                              fontWeight: 800,
+                              textAlign: 'center',
+                            }}>
+                              🎉 BẠN ĐÃ HOÀN TẤT CA LÀM VIỆC HÔM NAY! (CHECK-IN: {tabAtt.checkInTime} • CHECK-OUT: {tabAtt.checkOutTime})
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   )}

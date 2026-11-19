@@ -6024,7 +6024,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           ? ` Trễ ${mins}p: phạt 100% lương ca!`
           : fine.deduction > 0
             ? ` Trễ ${mins}p: phạt ${fine.deduction.toLocaleString('vi-VN')}đ!`
-            : '';
+            // Trễ trong mức nhắc nhở: vẫn báo HR biết NV vào ca muộn.
+            : ` Trễ ${mins}p (trong mức nhắc nhở, chưa phạt).`;
       }
       broadcastNotification({
         type: 'CHECKIN',
