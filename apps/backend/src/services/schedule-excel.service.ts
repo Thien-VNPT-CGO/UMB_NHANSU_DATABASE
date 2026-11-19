@@ -13,7 +13,7 @@
  *   ô trống = không xếp ca; mã ca sai → báo lỗi dòng.
  */
 import ExcelJS from 'exceljs';
-import { SHIFT_TEMPLATES, shiftCodesForGroup, resolveShiftTemplate } from '@ubm/shared';
+import { ALL_SHIFT_TEMPLATES, shiftCodesForGroup, resolveShiftTemplate } from '@ubm/shared';
 import type { ShiftCode } from '@ubm/shared';
 import { canonicalBranch } from './auto-schedule.service.js';
 import { SchedulesService } from './schedules.service.js';
@@ -24,7 +24,7 @@ import { singleWriterQueue } from '../repositories/single-writer-queue.js';
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 export { XLSX_MIME };
-const VALID_CODES = Object.keys(SHIFT_TEMPLATES);
+const VALID_CODES = Object.keys(ALL_SHIFT_TEMPLATES);
 
 type ImportRowError = {
   row: number;
@@ -107,7 +107,7 @@ export class ScheduleExcelService {
   }
 
   private hoursOf(code: string, group?: string): { startAt: string; endAt: string } | null {
-    const t = resolveShiftTemplate(code, group) || SHIFT_TEMPLATES[code as keyof typeof SHIFT_TEMPLATES];
+    const t = resolveShiftTemplate(code, group) || ALL_SHIFT_TEMPLATES[code];
     if (!t) return null;
     const p = (n: number) => String(n).padStart(2, '0');
     const startHour = p(t.start_hour);

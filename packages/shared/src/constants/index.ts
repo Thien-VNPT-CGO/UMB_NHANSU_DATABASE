@@ -183,16 +183,6 @@ export const SHIFT_TEMPLATES: Record<string, ShiftTemplate> = {
     end_minute: 0,
     duration_hours: 5,
   },
-  // CA_4 mặc định 19:00–23:00 (4h) — dùng cho khối Sale.
-  CA_4: {
-    code: 'CA_4',
-    name: 'Ca 4 (Tối muộn)',
-    start_hour: 19,
-    start_minute: 0,
-    end_hour: 23,
-    end_minute: 0,
-    duration_hours: 4,
-  },
 };
 
 /**
@@ -239,8 +229,18 @@ export const SALE_SHIFT_TEMPLATES: Record<string, ShiftTemplate> = {
   },
 };
 
-/** Khối Sale / Marketing (group = SALE, MKT, SALES...). */
-export function isSaleGroup(group?: unknown): boolean {
+/**
+ * Bảng ca GỘP mọi khối (3 ca cửa hàng + CA_4 của Sale). Chỉ dùng khi cần nhận diện
+ * một mã ca bất kỳ mà chưa biết khối (VD: đọc file Excel, seed bảng ca MOCK, hiển
+ * thị lại dữ liệu cũ). Xếp ca/tính lương luôn dùng resolveShiftTemplate(code, group)
+ * để khối cửa hàng/xưởng/văn phòng không chọn được CA_4.
+ */
+export const ALL_SHIFT_TEMPLATES: Record<string, ShiftTemplate> = {
+  ...SALE_SHIFT_TEMPLATES,
+  ...SHIFT_TEMPLATES,
+};
+
+/** Khối Sale / Marketing (group = SALE, MKT, SALES...). */export function isSaleGroup(group?: unknown): boolean {
   const g = String(group ?? '').trim().toUpperCase();
   if (!g) return false;
   return (

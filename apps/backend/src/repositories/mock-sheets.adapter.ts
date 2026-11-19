@@ -26,7 +26,7 @@ import {
   STANDARD_HOURLY_RATES,
   BRANCHES,
   BranchInfo,
-  SHIFT_TEMPLATES,
+  ALL_SHIFT_TEMPLATES,
   TestPaper,
   TestSubmission,
   EVVehicle,
@@ -319,7 +319,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
     this.branches = [...BRANCHES];
 
     // 7. Shift Templates
-    this.shiftTemplates = { ...SHIFT_TEMPLATES };
+    this.shiftTemplates = { ...ALL_SHIFT_TEMPLATES };
 
     // 8. System Policies
     this.policies = {

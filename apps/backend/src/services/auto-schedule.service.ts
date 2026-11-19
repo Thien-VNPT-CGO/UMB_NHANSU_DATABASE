@@ -1,4 +1,4 @@
-import { ShiftCode, SHIFT_TEMPLATES, resolveShiftTemplate, shiftCodesForGroup } from '@ubm/shared';
+import { ALL_SHIFT_TEMPLATES, ShiftCode, resolveShiftTemplate, shiftCodesForGroup } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
 import { weekRangeOf } from './weekly-off.service.js';
@@ -396,7 +396,7 @@ export class AutoScheduleService {
         const groupById = new Map<string, string>();
         for (const e of emps || []) groupById.set(String((e as any)?.employee_id || ''), String((e as any)?.group || ''));
         for (const it of plan.items) {
-          const template = resolveShiftTemplate(it.shift_code, groupById.get(String(it.employee_id))) || SHIFT_TEMPLATES[it.shift_code];
+          const template = resolveShiftTemplate(it.shift_code, groupById.get(String(it.employee_id))) || ALL_SHIFT_TEMPLATES[it.shift_code];
           const sh = String(template.start_hour).padStart(2, '0');
           const eh = String(template.end_hour).padStart(2, '0');
           out.push(

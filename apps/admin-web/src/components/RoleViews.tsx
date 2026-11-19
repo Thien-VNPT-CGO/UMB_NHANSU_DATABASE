@@ -9495,7 +9495,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     // Ca sắp xếp = ca cố định đã chuẩn hóa — NV chưa gán về '' (hạng 9, cuối CN).
     const sortShiftOf = (item: any): string => normShiftCode(empShiftOf(item.empId));
     const SHIFT_LABEL: Record<string, string> = Object.fromEntries(
-      ['CA_1', 'CA_2', 'CA_3', 'CA_4'].map((c) => [c, shiftLabel(c)])
+      ['CA_1', 'CA_2', 'CA_3', 'CA_4'].map((c) => [c, shiftLabel(c, c === 'CA_4' ? 'SALE' : undefined) || shiftLabel(c, 'SALE') || c])
     );
     // Tóm tắt ca làm trong tuần đang xem: "Ca 1 ×4 • Ca 2 ×1" (theo ca thật từng ngày).
     const weekShiftSummary = (item: any): string => {

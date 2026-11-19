@@ -7381,7 +7381,7 @@ export class GoogleSheetsSyncService {
       ]);
       // Folder: chi nhánh -> tên NV -> ca làm -> ảnh + file txt.
       const caName = code ? code.replace('CA_1', 'Ca 1').replace('CA_2', 'Ca 2').replace('CA_3', 'Ca 3').replace('CA_4', 'Ca 4') : 'Ngoai lich';
-      const folder = `${root}/${safe(branch)}/${safe(empName)} (${safe(empCode)})/${shiftLabel(code)}`;
+      const folder = `${root}/${safe(branch)}/${safe(empName)} (${safe(empCode)})/${shiftLabel(code) || caName}`;
       const txtLines = [
         `Nhan vien: ${empName} (${empCode})`,
         `Chi nhanh: ${branch}`,
