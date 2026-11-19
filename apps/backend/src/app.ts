@@ -6998,6 +6998,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           hours: row.hours, standardPay: row.standardPay, deduction: row.deduction,
           bonus: row.bonus, netPay: row.netPay,
         } : null,
+        // Số Kế toán đã nhập tay cho ĐÚNG nhân viên này (thưởng/OT/trừ KPI/ứng
+        // lương/đồng phục/ghi chú) — tab Công/Lương hiển thị realtime, không phải
+        // chờ phiếu lương phát hành. Cùng công thức computeAccountingTotals.
+        accounting: await payrollService.getEmployeeAccounting(period, employeeId).catch(() => null),
         shifts: row?.shifts || [],
       });
     } catch (err: any) {
@@ -7421,7 +7425,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const flush = !!(req.body as any)?.flush;
       const result = await payrollService.upsertInput(req.params.period, req.body || {}, req.user!.id, { flush });
-      broadcastUpdate('payroll', { action: 'inputs', period: req.params.period });
+      // Kèm employeeId để cổng nhân viên chỉ tải lại đúng người được Kế toán sửa
+      // (tránh mọi NV tải lại khi KT sửa 1 dòng).
+      const inputEmployeeId = String((req.body as any)?.employeeId || (req.body as any)?.employee_id || '').trim();
+      broadcastUpdate('payroll', { action: 'inputs', period: req.params.period, ...(inputEmployeeId ? { employeeId: inputEmployeeId } : {}) });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });

@@ -20,6 +20,7 @@ import {
   payrollBatchOfRunId,
   payrollRunTimestamp,
   PAYROLL_WORKFLOW_LOCK_ENABLED,
+  computeAccountingTotals,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { SalaryConfigService } from './salary-config.service.js';
@@ -1502,9 +1503,19 @@ export class PayrollService {
           const kpi = Number(inp.tru_kpi) || 0;
           const dp = Number(inp.dong_phuc) || 0;
           const bonusTotal = bonusExtra;
-          const tongCong = luongCB + allowanceCfg + standardPayEff + otExtra + bonusTotal;
-          const tongLuong = tongCong - kpi - deduction;
-          const thucLanh = tongLuong - ung - dp;
+          // Cùng 1 công thức với cổng NV (tab Công/Lương) để hai bên khớp 100%.
+          const { tongCong, tongLuong, thucLanh } = computeAccountingTotals({
+            payMode: monthly ? 'MONTHLY' : 'SHIFT',
+            luongCb: luongCB,
+            allowance: allowanceCfg,
+            standardPay,
+            otExtra,
+            bonusExtra,
+            truKpi: kpi,
+            deduction,
+            ungLuong: ung,
+            dongPhuc: dp,
+          });
 
           totalHours += monthly ? 0 : empHours;
           totalAmount += thucLanh;
@@ -1739,6 +1750,69 @@ export class PayrollService {
   async getEmployeePayslips(employeeId: string) {
     const slips = await this.repo.getPayslipsForEmployee(employeeId);
     return this.attachInputNotes(this.latestSlipsPerPeriod(slips));
+  }
+
+  /**
+   * Số liệu KẾ TOÁN của ĐÚNG 1 nhân viên trong kỳ — dùng cho tab "Công/Lương"
+   * ở cổng nhân viên (Sale và các khối khác) để NV thấy ngay những gì Kế toán
+   * đã nhập tay (thưởng, OT, trừ KPI, ứng lương, đồng phục, ghi chú) mà không
+   * phải chờ phiếu lương được phát hành.
+   *
+   * Công thức lấy từ `computeAccountingTotals` (@ubm/shared) — cùng hàm với
+   * lúc Kế toán bấm "Tính lương" nên 3 cột Tổng cộng / Tổng lương / Thực lãnh
+   * khớp 100% với phiếu lương chính thức.
+   */
+  async getEmployeeAccounting(period: string, employeeId: string) {
+    if (!employeeId || !/^\d{4}-(0[1-9]|1[0-2])$/.test(String(period || ''))) return null;
+    const [sheet, inputs] = await Promise.all([
+      this.getFinanceTimesheet(period, '*', employeeId).catch(() => null as any),
+      this.repo.getPayrollInputs(period).catch(() => [] as any[]),
+    ]);
+    const row: any = ((sheet as any)?.rows || [])[0] || null;
+    const inp: any =
+      (inputs || []).find((x: any) => String(x?.employee_id || '') === String(employeeId)) || null;
+    if (!row && !inp) return null;
+    const num = (v: any) => Math.max(0, Math.floor(Number(v) || 0));
+    const payMode = String(row?.payMode || '').toUpperCase() === 'MONTHLY' ? 'MONTHLY' : 'SHIFT';
+    // LCB nhập tay > 0 mới ghi đè; NV lương tháng lấy LCB cấu hình làm mặc định.
+    const manualCb = num(inp?.luong_cb);
+    const luongCb = manualCb > 0 ? manualCb : payMode === 'MONTHLY' ? num(row?.monthlyBase) : 0;
+    const allowance = num(row?.allowance);
+    const standardPay = num(row?.standardPay);
+    const otExtra = num(inp?.ot_extra);
+    const bonusExtra = num(inp?.bonus_extra);
+    const truKpi = num(inp?.tru_kpi);
+    const ungLuong = num(inp?.ung_luong);
+    const dongPhuc = num(inp?.dong_phuc);
+    const deduction = num(row?.deduction);
+    const totals = computeAccountingTotals({
+      payMode,
+      luongCb,
+      allowance,
+      standardPay,
+      otExtra,
+      bonusExtra,
+      truKpi,
+      deduction,
+      ungLuong,
+      dongPhuc,
+    });
+    return {
+      entered: !!inp,
+      updatedAt: inp?.updatedAt || null,
+      payMode,
+      luongCb,
+      allowance,
+      standardPay,
+      otExtra,
+      bonusExtra,
+      truKpi,
+      ungLuong,
+      dongPhuc,
+      deduction,
+      ...totals,
+      note: String(inp?.note || ''),
+    };
   }
 
   /** Mốc phát sinh THẬT của run, ưu tiên timestamp nhúng trong run_id

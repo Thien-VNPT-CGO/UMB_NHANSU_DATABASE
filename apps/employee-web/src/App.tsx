@@ -2479,6 +2479,20 @@ export function App() {
           const actor = p?.data?.employeeId || p?.data?.employee_id;
           if (actor && empIdRef.current && String(actor) !== String(empIdRef.current)) return;
         }
+        // Kế toán sửa lương của ĐÚNG 1 nhân viên: chỉ máy của người đó tải lại
+        // (vd: KT nhập thưởng/ứng lương cho 1 bạn Sale) — người khác không giật lag.
+        if (entity === 'payroll' || entity === 'payslips') {
+          const target = p?.data?.employeeId || p?.data?.employee_id;
+          const mine = empIdRef.current;
+          if (target && mine) {
+            if (String(target) !== String(mine)) return;
+            const action = String(p?.data?.action || '');
+            if (action === 'inputs') {
+              const per = String(p?.data?.period || '');
+              showToastRef.current(`💰 Kế toán vừa cập nhật lương của bạn${per ? ` (kỳ ${per})` : ''} — đã đồng bộ.`);
+            }
+          }
+        }
         reload(entity, p);
 
         // Admin ẩn/hiện lịch chi nhánh → cập nhật cờ schedule_visible để cổng NV
@@ -6777,6 +6791,21 @@ export function App() {
                       <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{label}</div>
                     </div>
                   );
+                  // Số Kế toán đã nhập tay cho ĐÚNG nhân viên này (đồng bộ realtime).
+                  const acc: any = (monthServerPay as any)?.accounting;
+                  const accMoney = (v: any) => `${money(Math.round(Number(v) || 0))}đ`;
+                  const accRow = (label: string, v: any, opts?: { color?: string; minus?: boolean; strong?: boolean }) => {
+                    const n = Math.round(Number(v) || 0);
+                    if (!(n > 0) && !opts?.strong) return null;
+                    return (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '12px', padding: '1px 0' }}>
+                        <span style={{ color: 'var(--text-2)' }}>{label}</span>
+                        <span style={{ fontWeight: opts?.strong ? 800 : 700, color: opts?.color || 'var(--text)', whiteSpace: 'nowrap' }}>
+                          {opts?.minus ? '−' : ''}{accMoney(n)}
+                        </span>
+                      </div>
+                    );
+                  };
                   return (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
@@ -6785,7 +6814,51 @@ export function App() {
                         {sumBox('Thiếu check-out', String(cMissingOut), '#9A3412')}
                         {sumBox('Vắng / Không điểm danh', String(cAbsent + cNoCheck), '#991B1B')}
                         {sumBox('Tổng phạt tháng', `${money(Math.round(Number((monthServerPay as any)?.totals?.deduction ?? fineTotal)))}đ`, '#991B1B')}
-                        {sumBox('Lương tháng', `${money(Math.round(Number((monthServerPay as any)?.totals?.netPay ?? payTotal)))}đ`, '#065F46')}
+                        {sumBox(acc?.entered ? 'Thực lãnh (Kế toán)' : 'Lương tháng', `${money(Math.round(Number(acc?.entered ? acc.thucLanh : ((monthServerPay as any)?.totals?.netPay ?? payTotal))))}đ`, '#065F46')}
+                      </div>
+                      {/* Số Kế toán nhập tay — đồng bộ realtime theo đúng nhân viên này */}
+                      <div style={{ border: '1.5px solid #A7F3D0', backgroundColor: '#F0FDF4', borderRadius: 'var(--radius-sm)', padding: '10px 12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          <div style={{ fontSize: '12px', fontWeight: 800, color: '#065F46' }}>💼 Số liệu Kế toán của bạn</div>
+                          <button className="btn-secondary" style={{ fontSize: '10px', padding: '2px 8px' }} onClick={() => setSchedRefresh((k) => k + 1)}>↻ Đồng bộ ngay</button>
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#047857', marginTop: '2px' }}>
+                          {acc?.entered
+                            ? (() => {
+                                const at = acc?.updatedAt ? new Date(acc.updatedAt) : null;
+                                const atText = at && Number.isFinite(at.getTime())
+                                  ? at.toLocaleString('vi-VN', { hour12: false, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                                  : '';
+                                return `Đồng bộ realtime từ Kế toán${atText ? ` • cập nhật ${atText}` : ''} — đúng số của riêng bạn.`;
+                              })()
+                            : `Kế toán chưa nhập số liệu kỳ ${tsMonth.slice(5, 7)}/${tsMonth.slice(0, 4)} — "Thực lãnh" ở trên là tạm tính từ ca đã chấm.`}
+                        </div>
+                        {acc?.entered && (
+                          <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column' }}>
+                            {accRow('Lương cơ bản (LCB)', acc.luongCb)}
+                            {accRow('Phụ cấp', acc.allowance)}
+                            {accRow('Lương theo ca đã chấm', acc.standardPay)}
+                            {accRow('Thưởng thêm', acc.bonusExtra)}
+                            {accRow('Phụ cấp OT (nhập tay)', acc.otExtra)}
+                            <div style={{ height: 1, backgroundColor: '#BBF7D0', margin: '4px 0' }} />
+                            {accRow('Tổng cộng', acc.tongCong, { strong: true })}
+                            {accRow('Trừ KPI (Kế toán)', acc.truKpi, { color: '#B91C1C', minus: true })}
+                            {accRow('Phạt trễ / vắng (chấm công)', acc.deduction, { color: '#B91C1C', minus: true })}
+                            {accRow('Tổng lương', acc.tongLuong, { strong: true })}
+                            {accRow('Ứng lương', acc.ungLuong, { color: '#C2410C', minus: true })}
+                            {accRow('Đồng phục', acc.dongPhuc, { color: '#C2410C', minus: true })}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginTop: '4px', paddingTop: '6px', borderTop: '1px solid #BBF7D0' }}>
+                              <span style={{ fontSize: '12px', fontWeight: 800, color: '#065F46' }}>Thực lãnh theo Kế toán</span>
+                              <span style={{ fontSize: '15px', fontWeight: 900, color: '#047857' }}>{accMoney(Math.max(0, Number(acc.thucLanh) || 0))}</span>
+                            </div>
+                            {acc.note ? (
+                              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>📝 Ghi chú Kế toán: {acc.note}</div>
+                            ) : null}
+                            <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                              Số Kế toán đã nhập cho kỳ {tsMonth.slice(5, 7)}/{tsMonth.slice(0, 4)}; phiếu lương chính thức sẽ có đủ chữ ký khi Kế toán phát hành.
+                            </div>
+                          </div>
+                        )}
                       </div>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
                         {dayBlocks.length} ngày có ca trong tháng {tsMonth.slice(5, 7)}/{tsMonth.slice(0, 4)}
