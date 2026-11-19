@@ -1041,6 +1041,20 @@ const FALLBACK_BRANCH_ROWS: any[] = [
   { id: 'XUONG_SX', name: 'Xưởng Sản Xuất' },
   { id: 'VAN_PHONG', name: 'Văn Phòng' },
 ];
+const isoAddDaysLocal = (iso: string, n: number): string => {
+  const d = new Date(`${String(iso).slice(0, 10)}T00:00:00Z`);
+  if (!Number.isFinite(d.getTime())) return '';
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+/** Thứ 2 (ISO) của tuần chứa ngày truyền vào — dùng cho công cụ sắp lịch tuần. */
+const isoMondayOf = (iso: string): string => {
+  const d = new Date(`${String(iso).slice(0, 10)}T00:00:00Z`);
+  if (!Number.isFinite(d.getTime())) return '';
+  const dow = (d.getUTCDay() + 6) % 7; // 0 = Thứ 2
+  return isoAddDaysLocal(d.toISOString().slice(0, 10), -dow);
+};
+const WEEKDAY_SHORT_LABEL = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 const branchIdOf = (b: any): string => canonicalBranchId(b?.id || b?.branch_id);
 const branchShortLabelOf = (b: any): string => {
   const id = branchIdOf(b);
@@ -1473,6 +1487,25 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [scheduleStageFilter, setScheduleStageFilter] = useState('ALL');
   const [scheduleAttFilter, setScheduleAttFilter] = useState('ALL');
   const [scheduleSearch, setScheduleSearch] = useState('');
+  // Bộ lọc KHỐI: Sale/Xưởng có lịch riêng (Sale 4 ca, Xưởng 3 ca) — chọn nhanh
+  // để không phải mò theo chi nhánh (Sale nằm ở Văn Phòng, Xưởng ở XUONG_SX).
+  const [scheduleGroupFilter, setScheduleGroupFilter] = useState<'ALL' | 'SALE' | 'XUONG'>('ALL');
+  // Công cụ "Sắp lịch tuần" cho 1 NV Sale/Xưởng: chọn NV + tuần + ca từng ngày.
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignGroup, setAssignGroup] = useState<'SALE' | 'XUONG'>('SALE');
+  const [assignEmpId, setAssignEmpId] = useState('');
+  const [assignEmpSearch, setAssignEmpSearch] = useState('');
+  const [assignWeekMon, setAssignWeekMon] = useState('');
+  const [assignPlan, setAssignPlan] = useState<Record<string, string[]>>({});
+  // Mặc định phát hành ngay: NV thấy ca chính thức và điểm danh được.
+  const [assignPublish, setAssignPublish] = useState(true);
+  const [assignBusy, setAssignBusy] = useState(false);
+  const [assignLoading, setAssignLoading] = useState(false);
+  // Chỉ cho Lưu khi đã tải xong ca hiện có — tránh bấm sớm làm hủy oan cả tuần.
+  const [assignLoaded, setAssignLoaded] = useState(false);
+  const [assignLoadError, setAssignLoadError] = useState('');
+  const [assignOriginalCount, setAssignOriginalCount] = useState(0);
+  const assignLoadSeq = useRef(0);
   const [selectedRealtimeModal, setSelectedRealtimeModal] = useState<any>(null);
   // Modal ADMIN ẩn/hiện lịch theo chi nhánh (áp dụng realtime cho mọi tài khoản).
   const [branchVisOpen, setBranchVisOpen] = useState(false);
@@ -1501,6 +1534,54 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [branches, branchScope]);
+  // Nạp ca hiện có của NV trong tuần đang chọn để HR thấy và tick sẵn
+  // (bỏ tick = hủy ca đó khi bấm Lưu).
+  useEffect(() => {
+    if (!assignOpen || !assignEmpId || !/^\d{4}-\d{2}-\d{2}$/.test(assignWeekMon)) {
+      setAssignPlan({});
+      setAssignLoading(false);
+      setAssignLoaded(false);
+      setAssignLoadError('');
+      setAssignOriginalCount(0);
+      return;
+    }
+    const seq = ++assignLoadSeq.current;
+    setAssignLoading(true);
+    setAssignLoaded(false);
+    setAssignLoadError('');
+    setAssignOriginalCount(0);
+    setAssignPlan({});
+    (async () => {
+      try {
+        const days = Array.from({ length: 7 }, (_, i) => isoAddDaysLocal(assignWeekMon, i));
+        const list: any = await apiRequest(
+          `/admin/employee-shifts/${encodeURIComponent(assignEmpId)}?fromDate=${days[0]}&toDate=${days[6]}`
+        );
+        if (seq !== assignLoadSeq.current) return;
+        const next: Record<string, string[]> = {};
+        for (const d of days) next[d] = [];
+        for (const s of (Array.isArray(list) ? list : [])) {
+          if (String((s as any)?.status || '').toUpperCase() === 'CANCELLED') continue;
+          const d = String((s as any)?.date || '').slice(0, 10);
+          if (!next[d]) continue;
+          const code = String((s as any)?.shift_code || '').toUpperCase();
+          if (code && !next[d].includes(code)) next[d].push(code);
+        }
+        setAssignPlan(next);
+        setAssignOriginalCount(days.reduce((n, d) => n + (next[d] || []).length, 0));
+        setAssignLoaded(true);
+      } catch {
+        if (seq === assignLoadSeq.current) {
+          setAssignPlan({});
+          setAssignLoaded(false);
+          setAssignLoadError('Không tải được ca hiện có của nhân viên — chưa thể lưu để tránh hủy nhầm lịch.');
+        }
+      } finally {
+        if (seq === assignLoadSeq.current) setAssignLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignOpen, assignEmpId, assignWeekMon]);
   const [attPhotoZoom, setAttPhotoZoom] = useState<{ eventId?: string; url?: string; label: string; driveId?: string } | null>(null);
 
   /** ADMIN ẩn/hiện lịch 1 chi nhánh — backend lưu trạng thái CLOSED/ACTIVE vào
@@ -9204,6 +9285,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               name: emp.full_name,
               stage: emp.employment_status === 'PROBATION' ? 'PROBATION' : 'OFFICIAL',
               branch: emp.default_branch_id || emp.branch_id || 'CN130',
+              group: emp.group || '',
               days: officeDayDataMap,
               weekShiftCodes: [],
               isOffice: true,
@@ -9511,6 +9593,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         name: emp.full_name,
         stage: emp.employment_status === 'PROBATION' ? 'PROBATION' : 'OFFICIAL',
         branch: emp.default_branch_id || emp.branch_id || 'CN130',
+        group: emp.group || '',
         days: dayDataMap,
         weekShiftCodes,
       };
@@ -9551,9 +9634,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const myScheduleBranchHidden =
       !scheduleBranchLocked ? false : hiddenScheduleBranchIds.has(canonicalBranchId(branchScope));
     const filteredSchedule = sortedSchedule.filter((item) => {
-      // Chỉ hiển thị ĐÚNG chi nhánh đang chọn (so khớp mã chuẩn CN1 ↔ CN130),
-      // không trộn tổng các chi nhánh.
-      const matchBranch = !!scheduleBranchFilter && canonicalBranchId(item.branch) === canonicalBranchId(scheduleBranchFilter);
+      // Chọn KHỐI (Sale/Xưởng) thì lọc theo khối và bỏ ràng buộc chi nhánh —
+      // Sale nằm ở Văn Phòng, Xưởng ở XUONG_SX nên lọc chi nhánh dễ che mất.
+      // Còn lại: chỉ hiển thị ĐÚNG chi nhánh đang chọn (CN1 ↔ CN130).
+      const matchGroup =
+        scheduleGroupFilter === 'ALL'
+          ? true
+          : scheduleGroupFilter === 'SALE'
+            ? isSaleGroup(item.group)
+            : String(item.group || '').toUpperCase() === 'XUONG';
+      const matchBranch = scheduleGroupFilter !== 'ALL'
+        ? matchGroup
+        : (!!scheduleBranchFilter && canonicalBranchId(item.branch) === canonicalBranchId(scheduleBranchFilter));
       const matchStage = scheduleStageFilter === 'ALL' || item.stage === scheduleStageFilter;
       const q = scheduleSearch.trim().toLowerCase();
       const matchSearch = !q ||
@@ -9750,6 +9842,40 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             >
               <Plus size={14} /> Bổ Sung Lịch NV
             </button>
+            {['ADMIN', 'HR'].includes(String(currentUser?.role || '')) && (
+              <>
+                <button
+                  className="btn-primary"
+                  style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', fontSize: '12.5px', fontWeight: 700, borderRadius: '6px', minHeight: '32px', backgroundColor: '#DB2777' }}
+                  title="Sắp lịch CẢ TUẦN cho nhân viên Sale (4 ca/ngày) — lịch hiện ngay trên cổng Admin và cổng nhân viên"
+                  onClick={() => {
+                    setAssignGroup('SALE');
+                    setAssignEmpId('');
+                    setAssignEmpSearch('');
+                    setAssignWeekMon(isoMondayOf(weekDays?.[0]?.isoDate || new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)));
+                    setAssignPlan({});
+                    setAssignOpen(true);
+                  }}
+                >
+                  🗓 Sắp Lịch Sale
+                </button>
+                <button
+                  className="btn-primary"
+                  style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', fontSize: '12.5px', fontWeight: 700, borderRadius: '6px', minHeight: '32px', backgroundColor: '#0D9488' }}
+                  title="Sắp lịch CẢ TUẦN cho nhân viên Xưởng (3 ca/ngày) — lịch hiện ngay trên cổng Admin và cổng nhân viên"
+                  onClick={() => {
+                    setAssignGroup('XUONG');
+                    setAssignEmpId('');
+                    setAssignEmpSearch('');
+                    setAssignWeekMon(isoMondayOf(weekDays?.[0]?.isoDate || new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)));
+                    setAssignPlan({});
+                    setAssignOpen(true);
+                  }}
+                >
+                  🗓 Sắp Lịch Xưởng
+                </button>
+              </>
+            )}
             {currentUser?.role === 'ADMIN' && (
               <button
                 className="btn-primary"
@@ -10242,6 +10368,229 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           );
         })()}
 
+        {/* Modal HR "Sắp lịch tuần" cho khối Sale / Xưởng: chọn NV + tuần + ca từng ngày */}
+        {assignOpen && (() => {
+          const empList = (allEmployees || []).filter((e: any) =>
+            !isEmpAccountLocked(e) &&
+            String((e as any)?.employment_status || '') !== 'TERMINATED' &&
+            (assignGroup === 'SALE'
+              ? isSaleGroup((e as any)?.group)
+              : String((e as any)?.group || '').toUpperCase() === 'XUONG')
+          );
+          const q = assignEmpSearch.trim().toLowerCase();
+          const empOptions = empList.filter((e: any) => {
+            if (!q) return true;
+            return `${(e as any)?.full_name || ''} ${(e as any)?.employee_code || ''} ${(e as any)?.phone_normalized || (e as any)?.phone || ''}`
+              .toLowerCase()
+              .includes(q);
+          }).slice(0, 80);
+          const picked = empList.find((e: any) => String((e as any)?.employee_id || '') === String(assignEmpId || ''));
+          const mon = isoMondayOf(/^\d{4}-\d{2}-\d{2}$/.test(assignWeekMon)
+            ? assignWeekMon
+            : new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10));
+          const days = Array.from({ length: 7 }, (_, i) => isoAddDaysLocal(mon, i)).filter(Boolean);
+          const codes = shiftCodesForGroup(assignGroup) as string[];
+          const totalPicked = days.reduce((n, d) => n + (assignPlan[d] || []).length, 0);
+          const doAssign = async () => {
+            if (assignBusy) return;
+            if (!picked) { showToast('⚠️ Vui lòng chọn nhân viên!'); return; }
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(assignWeekMon)) { showToast('⚠️ Vui lòng chọn tuần!'); return; }
+            if (!assignLoaded || assignLoading) { showToast('⏳ Chưa tải xong ca hiện có — vui lòng chờ vài giây rồi bấm Lưu!'); return; }
+            if (totalPicked === 0 && assignOriginalCount > 0 && !window.confirm('Tuần này chưa chọn ca nào — bấm Lưu sẽ bỏ toàn bộ ca hiện có của nhân viên trong tuần (nếu chưa điểm danh). Tiếp tục?')) return;
+            setAssignBusy(true);
+            try {
+              const res: any = await apiRequest('/schedules/assign-week', {
+                method: 'POST',
+                body: JSON.stringify({
+                  employeeId: (picked as any).employee_id,
+                  week: mon,
+                  publish: assignPublish,
+                  days: days.map((date) => ({ date, shiftCodes: assignPlan[date] || [] })),
+                }),
+              });
+              const warnings: string[] = Array.isArray(res?.warnings) ? res.warnings : [];
+              showToast(
+                `✅ Đã sắp lịch tuần ${mon} cho ${(picked as any)?.full_name}: tạo ${res?.created?.length || 0} ca • giữ ${res?.kept?.length || 0} ca • hủy ${res?.removed?.length || 0} ca` +
+                (assignPublish ? ' • đã phát hành (NV thấy ca chính thức).' : ' • ca nháp, bấm Phát Hành Lịch để chốt.') +
+                (warnings.length ? ` ⚠️ ${warnings.length} ca chưa xử lý được: ${warnings[0]}` : '')
+              );
+              setAssignOpen(false);
+              // Đưa lưới về đúng khối vừa sắp để HR thấy ca ngay sau khi lưu.
+              setScheduleGroupFilter(assignGroup);
+              setScheduleBranchFilter(assignGroup === 'SALE' ? 'VAN_PHONG' : 'XUONG_SX');
+              if (onRefreshData) await onRefreshData();
+            } catch (e: any) {
+              showToast(e?.message || 'Lỗi khi sắp lịch!');
+            } finally {
+              setAssignBusy(false);
+            }
+          };
+          return (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+              <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '780px', width: '100%', maxHeight: '90vh', overflow: 'auto', padding: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+                  <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>
+                    🗓 Sắp Lịch Tuần — {assignGroup === 'SALE' ? 'Khối Sale' : 'Khối Xưởng'}
+                  </h2>
+                  <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => setAssignOpen(false)}>Đóng</button>
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.6 }}>
+                  Chọn nhân viên và tick ca cho từng ngày. Ca tạo ra hiện ngay trên lưới Admin + cổng nhân viên;
+                  bỏ tick ca đã có = hủy ca (nếu chưa điểm danh).
+                  {assignGroup === 'SALE' ? ' Sale dùng 4 ca: 07–11, 11–15, 15–19, 19–23.' : ' Xưởng dùng 3 ca: 07–12, 12–18, 18–23.'}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '12px', marginTop: '14px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Khối:</label>
+                    <select
+                      value={assignGroup}
+                      onChange={(e) => {
+                        setAssignGroup(e.target.value as 'SALE' | 'XUONG');
+                        setAssignEmpId('');
+                        setAssignPlan({});
+                      }}
+                      style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }}
+                    >
+                      <option value="SALE">Sale (4 ca/ngày)</option>
+                      <option value="XUONG">Xưởng (3 ca/ngày)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Tuần (chọn 1 ngày trong tuần):</label>
+                    <input
+                      type="date"
+                      value={assignWeekMon}
+                      onChange={(e) => setAssignWeekMon(isoMondayOf(e.target.value) || e.target.value)}
+                      style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid var(--border)' }}
+                    />
+                    <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginTop: '3px' }}>Tuần: {mon} → {days[6]}</div>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: '12px' }}>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
+                    Nhân viên {assignGroup === 'SALE' ? 'Sale' : 'Xưởng'}:
+                  </label>
+                  <input
+                    value={assignEmpSearch}
+                    onChange={(e) => setAssignEmpSearch(e.target.value)}
+                    placeholder="Gõ tên / mã NV / SĐT để lọc..."
+                    style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid var(--border)', marginBottom: '6px' }}
+                  />
+                  <select
+                    value={assignEmpId}
+                    onChange={(e) => setAssignEmpId(e.target.value)}
+                    style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }}
+                  >
+                    <option value="">-- Chọn nhân viên --</option>
+                    {empOptions.map((e: any) => (
+                      <option key={(e as any)?.employee_id} value={(e as any)?.employee_id}>
+                        {(e as any)?.full_name} ({(e as any)?.employee_code}) — {getDisplayBranch((e as any)?.default_branch_id || (e as any)?.branch_id || '')}
+                      </option>
+                    ))}
+                  </select>
+                  {picked && (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                      Chi nhánh: <strong>{getDisplayBranch((picked as any)?.default_branch_id || (picked as any)?.branch_id || '')}</strong>
+                      {' • '}Mã NV: <strong>{(picked as any)?.employee_code || '—'}</strong>
+                    </div>
+                  )}
+                </div>
+
+                {picked ? (
+                  <div style={{ marginTop: '14px', display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: '6px' }}>
+                    {days.map((date) => {
+                      const wd = WEEKDAY_SHORT_LABEL[new Date(`${date}T00:00:00Z`).getUTCDay()];
+                      const selected = assignPlan[date] || [];
+                      return (
+                        <div
+                          key={date}
+                          style={{
+                            border: '1px solid var(--border)',
+                            borderRadius: '8px',
+                            padding: '7px',
+                            backgroundColor: selected.length ? '#F0FDF4' : 'var(--surface)',
+                          }}
+                        >
+                          <div style={{ fontSize: '11px', fontWeight: 800, textAlign: 'center', marginBottom: '5px' }}>
+                            {wd}<br />
+                            <span style={{ fontWeight: 600, color: 'var(--text-muted)' }}>{date.slice(8, 10)}/{date.slice(5, 7)}</span>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                            {codes.map((code) => {
+                              const c = String(code).toUpperCase();
+                              const on = selected.includes(c);
+                              return (
+                                <label
+                                  key={c}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    fontSize: '10.5px',
+                                    cursor: 'pointer',
+                                    fontWeight: on ? 800 : 500,
+                                    color: on ? 'var(--brand)' : 'var(--text-muted)',
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={on}
+                                    onChange={() => {
+                                      setAssignPlan((prev) => {
+                                        const cur = prev[date] || [];
+                                        const next = cur.includes(c) ? cur.filter((x) => x !== c) : [...cur, c].sort();
+                                        return { ...prev, [date]: next };
+                                      });
+                                    }}
+                                  />
+                                  {c.replace('_', ' ')}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ marginTop: '14px', fontSize: '12px', color: 'var(--text-muted)' }}>Chọn nhân viên để bắt đầu sắp lịch.</div>
+                )}
+
+                {assignLoading && (
+                  <div style={{ fontSize: '12px', color: '#2563EB', marginTop: '8px' }}>⏳ Đang tải ca hiện có của nhân viên...</div>
+                )}
+                {!!assignLoadError && (
+                  <div style={{ fontSize: '12px', color: '#B91C1C', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '6px', padding: '8px 10px', marginTop: '8px' }}>
+                    ⚠️ {assignLoadError}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', marginTop: '14px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                      Đã chọn <strong>{totalPicked}</strong> ca trong tuần
+                    </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={assignPublish} onChange={(e) => setAssignPublish(e.target.checked)} />
+                      Phát hành ngay (NV thấy ca chính thức)
+                    </label>
+                  </div>
+                  <button
+                    className="btn-primary"
+                    disabled={assignBusy || !picked || assignLoading || !assignLoaded}
+                    onClick={doAssign}
+                    style={{ padding: '10px 18px', fontWeight: 800, fontSize: '13px', backgroundColor: assignGroup === 'SALE' ? '#DB2777' : '#0D9488' }}
+                  >
+                    {assignBusy ? '⏳ Đang lưu...' : '💾 Lưu Lịch Tuần'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {!isDirectorView && renderEditShiftModal()}
 
         {/* Modal bù ca tuần trước cho NV mới chính thức: tự chọn NV + ngày + ca */}
@@ -10518,6 +10867,26 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   👁 Ẩn/Hiện Chi Nhánh
                 </button>
               )}
+            </div>
+
+            {/* Filter by Block (Sale / Xưởng có lịch riêng) */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>Khối:</span>
+              <select
+                value={scheduleGroupFilter}
+                onChange={(e) => {
+                  const v = e.target.value as 'ALL' | 'SALE' | 'XUONG';
+                  setScheduleGroupFilter(v);
+                  if (v === 'SALE') setScheduleBranchFilter('VAN_PHONG');
+                  else if (v === 'XUONG') setScheduleBranchFilter('XUONG_SX');
+                }}
+                style={{ padding: '6px 10px', fontSize: '12px', minHeight: '34px', borderRadius: '6px', fontWeight: 700 }}
+                title="Lọc nhanh lịch khối Sale (4 ca) hoặc Xưởng (3 ca)"
+              >
+                <option value="ALL">Tất cả khối</option>
+                <option value="SALE">🛒 Sale</option>
+                <option value="XUONG">🏭 Xưởng</option>
+              </select>
             </div>
 
             {/* Filter by Stage */}

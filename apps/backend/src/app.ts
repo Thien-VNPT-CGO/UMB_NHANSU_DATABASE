@@ -190,6 +190,7 @@ import {
   publishWeekBody,
   publishWeekParams,
   schedulesQuery,
+  assignWeekBody,
   shiftCreateBody,
   shiftUpdateBody,
   excelImportBody,
@@ -4905,6 +4906,35 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           actorId: req.user!.id,
         });
         broadcastUpdate('schedules', { action: 'create-shift', assignmentId: (result as any)?.assignment_id, shift: result });
+        res.json(result);
+      } catch (err: any) {
+        res.status(400).json({ error: err.message });
+      }
+    }
+  );
+
+  // HR sắp lịch CẢ TUẦN cho 1 NV (Sale / Xưởng / Cửa hàng): tạo ca còn thiếu,
+  // hủy ca không còn chọn. Ca tạo ra đi đúng luồng createShift nên hiện ngay
+  // trên cổng Admin + cổng nhân viên và tự hủy ngày OFF tương ứng.
+  app.post(
+    '/schedules/assign-week',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR']),
+    validate({ body: assignWeekBody }),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const result = await schedulesService.assignWeek({
+          employeeId: req.body.employeeId,
+          week: req.body.week,
+          days: req.body.days,
+          publish: req.body.publish === true,
+          actorId: req.user!.id,
+        });
+        broadcastUpdate('schedules', {
+          action: 'assign-week',
+          employeeId: req.body.employeeId,
+          week: (result as any)?.week,
+        });
         res.json(result);
       } catch (err: any) {
         res.status(400).json({ error: err.message });

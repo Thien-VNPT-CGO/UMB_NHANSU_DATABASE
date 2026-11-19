@@ -253,6 +253,26 @@ export const shiftCreateBody = z
 
 // HR cập nhật ca (kể cả ca ĐÃ ĐIỂM DANH): đổi ca/nhân viên/chi nhánh;
 // đổi ngày bị chặn khi đã có điểm danh (giờ check-in/out gắn ngày cũ).
+// HR sắp lịch CẢ TUẦN cho 1 nhân viên (Sale/Xưởng/Cửa hàng...): mỗi ngày gửi
+// danh sách mã ca đã chọn (rỗng = nghỉ/không xếp ca ngày đó).
+export const assignWeekBody = z
+  .object({
+    employeeId: z.string().trim().min(1).max(64),
+    week: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/),
+    // true = phát hành ngay (NV thấy ca chính thức, được điểm danh/tính công).
+    publish: z.boolean().optional(),
+    days: z
+      .array(
+        z.object({
+          date: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/),
+          shiftCodes: z.array(z.string().trim().min(1).max(16)).max(8).default([]),
+        })
+      )
+      .min(1)
+      .max(7),
+  })
+  .strict();
+
 export const shiftUpdateBody = z
   .object({
     shiftCode: optString(16),

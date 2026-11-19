@@ -689,6 +689,132 @@ export class SchedulesService {
   }
 
   /**
+   * Sắp lịch CẢ TUẦN cho 1 nhân viên (công cụ "Sắp lịch Sale/Xưởng" của HR):
+   * - Tạo các ca còn thiếu đúng khối của NV (Sale có CA_1..CA_4, khối khác CA_1..CA_3).
+   * - Giữ nguyên ca đã có trùng ngày + mã ca (không tạo trùng).
+   * - Ca cũ trong tuần không còn được chọn → hủy (nếu chưa có điểm danh);
+   *   ca đã điểm danh/khóa lương được giữ lại và trả về cảnh báo để HR xử lý tay.
+   * Mọi thay đổi đi qua createShift/deleteShift nên tự đồng bộ realtime sang
+   * Bảng chấm công + cổng nhân viên và tự hủy ngày OFF khi xếp ca.
+   */
+  async assignWeek(data: {
+    employeeId: string;
+    week: string;
+    days: Array<{ date: string; shiftCodes: string[] }>;
+    actorId: string;
+    /** HR chọn "phát hành ngay" → ca vào thẳng PUBLISHED (NV thấy lịch chính thức). */
+    publish?: boolean;
+  }) {
+    const emp: any = await this.repo.getEmployeeById(data.employeeId).catch(() => null);
+    if (!emp) throw new Error('EMPLOYEE_NOT_FOUND: Không tìm thấy nhân viên cần sắp lịch!');
+    if (String(emp.employment_status || '').toUpperCase() === 'TERMINATED') {
+      throw new Error('EMPLOYEE_TERMINATED: Nhân viên đã nghỉ việc — không thể sắp lịch!');
+    }
+    const group = emp.group;
+    const branchId = String(emp.default_branch_id || emp.branch_id || '').trim();
+    if (!branchId) throw new Error('EMPLOYEE_NO_BRANCH: Nhân viên chưa có chi nhánh — cập nhật hồ sơ trước khi sắp lịch!');
+    const allowedCodes = new Set(shiftCodesForGroup(group).map((c) => String(c).toUpperCase()));
+
+    const wk = weekRangeOf(data.week);
+    const mon = wk.mon;
+    const sun = wk.sun;
+    const cleanDays = (data.days || [])
+      .map((d) => ({
+        date: String(d.date || '').slice(0, 10),
+        shiftCodes: Array.from(new Set((d.shiftCodes || []).map((c) => String(c || '').trim().toUpperCase()).filter(Boolean))),
+      }))
+      .filter((d) => d.date)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    if (cleanDays.length === 0) throw new Error('ASSIGN_WEEK_EMPTY: Chưa có ngày nào cần sắp lịch!');
+    for (const d of cleanDays) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date) || d.date < mon || d.date > sun) {
+        throw new Error(`ASSIGN_WEEK_DATE_INVALID: Ngày ${d.date || '?'} không thuộc tuần ${mon} → ${sun}!`);
+      }
+      for (const code of d.shiftCodes) {
+        if (!allowedCodes.has(code)) {
+          throw new Error(
+            `ASSIGN_WEEK_SHIFT_INVALID: Mã ca ${code} không hợp lệ với khối ${group || 'nhân viên'} (${Array.from(allowedCodes).join('/')})!`
+          );
+        }
+      }
+    }
+
+    const created: any[] = [];
+    const removed: any[] = [];
+    const kept: any[] = [];
+    const warnings: string[] = [];
+
+    const existing = (await this.repo.getShiftsForEmployee(data.employeeId, mon, sun).catch(() => [])) as any[];
+    const live = (existing || []).filter(
+      (s: any) =>
+        String(s?.status || '') !== 'CANCELLED' &&
+        String(s?.date || '').slice(0, 10) >= mon &&
+        String(s?.date || '').slice(0, 10) <= sun &&
+        canonicalBranch(s?.branch_id) === canonicalBranch(branchId)
+    );
+
+    // 1) Tạo các ca còn thiếu.
+    for (const day of cleanDays) {
+      for (const code of day.shiftCodes) {
+        const hit = live.find(
+          (s: any) =>
+            String(s?.date || '').slice(0, 10) === day.date &&
+            String(s?.shift_code || '').toUpperCase() === code
+        );
+        if (hit) {
+          kept.push({ assignment_id: (hit as any)?.assignment_id, date: day.date, shift_code: code });
+          continue;
+        }
+        try {
+          const sh: any = await this.createShift({
+            employeeId: data.employeeId,
+            branchId,
+            shiftCode: code as ShiftCode,
+            date: day.date,
+            actorId: data.actorId,
+            publish: data.publish === true,
+          });
+          created.push({ assignment_id: sh?.assignment_id, date: day.date, shift_code: code });
+          live.push(sh);
+        } catch (e: any) {
+          warnings.push(`${day.date} ${code}: ${String(e?.message || e)}`);
+        }
+      }
+    }
+
+    // 2) Hủy ca cũ không còn nằm trong kế hoạch của tuần.
+    const wanted = new Set<string>();
+    for (const day of cleanDays) for (const code of day.shiftCodes) wanted.add(`${day.date}|${code}`);
+    const plannedDates = new Set(cleanDays.map((d) => d.date));
+    for (const s of live) {
+      const date = String(s?.date || '').slice(0, 10);
+      if (!plannedDates.has(date)) continue;
+      const code = String(s?.shift_code || '').toUpperCase();
+      if (wanted.has(`${date}|${code}`)) continue;
+      const assignmentId = String(s?.assignment_id || '');
+      if (!assignmentId) continue;
+      try {
+        await this.deleteShift(assignmentId, data.actorId);
+        removed.push({ assignment_id: assignmentId, date, shift_code: code });
+      } catch (e: any) {
+        warnings.push(`${date} ${code}: ${String(e?.message || e)}`);
+      }
+    }
+
+    return {
+      employeeId: data.employeeId,
+      branchId,
+      group,
+      week: { mon, sun },
+      created,
+      removed,
+      kept,
+      warnings,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
    * Tự động tạo lịch làm việc cho nhân viên Văn Phòng khi HR tạo tài khoản.
    * Lịch cố định theo giờ hành chính: T2–T6 08:00–17:00, T7 08:00–12:00, CN nghỉ.
    * Tất cả ca đánh PUBLISHED (không cần HR publish như khối cửa hàng).
