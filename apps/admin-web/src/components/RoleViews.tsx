@@ -6870,12 +6870,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   {candActionBusyId === `ub-${c.submission_id}` ? '⏳...' : '↩️ Bỏ đen'}
                                 </button>
                               )}
-                              {tabKey === 'WAIT_INTERVIEW' && !isAccepted && String(c.status || '') !== 'BLACKLIST' && (
+                              {['WAIT_INTERVIEW', 'WAIT_PROBATION'].includes(tabKey) && !isAccepted && String(c.status || '') !== 'BLACKLIST' && (
                                 <button
                                   disabled={disabledForFail}
                                   style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#F59E0B', color: '#FFF' }}
                                   onClick={() => !disabledForFail && openUpdating(c)}
-                                  title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Cập nhật ca làm việc + chi nhánh (bắt buộc chốt 1 ca / 1 chi nhánh trước khi duyệt)'}
+                                  title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : (tabKey === 'WAIT_PROBATION' ? 'Cập nhật thông tin ứng viên: ca làm việc + chi nhánh trước khi duyệt thử việc' : 'Cập nhật ca làm việc + chi nhánh (bắt buộc chốt 1 ca / 1 chi nhánh trước khi duyệt)')}
                                 >
                                   ✏️ Cập nhật TT
                                 </button>
@@ -7084,7 +7084,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
               <div style={{ backgroundColor: '#FFF', borderRadius: '14px', maxWidth: '480px', width: '100%', overflow: 'hidden' }}>
                 <div style={{ padding: '16px 20px', backgroundColor: '#F59E0B', color: '#FFF', fontWeight: 800, fontSize: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>✏️ Cập nhật TT: {cand?.full_name || updatingId}</span>
+                  <span>✏️ Cập nhật thông tin: {cand?.full_name || updatingId}</span>
                   <button onClick={() => !updatingBusy && setUpdatingId(null)} disabled={updatingBusy} style={{ border: 'none', background: 'rgba(255,255,255,0.25)', color: '#FFF', fontSize: '15px', cursor: 'pointer', borderRadius: '6px', padding: '2px 8px' }}>✕</button>
                 </div>
                 <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
