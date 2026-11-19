@@ -1,4 +1,4 @@
-﻿import { ERROR_CODES } from '@ubm/shared';
+﻿import { ERROR_CODES, isSaleGroup } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { NotificationsService } from './notifications.service.js';
 import { normSheetDate } from './employees.service.js';
@@ -396,6 +396,9 @@ export async function checkWeeklyOffGate(
     throw e;
   }
   if (!employee || employee.employment_status !== 'OFFICIAL') return { locked: false, window };
+  // Khối SALE không có tab "Đăng ký OFF tuần" trên cổng nhân viên → không được
+  // khóa chức năng của họ, nếu không sẽ bị chặn cứng vào đúng giờ vào ca.
+  if (isSaleGroup((employee as any).group)) return { locked: false, window };
 
   try {
     const completion = await getWeeklyOffCompletion(

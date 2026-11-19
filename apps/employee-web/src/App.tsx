@@ -1049,6 +1049,9 @@ export function App() {
   const [schedWeekSel, setSchedWeekSel] = useState<SchedWeek>('THIS');
   const schedWeekTouched = useRef(false);
   const [schedRefresh, setSchedRefresh] = useState(0);
+  // Lương cơ bản của chính NV (Kế toán nhập theo kỳ / cấu hình lương) — khối
+  // Sale hiển thị ở Trang chủ & Hồ sơ thay cho "Đơn giá/giờ".
+  const [mySalary, setMySalary] = useState<any>(null);
   // MilkRoute EV: tài khoản TÀI XẾ có APP RIÊNG (5 tab dưới đáy), khác hoàn toàn
   // cổng nhân viên văn phòng/cửa hàng. /ev/me/profile trả is_driver dựa trên xe
   // được gán / ca vận chuyển / bảng lương tài xế. Chạy lại khi dữ liệu realtime đổi.
@@ -2778,7 +2781,9 @@ export function App() {
   // Guard: Mandatory 2-day OFF registration locks other tabs for official employees
   // Ưu tiên trạng thái khóa từ server; khi offline mới dùng cờ localStorage cũ.
   const isDemo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
-  const weeklyOffGateLocked = isDemo ? false : (weeklyOffLockKnown ? weeklyOffLocked : !hasRegisteredWeeklyOff);
+  // Khối SALE không có tab "Đăng ký OFF tuần" → không bao giờ bị khóa cổng OFF.
+  const isSaleGate = isSaleGroup((employee as any)?.group);
+  const weeklyOffGateLocked = (isDemo || isSaleGate) ? false : (weeklyOffLockKnown ? weeklyOffLocked : !hasRegisteredWeeklyOff);
   // Cổng đăng ký chỉ mở T6 09h00 -> T7 09h00. Chưa rõ trạng thái (offline) thì cho bấm, server sẽ quyết.
   const weeklyOffRegOpen = !weeklyOffWindow || weeklyOffWindow.phase === 'OPEN';
   const weeklyOffOpensAtStr = weeklyOffWindow?.windowOpensAt
@@ -4018,6 +4023,18 @@ export function App() {
   // KHỐI SALE: giữ nguyên cổng nhân viên như khối cửa hàng, chỉ đổi ca làm thành 4 ca:
   // Ca 1 07:00–11:00 · Ca 2 11:00–15:00 · Ca 3 15:00–19:00 · Ca 4 19:00–23:00.
   const isSale = isSaleGroup((employee as any)?.group);
+
+  // Lương cơ bản (Kế toán nhập kỳ hiện tại / cấu hình lương) — tải cho khối Sale
+  // và làm mới khi Kế toán cập nhật (schedRefresh tăng) hoặc đổi tài khoản.
+  useEffect(() => {
+    if (!isLoggedIn || !isSale) { setMySalary(null); return; }
+    let alive = true;
+    apiRequest('/me/salary', { _noCache: true } as any)
+      .then((d: any) => { if (alive) setMySalary(d || null); })
+      .catch(() => null);
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn, isSale, employee?.employee_id, schedRefresh]);
   const empShiftCodes = shiftCodesForGroup((employee as any)?.group);
   const codeLabel = (code?: string) => shiftLabel(code, (employee as any)?.group) || String(code || '');
   const codeTimeLabel = (code?: string) => shiftTimeLabel(code, (employee as any)?.group) || '';
@@ -4070,19 +4087,24 @@ export function App() {
     { id: 'profile', label: '11. Hồ Sơ', icon: User },
   ];
 
-  const officialTabs = [
-    { id: 'home', label: '1. Trang chủ', icon: Home },
-    { id: 'schedule', label: '2. Lịch làm việc', icon: Calendar },
-    { id: 'leave', label: '3. Đăng ký OFF tuần', icon: Clock },
-    { id: 'attendance', label: '4. Điểm danh', icon: Camera, highlight: true },
-    { id: 'timesheet', label: '5. Công của tôi', icon: CheckCircle2 },
-    { id: 'swap_shift', label: '6. Đổi ca làm', icon: RefreshCw },
-    { id: 'rereg', label: '7. Cập Nhật Ca Làm', icon: FileText, beta: true },
-    { id: 'emergency_adjust', label: '8. Nghỉ khẩn & Bổ sung công', icon: AlertTriangle },
-    { id: 'test_training', label: '9. TEST / Đào tạo', icon: Award },
-    { id: 'notifs_salary', label: '10. Thông báo & Lương', icon: Bell },
-    { id: 'profile', label: '11. Hồ Sơ', icon: User },
-  ];
+  // Nhân viên chính thức (Cửa hàng/Xưởng/Sale): tab "Đăng ký OFF tuần" chỉ dành
+  // cho Cửa hàng/Xưởng — khối SALE không dùng nên bỏ hẳn, đánh số lại cho liền.
+  const officialTabs = (() => {
+    const raw: { id: string; label: string; icon: any; highlight?: boolean; beta?: boolean }[] = [
+      { id: 'home', label: 'Trang chủ', icon: Home },
+      { id: 'schedule', label: 'Lịch làm việc', icon: Calendar },
+      ...(isSale ? [] : [{ id: 'leave', label: 'Đăng ký OFF tuần', icon: Clock }]),
+      { id: 'attendance', label: 'Điểm danh', icon: Camera, highlight: true },
+      { id: 'timesheet', label: 'Công của tôi', icon: CheckCircle2 },
+      { id: 'swap_shift', label: 'Đổi ca làm', icon: RefreshCw },
+      { id: 'rereg', label: 'Cập Nhật Ca Làm', icon: FileText, beta: true },
+      { id: 'emergency_adjust', label: 'Bổ sung công', icon: AlertTriangle },
+      { id: 'test_training', label: 'TEST / Đào tạo', icon: Award },
+      { id: 'notifs_salary', label: 'Thông báo & Lương', icon: Bell },
+      { id: 'profile', label: 'Hồ Sơ', icon: User },
+    ];
+    return raw.map((t, i) => ({ ...t, label: `${i + 1}. ${t.label}` }));
+  })();
 
   // Tab "7. Cập Nhật Ca Làm" CHỈ hiển thị khi Admin BẬT phiếu "Cập Nhật Ca" (enabled === true).
   // Mặc định ẩn hoàn toàn nếu Admin chưa bật hoặc đã đóng.
@@ -4656,7 +4678,7 @@ export function App() {
       })()}
 
       {/* 5-MINUTE PRE-NOTIFICATION & MANDATORY 2-DAY OFF REGISTRATION BANNER FOR OFFICIAL EMPLOYEES */}
-      {!isProbation && weeklyOffWindow?.phase === 'REMINDER' && (
+      {!isProbation && !isSale && weeklyOffWindow?.phase === 'REMINDER' && (
         <div style={{
           margin: '12px 16px 0',
           padding: '12px 14px',
@@ -4948,25 +4970,33 @@ export function App() {
                 </div>
               </div>
               <div className="card" style={{ padding: '12px', textAlign: 'center' }}>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>{employee?.group === 'VAN_PHONG' ? 'Hình thức lương' : 'Đơn giá lương'}</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>
+                  {isSale ? 'Lương cơ bản' : employee?.group === 'VAN_PHONG' ? 'Hình thức lương' : 'Đơn giá lương'}
+                </div>
                 <div style={{ fontSize: '15px', fontWeight: 800, color: '#10B981', marginTop: '4px' }}>
-                  {employee?.group === 'VAN_PHONG'
-                    ? 'Theo tháng (LCB + PC)'
-                    : `${(employee?.current_rate_per_hour || (isProbation ? 23000 : 25000)).toLocaleString('vi-VN')} đ/h`}
+                  {isSale
+                    ? (Number(mySalary?.baseSalary) > 0
+                        ? `${Number(mySalary?.baseSalary).toLocaleString('vi-VN')} đ`
+                        : 'Chưa cập nhật')
+                    : employee?.group === 'VAN_PHONG'
+                      ? 'Theo tháng (LCB + PC)'
+                      : `${(employee?.current_rate_per_hour || (isProbation ? 23000 : 25000)).toLocaleString('vi-VN')} đ/h`}
                 </div>
               </div>
             </div>
 
             {/* Quick Actions Row */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
-              <button
-                className="btn-secondary"
-                onClick={() => handleTabClick('leave')}
-                style={{ flexDirection: 'column', padding: '10px 4px', height: 'auto', gap: '4px' }}
-              >
-                <Clock size={18} color="var(--brand)" />
-                <span style={{ fontSize: '11px', fontWeight: 700 }}>Đăng ký OFF</span>
-              </button>
+            <div style={{ display: 'grid', gridTemplateColumns: isSale ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)', gap: '8px' }}>
+              {!isSale && (
+                <button
+                  className="btn-secondary"
+                  onClick={() => handleTabClick('leave')}
+                  style={{ flexDirection: 'column', padding: '10px 4px', height: 'auto', gap: '4px' }}
+                >
+                  <Clock size={18} color="var(--brand)" />
+                  <span style={{ fontSize: '11px', fontWeight: 700 }}>Đăng ký OFF</span>
+                </button>
+              )}
 
               <button
                 className="btn-secondary"
@@ -5802,15 +5832,17 @@ export function App() {
 
                     {/* Quick navigation actions */}
                     <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={() => handleTabClick('leave')}
-                        style={{ flex: 1, padding: '10px', fontSize: '12px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-                      >
-                        <Palmtree size={14} color="#059669" />
-                        {isProbation ? 'Đăng Ký OFF Thử Việc' : 'Đăng Ký OFF Tuần'}
-                      </button>
+                      {!isSale && (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => handleTabClick('leave')}
+                          style={{ flex: 1, padding: '10px', fontSize: '12px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                        >
+                          <Palmtree size={14} color="#059669" />
+                          {isProbation ? 'Đăng Ký OFF Thử Việc' : 'Đăng Ký OFF Tuần'}
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="btn-secondary"
@@ -8452,7 +8484,7 @@ export function App() {
                 <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>SĐT (tài khoản)</div><strong>{(employee as any)?.phone_normalized || '—'}</strong></div>
                 <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Chi nhánh</div><strong>{employee?.default_branch_id || '—'}</strong></div>
                 <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Trạng thái</div><strong>{isProbation ? 'Thử việc' : 'Chính thức'}</strong></div>
-                <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>{employee?.group === 'VAN_PHONG' ? 'Hình thức lương' : 'Đơn giá'}</div><strong>{employee?.group === 'VAN_PHONG' ? 'Theo tháng (LCB + phụ cấp)' : `${Number(employee?.current_rate_per_hour || 0).toLocaleString('vi-VN')} đ/h`}</strong></div>
+                <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>{isSale ? 'Lương cơ bản' : employee?.group === 'VAN_PHONG' ? 'Hình thức lương' : 'Đơn giá'}</div><strong>{isSale ? (Number(mySalary?.baseSalary) > 0 ? `${Number(mySalary?.baseSalary).toLocaleString('vi-VN')} đ` : 'Chưa cập nhật') : employee?.group === 'VAN_PHONG' ? 'Theo tháng (LCB + phụ cấp)' : `${Number(employee?.current_rate_per_hour || 0).toLocaleString('vi-VN')} đ/h`}</strong></div>
                 <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Ngày vào làm</div><strong>{String((employee as any)?.start_date || '').slice(0, 10) || '—'}</strong></div>
                 <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Ngày chính thức</div><strong>{String((employee as any)?.official_date || '').slice(0, 10) || '—'}</strong></div>
               </div>
@@ -8720,8 +8752,8 @@ export function App() {
                   </div>
                 </div>
 
-                {/* Giấy khám sức khỏe (HR cập nhật) + Đồng phục (chỉ xem) */}
-                {(() => {
+                {/* Giấy khám sức khỏe (HR cập nhật) + Đồng phục (chỉ xem) — khối SALE ẩn */}
+                {!isSale && (() => {
                   const healthDoc = myContractDocs?.health_cert;
                   const uniform: any = (employee as any)?.uniform;
                   const unitPrice = Number(uniform?.unit_price) || 150000;

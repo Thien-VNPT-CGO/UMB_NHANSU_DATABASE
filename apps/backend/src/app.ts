@@ -274,7 +274,7 @@ import {
   requireRole,
   enforceBranchScope,
 } from './middlewares/rbac.middleware.js';
-import { BRANCHES, ERROR_CODES, shiftCodesForGroup, shiftHoursOf, isBranchScheduleHidden, toVietnameseErrorMessage } from '@ubm/shared';
+import { BRANCHES, ERROR_CODES, shiftCodesForGroup, shiftHoursOf, isBranchScheduleHidden, isSaleGroup, toVietnameseErrorMessage } from '@ubm/shared';
 import { SHEETS_DEFINITIONS } from './services/google-sheets-sync.service.js';
 import {
   addDaysIso,
@@ -2512,6 +2512,35 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Mức LƯƠNG CƠ BẢN của chính nhân viên — cổng NV hiển thị ở Trang chủ và Hồ Sơ
+  // (khối Sale dùng "Lương cơ bản" thay cho đơn giá/giờ).
+  // Ưu tiên số Kế toán đã nhập cho kỳ hiện tại, sau đó tới cấu hình lương của NV.
+  app.get('/me/salary', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user?.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const period = vnTodayISO().slice(0, 7);
+      const [cfg, acc] = await Promise.all([
+        salaryConfigService.getForEmployee(req.user.employeeId).catch(() => null),
+        payrollService.getEmployeeAccounting(period, req.user.employeeId).catch(() => null as any),
+      ]);
+      const num = (v: any) => Math.max(0, Math.floor(Number(v) || 0));
+      const configBaseSalary = num((cfg as any)?.base_salary);
+      const periodBaseSalary = num((acc as any)?.luongCb);
+      res.json({
+        period,
+        payMode: String((cfg as any)?.pay_mode || (acc as any)?.payMode || '').toUpperCase() === 'MONTHLY' ? 'MONTHLY' : 'SHIFT',
+        // Số hiển thị: Kế toán đã nhập cho kỳ > cấu hình lương > 0.
+        baseSalary: periodBaseSalary > 0 ? periodBaseSalary : configBaseSalary,
+        configBaseSalary,
+        periodBaseSalary,
+        allowance: num((cfg as any)?.allowance),
+        updatedAt: (acc as any)?.updatedAt || (cfg as any)?.updatedAt || null,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Cấu hình chi nhánh của nhân viên (toạ độ, bán kính, cờ bật/tắt GPS).
   // Cổng NV dùng dữ liệu này để biết có bắt buộc định vị khi điểm danh hay không.
   app.get('/me/branch', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
@@ -2584,7 +2613,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       }
       const emp = await employeesService.getEmployee(req.user.employeeId);
       // Nhân viên KHỐI VĂN PHÒNG không bị ràng buộc đăng ký 2 ngày OFF/tuần.
-      if (!emp || emp.employment_status !== 'OFFICIAL' || OfficeService.isOfficeEmployee(emp)) {
+      // Khối SALE cũng vậy: cổng NV của Sale không còn tab "Đăng ký OFF tuần".
+      if (!emp || emp.employment_status !== 'OFFICIAL' || OfficeService.isOfficeEmployee(emp) || isSaleGroup((emp as any).group)) {
         return res.json({ window, required: 2, registered: [], completed: true, locked: false });
       }
       const completion = await getWeeklyOffCompletion(
