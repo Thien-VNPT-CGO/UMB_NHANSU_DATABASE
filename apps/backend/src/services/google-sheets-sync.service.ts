@@ -4842,6 +4842,10 @@ export class GoogleSheetsSyncService {
               interview_proposed_at: (prev as any).interview_proposed_at || undefined,
               blacklist_reason: (prev as any).blacklist_reason || undefined,
               blacklist_at: (prev as any).blacklist_at || undefined,
+              // Mốc thời điểm vào tab Vắng PV / Từ chối — dùng để tự xóa sau 48h.
+              // Form gốc không có cột này nên phải giữ từ bộ nhớ qua mỗi lần pull.
+              no_show_at: (prev as any).no_show_at || undefined,
+              declined_at: (prev as any).declined_at || undefined,
               interview_score: prev.interview_score,
               interview_rubric: prev.interview_rubric || undefined,
               interview_score_detail: prev.interview_score_detail || undefined,

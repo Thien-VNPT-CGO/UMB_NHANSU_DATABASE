@@ -856,6 +856,26 @@ export function getFailVerdictInfo(c: any): { isFail: boolean; scoredAt: number;
   return { isFail: true, scoredAt, remainingMs };
 }
 
+/**
+ * Thời hạn tự xóa khỏi hệ thống theo tab nghiệp vụ:
+ * - Vắng phỏng vấn (NO_SHOW / DECLINED): 48 giờ.
+ * - Danh sách đen (BLACKLIST): 72 giờ.
+ * Trả null nếu trạng thái không thuộc diện tự xóa.
+ */
+export function getStatusAutoDeleteInfo(c: any): { hours: number; remainingMs: number | null } | null {
+  const st = String(c?.status || '').trim().toUpperCase();
+  let hours = 0;
+  let raw: unknown = '';
+  if (st === 'BLACKLIST') { hours = 72; raw = (c as any)?.blacklist_at; }
+  else if (st === 'NO_SHOW') { hours = 48; raw = (c as any)?.no_show_at; }
+  else if (st === 'DECLINED') { hours = 48; raw = (c as any)?.declined_at; }
+  else return null;
+  if ((c as any)?.auto_hidden_at) return null;
+  const t = Date.parse(String(raw || ''));
+  const remainingMs = Number.isFinite(t) ? Math.max(0, t + hours * 3_600_000 - Date.now()) : null;
+  return { hours, remainingMs };
+}
+
 /** Format milliseconds thành HH:MM:SS */
 export function formatCountdown(ms: number): string {
   if (ms <= 0) return '00:00:00';
@@ -3649,8 +3669,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     { key: 'WAIT_INTERVIEW', label: 'Chờ phỏng vấn', hint: 'Ứng viên ĐÃ xác nhận — chờ tới giờ phỏng vấn', color: '#4F46E5', bg: '#EEF2FF' },
     { key: 'WAIT_PROBATION', label: 'Chờ thử việc', hint: 'Đã phỏng vấn xong / đã chấm điểm — chờ duyệt và bắt đầu thử việc', color: '#7C3AED', bg: '#F5F3FF' },
     { key: 'WAIT_PROPOSAL', label: 'Đề xuất lịch mới', hint: 'Ứng viên đã từ chối lịch cũ và đề xuất ngày/giờ mới — HR cần chốt lịch', color: '#C2410C', bg: '#FFF7ED' },
-    { key: 'NO_SHOW', label: 'Vắng phỏng vấn', hint: 'Ứng viên vắng (no-show) hoặc từ chối tham gia phỏng vấn', color: '#B91C1C', bg: '#FEF2F2' },
-    { key: 'BLACKLIST', label: 'Danh sách đen', hint: 'Vi phạm quy chế / gian dối / xác nhận mà không đến phỏng vấn', color: '#111827', bg: '#E5E7EB' },
+    { key: 'NO_SHOW', label: 'Vắng phỏng vấn', hint: 'Ứng viên vắng (no-show) hoặc từ chối tham gia phỏng vấn — tự động xóa khỏi hệ thống sau 48h', color: '#B91C1C', bg: '#FEF2F2' },
+    { key: 'BLACKLIST', label: 'Danh sách đen', hint: 'Vi phạm quy chế / gian dối / xác nhận mà không đến phỏng vấn — tự động xóa khỏi hệ thống sau 72h', color: '#111827', bg: '#E5E7EB' },
   ];
   const pvTabOf = (c: any): PvTabKey => {
     const st = String(c?.status || '').trim().toUpperCase();
@@ -6711,6 +6731,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   </span>
                                 );
                               })()}
+                              {(() => {
+                                const auto = getStatusAutoDeleteInfo(c);
+                                if (!auto) return null;
+                                const expired = auto.remainingMs === 0;
+                                return (
+                                  <div style={{ fontSize: '10.5px', fontWeight: 700, marginTop: '3px', color: expired ? '#B91C1C' : '#64748B', lineHeight: 1.4 }}>
+                                    {auto.remainingMs === null
+                                      ? `⏳ Tự xóa khỏi hệ thống sau ${auto.hours}h kể từ khi ghi nhận`
+                                      : expired
+                                        ? `⏳ Đã đủ ${auto.hours}h — sẽ tự xóa ở lượt quét kế tiếp`
+                                        : `⏳ Tự xóa khỏi hệ thống sau ${formatCountdown(auto.remainingMs)}`}
+                                  </div>
+                                );
+                              })()}
                               {['DECLINED', 'RESCHEDULE_PROPOSED'].includes(String(c.status || '')) && (c as any).interview_decline_reason && (
                                 <div style={{ fontSize: '10.5px', color: '#991B1B', fontWeight: 600, marginTop: '3px', maxWidth: '240px', whiteSpace: 'normal', lineHeight: 1.4 }}>
                                   📝 Lý do: {String((c as any).interview_decline_reason)}
@@ -6976,8 +7010,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 : pvTab === 'WAIT_PROPOSAL'
                                   ? 'Không có ứng viên nào đang đề xuất lịch phỏng vấn mới.'
                                   : pvTab === 'BLACKLIST'
-                                    ? 'Danh sách đen đang trống. Ứng viên bị "Hủy PV" do không đến phỏng vấn sẽ xuất hiện ở đây.'
-                                    : 'Chưa có ứng viên nào vắng hoặc từ chối phỏng vấn.'}
+                                    ? 'Danh sách đen đang trống. Ứng viên bị "Hủy PV" do không đến phỏng vấn sẽ xuất hiện ở đây và tự động xóa sau 72h.'
+                                    : 'Chưa có ứng viên nào vắng hoặc từ chối phỏng vấn. Hồ sơ ở tab này tự động xóa khỏi hệ thống sau 48h.'}
                     </td>
                   </tr>
                 )}

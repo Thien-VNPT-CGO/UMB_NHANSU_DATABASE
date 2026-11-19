@@ -1890,6 +1890,7 @@ export class EmployeesService {
       interview_date: undefined,
       interview_time_slot: undefined,
       interviewer_id: undefined,
+      no_show_at: new Date().toISOString(),
     } as any);
     await this.repo.recordAuditLog({
       log_id: `LOG_${Date.now()}`,
@@ -1939,6 +1940,7 @@ export class EmployeesService {
       interview_reminder_at: undefined,
       interview_reminder_count: undefined,
       interview_reminder_key: undefined,
+      declined_at: new Date().toISOString(),
     };
     if (wantsProposal) {
       patch.interview_proposed_date = wantedDate;

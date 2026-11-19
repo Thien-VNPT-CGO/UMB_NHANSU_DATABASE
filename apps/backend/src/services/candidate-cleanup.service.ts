@@ -34,6 +34,22 @@ export const CANDIDATE_AUTO_DELETE_MAX_PER_RUN = 25;
 /** Giữ tombstone dài hạn (dòng form gốc vẫn còn), chỉ cắt bớt khi quá lớn. */
 const CANDIDATE_TOMBSTONE_MAX_ENTRIES = 5000;
 
+/** Tab "Vắng phỏng vấn" (NO_SHOW / DECLINED): tự xóa khỏi hệ thống sau 48h. */
+export const NO_SHOW_AUTO_DELETE_HOURS = 48;
+/** Tab "Danh sách đen" (BLACKLIST): tự xóa khỏi hệ thống sau 72h. */
+export const BLACKLIST_AUTO_DELETE_HOURS = 72;
+export const CANDIDATE_STATUS_AUTO_DELETE_MAX_PER_RUN = 25;
+
+/** Cấu hình thời hạn tự xóa theo trạng thái + cột mốc thời gian tương ứng.
+ *  Cột mốc được ghi khi hồ sơ chuyển vào trạng thái (xem employees.service);
+ *  hồ sơ cũ chưa có cột mốc sẽ được đóng dấu "bây giờ" ở lượt quét đầu tiên
+ *  để KHÔNG xóa oan dữ liệu lịch sử. */
+const STATUS_AUTO_DELETE_CONFIG: Record<string, { hours: number; field: 'no_show_at' | 'declined_at' | 'blacklist_at'; label: string }> = {
+  NO_SHOW: { hours: NO_SHOW_AUTO_DELETE_HOURS, field: 'no_show_at', label: 'Vắng phỏng vấn' },
+  DECLINED: { hours: NO_SHOW_AUTO_DELETE_HOURS, field: 'declined_at', label: 'Từ chối phỏng vấn' },
+  BLACKLIST: { hours: BLACKLIST_AUTO_DELETE_HOURS, field: 'blacklist_at', label: 'Danh sách đen' },
+};
+
 export interface CandidateCleanupTombstone {
   key: string;
   submission_id?: string;
@@ -342,6 +358,187 @@ export async function candidateCleanupTick(
         target_entity: 'UNG_VIEN',
         target_id: success.map((c: any) => String(c.submission_id || '')).filter(Boolean).join(',').slice(0, 500),
         details: `Tự động ẩn ${success.length} ứng viên quá ${days} ngày chưa được HR xếp lịch phỏng vấn (giữ nguyên dữ liệu trên Google Sheet): ${names}`,
+      } as any).catch(() => null);
+    } catch { /* audit không được chặn xử lý */ }
+  }
+
+  return result;
+}
+
+/**
+ * Thông tin tự xóa theo trạng thái của 1 hồ sơ. Trả null nếu:
+ * - không thuộc tab Vắng phỏng vấn / Danh sách đen,
+ * - hoặc đã bị ẩn trước đó.
+ */
+export function candidateStatusAutoDeleteInfo(
+  c: any,
+  nowMs: number = Date.now(),
+): { status: string; hours: number; field: string; label: string; enteredAtMs: number | null; remainingMs: number } | null {
+  if (!c) return null;
+  if (hasValue(c?.auto_hidden_at)) return null;
+  const status = String(c?.status ?? '').trim().toUpperCase();
+  const cfg = STATUS_AUTO_DELETE_CONFIG[status];
+  if (!cfg) return null;
+  const enteredAtMs = parseCandidateRegisteredAtMs(c?.[cfg.field]);
+  const deadlineMs = enteredAtMs === null ? null : enteredAtMs + cfg.hours * 3_600_000;
+  const remainingMs = deadlineMs === null ? Number.POSITIVE_INFINITY : Math.max(0, deadlineMs - nowMs);
+  return { status, hours: cfg.hours, field: cfg.field, label: cfg.label, enteredAtMs, remainingMs };
+}
+
+export interface CandidateStatusCleanupOptions {
+  now?: number;
+  maxPerRun?: number;
+  dryRun?: boolean;
+}
+
+/**
+ * Một lượt quét tự xóa hồ sơ ở tab "Vắng phỏng vấn" (48h) và "Danh sách đen" (72h).
+ *
+ * Cùng cơ chế an toàn với candidateCleanupTick:
+ * - CHỈ ẩn khỏi hệ thống (gắn auto_hidden_at), KHÔNG xóa dòng Google Sheet.
+ * - Ghi tombstone bền vững để pull nền không hồi sinh hồ sơ đã xóa.
+ * - Hồ sơ cũ thiếu cột mốc thời gian được đóng dấu ngay ở lượt quét đầu tiên
+ *   (đồng hồ 48h/72h bắt đầu từ lúc đó) thay vì xóa luôn.
+ */
+export async function candidateStatusCleanupTick(
+  adapter: any,
+  opts: CandidateStatusCleanupOptions = {},
+): Promise<CandidateCleanupResult> {
+  const now = Number.isFinite(opts.now) ? Number(opts.now) : Date.now();
+  const nowIso = new Date(now).toISOString();
+  const envMax = Number(process.env.CANDIDATE_STATUS_AUTO_DELETE_MAX_PER_RUN);
+  const maxPerRun = Number.isFinite(opts.maxPerRun as number)
+    ? Math.max(1, Number(opts.maxPerRun))
+    : (Number.isFinite(envMax) && envMax > 0 ? Math.min(envMax, 100) : CANDIDATE_STATUS_AUTO_DELETE_MAX_PER_RUN);
+
+  const candidates = await adapter.listCandidates();
+  const list = Array.isArray(candidates) ? candidates : [];
+  let settings: any = {};
+  try { settings = (await adapter.getSystemSettings?.()) || {}; } catch { settings = {}; }
+  const tombstoneStore = getCandidateCleanupTombstones(settings);
+  const keysOf = (c: any) => candidateCleanupKey(c);
+
+  const eligible: Array<{ c: any; info: NonNullable<ReturnType<typeof candidateStatusAutoDeleteInfo>> }> = [];
+  let stampedCount = 0;
+  for (const c of list as any[]) {
+    const info = candidateStatusAutoDeleteInfo(c, now);
+    if (!info) continue;
+    if (isCandidateTombstoned(tombstoneStore, keysOf(c))) continue;
+    const id = String(c?.submission_id || '');
+    if (!id) continue;
+    if (info.enteredAtMs === null) {
+      // Hồ sơ cũ chưa có cột mốc -> đóng dấu bắt đầu tính giờ, chưa xóa.
+      // Giới hạn số hồ sơ đóng dấu mỗi lượt để không dồn ghi Sheet/DB quá nhiều.
+      if (opts.dryRun || stampedCount >= maxPerRun) continue;
+      stampedCount++;
+      try {
+        await adapter.updateCandidate(id, { [info.field]: nowIso });
+      } catch (err: any) {
+        console.warn(`[candidate-status-cleanup] Không đóng dấu ${info.field} cho ${id}:`, err?.message || err);
+      }
+      continue;
+    }
+    if (info.remainingMs > 0) continue;
+    eligible.push({ c, info });
+  }
+
+  eligible.sort((a, b) => (a.info.enteredAtMs ?? 0) - (b.info.enteredAtMs ?? 0));
+  const picked = eligible.slice(0, maxPerRun);
+
+  const result: CandidateCleanupResult = {
+    checked: list.length,
+    eligible: picked.length,
+    deletedIds: [],
+    failedIds: [],
+    deleted: [],
+  };
+  if (picked.length === 0 || opts.dryRun) return result;
+
+  const syncSvc = adapter?.syncService;
+  try { syncSvc?.markCandidateDeleted?.(picked.map(x => keysOf(x.c))); } catch { /* best-effort */ }
+
+  const entries = picked.map(({ c, info }) => ({
+    id: String(c.submission_id),
+    key: keysOf(c),
+    at: nowIso,
+    reason: `${info.label} quá ${info.hours}h — tự động xóa khỏi hệ thống (giữ dòng Google Sheet)`,
+  }));
+
+  let hiddenIds: string[] = [];
+  let failedIds: string[] = [];
+  try {
+    if (typeof adapter.hideCandidatesFromSystem === 'function') {
+      const r = await adapter.hideCandidatesFromSystem(entries);
+      hiddenIds = Array.isArray(r?.hidden) ? r.hidden.map(String) : [];
+      failedIds = Array.isArray(r?.failed) ? r.failed.map(String) : [];
+      if (hiddenIds.length === 0 && failedIds.length === 0) hiddenIds = entries.map(e => e.id);
+    } else {
+      for (const e of entries) {
+        try {
+          await adapter.updateCandidate(e.id, { auto_hidden_at: nowIso, auto_hidden_reason: e.reason });
+          hiddenIds.push(e.id);
+        } catch (err: any) {
+          console.warn(`[candidate-status-cleanup] Ẩn ${e.id} thất bại:`, err?.message || err);
+          failedIds.push(e.id);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('[candidate-status-cleanup] Lô ẩn ứng viên thất bại:', err?.message || err);
+    failedIds = entries.map(e => e.id);
+    hiddenIds = [];
+  }
+
+  const hiddenSet = new Set(hiddenIds);
+  const success = picked.filter(x => hiddenSet.has(String(x.c.submission_id)));
+  const failed = picked.filter(x => !hiddenSet.has(String(x.c.submission_id)));
+  try { syncSvc?.unmarkCandidateDeleted?.(failed.map(x => keysOf(x.c))); } catch { /* best-effort */ }
+
+  result.eligible = picked.length;
+  result.deletedIds = sortedUnique(hiddenIds);
+  result.failedIds = sortedUnique(failedIds);
+  result.deleted = success.map(({ c }) => ({
+    id: String(c.submission_id),
+    name: String(c.full_name || c.submission_id),
+    created_at: c.created_at ? String(c.created_at) : undefined,
+  }));
+
+  if (success.length > 0) {
+    try {
+      const store = getCandidateCleanupTombstones(await adapter.getSystemSettings().catch(() => settings));
+      for (const { c, info } of success) {
+        const key = keysOf(c);
+        if (!key) continue;
+        store.entries[key] = {
+          key,
+          submission_id: String(c.submission_id || ''),
+          full_name: String(c.full_name || ''),
+          phone: String(c.phone_normalized || c.phone || ''),
+          created_at: c.created_at ? String(c.created_at) : '',
+          deleted_at: nowIso,
+          reason: `${info.label} quá ${info.hours}h — tự động xóa khỏi hệ thống`,
+        };
+      }
+      store.updated_at = nowIso;
+      pruneTombstones(store);
+      await adapter.updateSystemSettings({ [CANDIDATE_AUTO_DELETE_SETTING_KEY]: store });
+      try { await adapter.pushSystemSettingsNow?.(); } catch { /* nền sẽ đẩy lại */ }
+    } catch (err: any) {
+      console.warn('[candidate-status-cleanup] Không ghi được tombstone:', err?.message || err);
+    }
+
+    try {
+      const summary = success
+        .map(({ c, info }) => `${c.full_name || c.submission_id} (${c.submission_id} — ${info.label} ${info.hours}h)`)
+        .join(', ')
+        .slice(0, 1500);
+      await adapter.recordAuditLog({
+        actor_id: 'SYSTEM',
+        actor_role: 'SYSTEM',
+        action: 'CANDIDATE_AUTO_HIDDEN_BY_STATUS',
+        target_entity: 'UNG_VIEN',
+        target_id: success.map(({ c }) => String(c.submission_id || '')).filter(Boolean).join(',').slice(0, 500),
+        details: `Tự động xóa ${success.length} ứng viên khỏi hệ thống theo thời hạn tab Vắng phỏng vấn (48h) / Danh sách đen (72h), giữ nguyên dữ liệu trên Google Sheet: ${summary}`,
       } as any).catch(() => null);
     } catch { /* audit không được chặn xử lý */ }
   }

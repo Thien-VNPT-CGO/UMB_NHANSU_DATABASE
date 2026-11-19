@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   candidateCleanupKey,
   candidateCleanupTick,
+  candidateStatusAutoDeleteInfo,
+  candidateStatusCleanupTick,
   getCandidateCleanupTombstones,
   isCandidateEligibleForAutoDelete,
   isCandidateInterviewHandled,
@@ -234,4 +236,88 @@ test('hồ sơ đã ẩn sẽ hiện lại khi HR thao tác (đặt lịch/chấ
   assert.equal((repo.candidates[0] as any).auto_hidden_at, undefined);
   assert.equal((repo.candidates[0] as any).auto_hidden_reason, undefined);
 });
+
+test('Vắng PV (NO_SHOW/DECLINED) tự xóa sau 48h, Danh sách đen sau 72h', () => {
+  const hoursAgoIso = (n: number) => new Date(NOW - n * 3_600_000).toISOString();
+  const noShowOld = candidateStatusAutoDeleteInfo({ status: 'NO_SHOW', no_show_at: hoursAgoIso(49) }, NOW);
+  assert.equal(noShowOld?.hours, 48);
+  assert.equal(noShowOld?.remainingMs, 0);
+
+  const noShowNew = candidateStatusAutoDeleteInfo({ status: 'NO_SHOW', no_show_at: hoursAgoIso(47) }, NOW);
+  assert.ok((noShowNew?.remainingMs ?? 0) > 0);
+
+  const declinedOld = candidateStatusAutoDeleteInfo({ status: 'DECLINED', declined_at: hoursAgoIso(49) }, NOW);
+  assert.equal(declinedOld?.hours, 48);
+  assert.equal(declinedOld?.remainingMs, 0);
+
+  const blackOld = candidateStatusAutoDeleteInfo({ status: 'BLACKLIST', blacklist_at: hoursAgoIso(73) }, NOW);
+  assert.equal(blackOld?.hours, 72);
+  assert.equal(blackOld?.remainingMs, 0);
+
+  const blackNew = candidateStatusAutoDeleteInfo({ status: 'BLACKLIST', blacklist_at: hoursAgoIso(71) }, NOW);
+  assert.ok((blackNew?.remainingMs ?? 0) > 0);
+
+  // Trạng thái khác / đã ẩn / thiếu cột mốc => không đủ điều kiện tự xóa ngay.
+  assert.equal(candidateStatusAutoDeleteInfo({ status: 'NEW' }, NOW), null);
+  assert.equal(candidateStatusAutoDeleteInfo({ status: 'BLACKLIST', blacklist_at: hoursAgoIso(100), auto_hidden_at: hoursAgoIso(1) }, NOW), null);
+  assert.equal(candidateStatusAutoDeleteInfo({ status: 'NO_SHOW' }, NOW)?.enteredAtMs, null);
+});
+
+test('candidateStatusCleanupTick: đóng dấu hồ sơ cũ, xóa hồ sơ quá hạn + tombstone', async () => {
+  const hoursAgoIso = (n: number) => new Date(NOW - n * 3_600_000).toISOString();
+  let list: any[] = [
+    { submission_id: 'CAND_N1', full_name: 'Vắng cũ', phone_normalized: '0911111111', status: 'NO_SHOW', created_at: hoursAgoIso(200), no_show_at: hoursAgoIso(49) },
+    { submission_id: 'CAND_N2', full_name: 'Vắng mới', phone_normalized: '0911111112', status: 'NO_SHOW', created_at: hoursAgoIso(200), no_show_at: hoursAgoIso(47) },
+    { submission_id: 'CAND_B1', full_name: 'Đen cũ', phone_normalized: '0911111113', status: 'BLACKLIST', created_at: hoursAgoIso(200), blacklist_at: hoursAgoIso(73) },
+    { submission_id: 'CAND_B2', full_name: 'Đen mới', phone_normalized: '0911111114', status: 'BLACKLIST', created_at: hoursAgoIso(200), blacklist_at: hoursAgoIso(71) },
+    { submission_id: 'CAND_LEGACY', full_name: 'Thiếu mốc', phone_normalized: '0911111115', status: 'DECLINED', created_at: hoursAgoIso(500) },
+  ];
+  let settings: any = {};
+  const audits: any[] = [];
+  const adapter: any = {
+    syncService: { markCandidateDeleted: () => undefined, unmarkCandidateDeleted: () => undefined },
+    listCandidates: async () => list.map(c => ({ ...c })),
+    updateCandidate: async (id: string, patch: any) => {
+      const c = list.find(x => x.submission_id === id);
+      if (c) Object.assign(c, patch);
+      return c;
+    },
+    hideCandidatesFromSystem: async (entries: Array<{ id: string; at: string; reason?: string }>) => {
+      const hidden: string[] = [];
+      for (const e of entries) {
+        const c = list.find(x => x.submission_id === e.id);
+        if (!c) continue;
+        c.auto_hidden_at = e.at;
+        c.auto_hidden_reason = e.reason;
+        hidden.push(e.id);
+      }
+      return { hidden, failed: [] };
+    },
+    getSystemSettings: async () => settings,
+    updateSystemSettings: async (patch: any) => { settings = { ...settings, ...patch }; return settings; },
+    pushSystemSettingsNow: async () => ({ ok: true }),
+    recordAuditLog: async (entry: any) => { audits.push(entry); return entry; },
+  };
+
+  const r = await candidateStatusCleanupTick(adapter, { now: NOW });
+  assert.deepEqual(r.deletedIds, ['CAND_B1', 'CAND_N1']);
+  // Hồ sơ cũ thiếu cột mốc được đóng dấu, KHÔNG xóa ngay.
+  assert.ok((list.find(c => c.submission_id === 'CAND_LEGACY') as any).declined_at);
+  assert.equal((list.find(c => c.submission_id === 'CAND_LEGACY') as any).auto_hidden_at, undefined);
+  // Chưa đủ hạn thì giữ.
+  assert.equal((list.find(c => c.submission_id === 'CAND_N2') as any).auto_hidden_at, undefined);
+  assert.equal((list.find(c => c.submission_id === 'CAND_B2') as any).auto_hidden_at, undefined);
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0].action, 'CANDIDATE_AUTO_HIDDEN_BY_STATUS');
+  assert.match(String(audits[0].details), /giữ nguyên dữ liệu trên Google Sheet/);
+
+  const store = getCandidateCleanupTombstones(settings);
+  assert.equal(isCandidateTombstoned(store, candidateCleanupKey({ phone_normalized: '0911111111', full_name: 'Vắng cũ', created_at: hoursAgoIso(200) })), true);
+
+  // Lượt sau không xử lý lặp lại hồ sơ đã xóa.
+  const r2 = await candidateStatusCleanupTick(adapter, { now: NOW + 60_000 });
+  assert.equal(r2.deletedIds.length, 0);
+  assert.equal(audits.length, 1);
+});
+
 

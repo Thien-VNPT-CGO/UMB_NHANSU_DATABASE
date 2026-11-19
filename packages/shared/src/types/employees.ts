@@ -191,4 +191,11 @@ export interface CandidateApplication {
    *  Dòng trên Google Sheet vẫn giữ nguyên — chỉ ẩn khỏi giao diện/vận hành. */
   auto_hidden_at?: string;
   auto_hidden_reason?: string;
+  /** Mốc thời điểm vào tab Vắng phỏng vấn — tự xóa khỏi hệ thống sau 48h. */
+  no_show_at?: string;
+  /** Mốc thời điểm ứng viên từ chối PV — tự xóa khỏi hệ thống sau 48h. */
+  declined_at?: string;
+  /** Mốc thời điểm vào Danh sách đen — tự xóa khỏi hệ thống sau 72h. */
+  blacklist_at?: string;
+  blacklist_reason?: string;
 }

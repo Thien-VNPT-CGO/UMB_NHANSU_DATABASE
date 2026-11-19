@@ -33,7 +33,7 @@ import { dedupeDuplicateInterviews, enforceScreeningOutcomes } from './services/
 import { interviewNoShowTick, interviewReminderTick } from './services/interview-reminders.service.js';
 import { interviewZaloReminderTick } from './services/interview-zalo-reminder.service.js';
 import { autoRemindersTick } from './services/auto-reminders.service.js';
-import { candidateCleanupTick } from './services/candidate-cleanup.service.js';
+import { candidateCleanupTick, candidateStatusCleanupTick } from './services/candidate-cleanup.service.js';
 import { notifySystemAlert, startSystemAlertMonitor } from './services/system-alert.service.js';
 import {
   addDaysIso,
@@ -1205,6 +1205,39 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
   };
   setTimeout(candidateCleanupTickSafe, 30_000);
   setInterval(candidateCleanupTickSafe, 30_000);
+
+  // Tự động XÓA khỏi hệ thống theo thời hạn tab nghiệp vụ tuyển dụng:
+  // - Vắng phỏng vấn (NO_SHOW / DECLINED): sau 48 giờ.
+  // - Danh sách đen (BLACKLIST): sau 72 giờ.
+  // Chỉ ẩn khỏi hệ thống (auto_hidden_at) + tombstone; KHÔNG xóa dòng Google Sheet.
+  let candidateStatusCleanupRunning = false;
+  const candidateStatusCleanupTickSafe = () => {
+    if (candidateStatusCleanupRunning) return;
+    candidateStatusCleanupRunning = true;
+    candidateStatusCleanupTick(adapter)
+      .then(r => {
+        if (r.deletedIds.length > 0) {
+          console.log(
+            `[candidate-status-cleanup] Tự động xóa ${r.deletedIds.length} hồ sơ quá hạn `
+            + `(Vắng PV 48h / Danh sách đen 72h): ${r.deletedIds.join(', ')}`,
+          );
+          try {
+            io.emit('data:updated', {
+              entity: 'candidates',
+              data: { action: 'auto-hidden', ids: r.deletedIds },
+              timestamp: new Date().toISOString(),
+            });
+          } catch { /* non-fatal */ }
+        }
+        if (r.failedIds.length > 0) {
+          console.warn(`[candidate-status-cleanup] ${r.failedIds.length} hồ sơ xóa lỗi, tick sau thử lại: ${r.failedIds.join(', ')}`);
+        }
+      })
+      .catch(err => console.warn('[candidate-status-cleanup] tick error:', err?.message || err))
+      .finally(() => { candidateStatusCleanupRunning = false; });
+  };
+  setTimeout(candidateStatusCleanupTickSafe, 45_000);
+  setInterval(candidateStatusCleanupTickSafe, 5 * 60_000);
 
   // Thử lại upload ảnh chấm công lỗi (đang giữ inline): Drive hồi là ảnh hiện
   // lại trên modal/ZIP ngay, không cần NV chụp lại.
