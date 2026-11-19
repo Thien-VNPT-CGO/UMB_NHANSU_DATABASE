@@ -407,6 +407,44 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
       }
     })().catch((err: any) => console.warn('[attendance-repair] lỗi:', err?.message || err));
   };
+  // Phiếu BỔ SUNG CÔNG VĂN PHÒNG đã duyệt nhưng bản cũ chỉ đổi trạng thái (không
+  // dựng công / không xóa vi phạm): rà soát lại toàn bộ phiếu đã duyệt của tháng
+  // hiện tại + tháng trước (bù trường hợp vừa sang tháng mới) và áp idempotent.
+  // Chạy 1 lần sau khi dữ liệu Sheets đã pull xong.
+  let officeAdjRepairDone = false;
+  const repairOfficeAdjustmentsOnce = () => {
+    if (officeAdjRepairDone) return;
+    officeAdjRepairDone = true;
+    (async () => {
+      const svc: any = (services as any).officeService;
+      if (!svc?.repairApprovedAdjustments) return;
+      // Tháng VN hiện tại + tháng liền trước (không phụ thuộc múi giờ máy chủ).
+      const vnNow = new Date(Date.now() + 7 * 3_600_000);
+      const months: string[] = [];
+      for (let i = 0; i < 2; i += 1) {
+        const d = new Date(Date.UTC(vnNow.getUTCFullYear(), vnNow.getUTCMonth() - i, 1));
+        months.push(d.toISOString().slice(0, 7));
+      }
+      for (const month of months) {
+        const r = await svc.repairApprovedAdjustments(month);
+        if (!(r?.checked > 0)) continue;
+        console.log(`[office-adjustments] Rà soát ${r.month}: ${r.applied}/${r.checked} phiếu đã duyệt — dựng ${r.created_office} lượt VP + ${r.created_standard} lượt chuẩn, xóa ${r.cleared} vi phạm, dọn ${r.absent_removed} vắng.`);
+        if (!(r.created_office || r.created_standard || r.cleared || r.absent_removed || r.archived_cleared || r.archived_absent_removed)) continue;
+        try {
+          io.emit('data:updated', {
+            entity: 'office-adjustments',
+            data: { action: 'repair', ...r },
+            timestamp: new Date().toISOString(),
+          });
+          io.emit('data:updated', {
+            entity: 'attendance',
+            data: { action: 'adjustment-repair', month: r.month },
+            timestamp: new Date().toISOString(),
+          });
+        } catch { /* non-fatal */ }
+      }
+    })().catch((err: any) => console.warn('[office-adjustments] repair lỗi:', err?.message || err));
+  };
   const autoPullSheetsTick = async () => {
     if (postgresMode) return;
     if (Date.now() < nextPullAllowedAt) return;
@@ -421,8 +459,10 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
           pullFailStreak = 0;
           nextPullAllowedAt = 0;
           // Dữ liệu đã sẵn trong bộ nhớ -> gỡ phạt oan của ca có phiếu bù công
-          // đã duyệt (bản Sheet cũ từng đè ngược cờ trễ/phạt).
+          // đã duyệt (bản Sheet cũ từng đè ngược cờ trễ/phạt) + áp lại phiếu bổ
+          // sung công Văn Phòng đã duyệt của tháng hiện tại.
           repairApprovedFinesOnce();
+          repairOfficeAdjustmentsOnce();
         } else if (pullRes) {
           pullFailStreak += 1;
           const waitMs = Math.min(60_000, 10_000 * 2 ** Math.min(pullFailStreak - 1, 3));
@@ -437,6 +477,9 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
 
   // Kéo dữ liệu tự động ngay sau khi khởi động 2 giây
   setTimeout(autoPullSheetsTick, 2000);
+  // PostgreSQL (không pull Sheets) hoặc pull chưa kịp: vẫn rà soát phiếu VP đã
+  // duyệt sau khi dữ liệu DB nạp xong. Idempotent, không sửa giờ NV bấm thật.
+  setTimeout(repairOfficeAdjustmentsOnce, 25_000);
   // Định kỳ tự động quét và kéo dữ liệu mới từ Google Sheets (mặc định 15 giây).
   // Mỗi lượt pull tốn ~5 request đọc (1 batchGet 24 tab + 3-4 request ứng viên).
   // 5s = ~60 request/phút, đúng hạn mức 60/phút của service account -> Google trả

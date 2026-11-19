@@ -2780,7 +2780,47 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         role: String(req.user!.role || ''),
       }, decision, req.body?.note);
       broadcastUpdate('office-adjustments', { action: 'reviewed', id: adj.adjustment_id, status: adj.status });
+      // Duyệt = có công NGAY: đẩy realtime sang bảng công Văn Phòng + lưới
+      // chấm công/lương chuẩn để 2 cổng không phải chờ poll.
+      if (adj.status === 'APPROVED') {
+        broadcastUpdate('office-attendance', { action: 'adjustment-approved', id: adj.adjustment_id, employeeId: adj.employee_id, date: adj.work_date });
+        broadcastUpdate('attendance', { action: 'adjustment-backfill', id: adj.adjustment_id, employeeId: adj.employee_id });
+        broadcastUpdate('payroll', { action: 'adjustment-backfill', id: adj.adjustment_id });
+        broadcastNotification({
+          type: 'ADJUSTMENT',
+          title: '✅ Phiếu bổ sung công đã được duyệt',
+          message: `Phiếu bổ sung công ngày ${String(adj.work_date).split('-').reverse().join('/')} đã được duyệt — công và vi phạm đã cập nhật.`,
+          linkTab: 'adjustment',
+          metadata: { adjustmentId: adj.adjustment_id },
+          targetRoles: ['ADMIN', 'HR', 'DIRECTOR', 'EMPLOYEE'],
+        });
+      } else if (adj.status === 'REJECTED') {
+        broadcastNotification({
+          type: 'ADJUSTMENT',
+          title: '❌ Phiếu bổ sung công bị từ chối',
+          message: `Phiếu bổ sung công ngày ${String(adj.work_date).split('-').reverse().join('/')} bị từ chối${req.body?.note ? `: ${req.body.note}` : ''}.`,
+          linkTab: 'adjustment',
+          metadata: { adjustmentId: adj.adjustment_id },
+          targetRoles: ['ADMIN', 'HR', 'DIRECTOR', 'EMPLOYEE'],
+        });
+      }
       res.json({ success: true, adjustment: adj });
+    } catch (err: any) { officeErr(res, err); }
+  });
+
+  // Rà soát + áp lại toàn bộ phiếu bổ sung công ĐÃ DUYỆT của một tháng
+  // (mặc định tháng hiện tại) — sửa dữ liệu tồn đọng do bản cũ chỉ đổi trạng thái.
+  app.post('/office/adjustments/repair', authMiddleware, requireRole(['HR', 'DIRECTOR', 'ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const month = String(req.body?.month || req.query?.month || '').trim();
+      const result = await officeService.repairApprovedAdjustments(month || undefined);
+      if (result.applied > 0) {
+        broadcastUpdate('office-adjustments', { action: 'repair', ...result });
+        broadcastUpdate('office-attendance', { action: 'adjustment-repair', month: result.month });
+        broadcastUpdate('attendance', { action: 'adjustment-repair', month: result.month });
+        broadcastUpdate('payroll', { action: 'adjustment-repair', month: result.month });
+      }
+      res.json({ success: true, ...result });
     } catch (err: any) { officeErr(res, err); }
   });
 
@@ -10238,6 +10278,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       autoScheduleService,
       testsService,
       attendanceService,
+      officeService,
       payrollService,
       notificationsService,
       zaloService,

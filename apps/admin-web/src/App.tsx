@@ -1933,7 +1933,7 @@ export function App() {
               window.dispatchEvent(new CustomEvent('ubm:schedule-reload', { detail: payload?.data }));
             } catch { /* non-fatal */ }
           }
-          if (payload?.entity === 'adjustments' || payload?.entity === 'all') {
+          if (payload?.entity === 'adjustments' || payload?.entity === 'office-adjustments' || payload?.entity === 'office-leaves' || payload?.entity === 'all') {
             try {
               window.dispatchEvent(new CustomEvent('ubm:adjustments-reload'));
             } catch { /* non-fatal */ }

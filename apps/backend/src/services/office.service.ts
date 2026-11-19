@@ -68,6 +68,13 @@ export interface OfficeAttendanceEvent {
   accuracy: number;
   distance_meters: number;
   gps_status: 'VALID' | 'OUT_OF_BOUNDS' | 'LOW_ACCURACY' | 'UNAVAILABLE';
+  /**
+   * Lượt do phiếu BỔ SUNG CÔNG đã duyệt dựng hộ (không phải NV bấm thật).
+   * Khi NV bấm lại đúng lượt đó, hệ thống thay bằng giờ thật thay vì chặn
+   * "đã điểm danh rồi".
+   */
+  synthetic?: boolean;
+  source_adjustment_id?: string;
 }
 
 export interface OfficeAdjustmentRecord {
@@ -83,6 +90,32 @@ export interface OfficeAdjustmentRecord {
   reviewed_by?: string;
   reviewed_at?: string;
   review_note?: string;
+  /** Lần cuối phiếu được áp vào bảng công (bù chân thiếu + xóa vi phạm). */
+  attendance_applied_at?: string;
+  attendance_applied_result?: {
+    created_office: string[];
+    created_standard: string[];
+    cleared: number;
+    absent_removed: number;
+    archived_cleared: number;
+    archived_absent_removed: number;
+  };
+}
+
+/** Kết quả áp 1 phiếu bổ sung công đã duyệt vào dữ liệu công. */
+export interface OfficeAdjustmentApplyResult {
+  adjustment_id: string;
+  employee_id: string;
+  work_date: string;
+  assignment_id: string;
+  office_in_at: string | null;
+  office_out_at: string | null;
+  created_office: string[];
+  created_standard: string[];
+  cleared: number;
+  absent_removed: number;
+  archived_cleared: number;
+  archived_absent_removed: number;
 }
 
 /** Serialize read-modify-write settings: 2 thao tác cùng lúc không ghi đè nhau. */
@@ -148,18 +181,40 @@ export class OfficeService {
     type: 'CHECK_IN' | 'CHECK_OUT',
     gps: { latitude?: number; longitude?: number; accuracy?: number } | undefined,
     v: { distance_meters: number; accuracy: number; gps_status: string },
-    extra?: { is_late?: boolean; minutes_deviation?: number },
+    extra?: { is_late?: boolean; minutes_deviation?: number; replaceRequestId?: string },
   ) {
     const employeeId = String(emp?.employee_id || '');
     if (!employeeId) return;
     try {
-      // Tránh ghi trùng nếu lượt này đã được mirror trước đó.
-      const existing = await this.repo.getAttendanceEvents(employeeId, now.date).catch(() => []);
-      if ((existing || []).some((e: any) => String(e?.type || '') === type && String(e?.client_time || '').slice(0, 10) === now.date)) return;
       const shifts = await this.repo.getShiftsForEmployee(employeeId, now.date, now.date).catch(() => []);
       const assignment: any = (shifts || []).find(
         (s: any) => String(s?.status || '') !== 'CANCELLED' && String(s?.date || '').slice(0, 10) === now.date,
       );
+      // NV bấm lại lượt mà phiếu bổ sung công đã dựng hộ -> thay bằng giờ THẬT
+      // (cùng request_id) để bảng công/lương không bị kẹt giờ giả lập.
+      if (extra?.replaceRequestId) {
+        const synthetic = await this.repo.findAttendanceEventByRequestId(extra.replaceRequestId).catch(() => null);
+        if (synthetic) {
+          await this.repo.updateAttendanceEvent((synthetic as any).event_id, {
+            assignment_id: String(assignment?.assignment_id || (synthetic as any).assignment_id || ''),
+            client_time: now.iso,
+            server_received_at: new Date().toISOString(),
+            gps_latitude: Number.isFinite(Number(gps?.latitude)) ? Number(gps?.latitude) : undefined,
+            gps_longitude: Number.isFinite(Number(gps?.longitude)) ? Number(gps?.longitude) : undefined,
+            gps_accuracy: v.accuracy,
+            distance_meters: v.distance_meters,
+            gps_status: v.gps_status as any,
+            is_late: !!extra?.is_late,
+            minutes_deviation: Number(extra?.minutes_deviation) || 0,
+            fine_tier: 'NONE',
+            fine_amount: 0,
+          } as any);
+          return;
+        }
+      }
+      // Tránh ghi trùng nếu lượt này đã được mirror trước đó.
+      const existing = await this.repo.getAttendanceEvents(employeeId, now.date).catch(() => []);
+      if ((existing || []).some((e: any) => String(e?.type || '') === type && String(e?.client_time || '').slice(0, 10) === now.date)) return;
       await this.repo.recordAttendanceEvent({
         event_id: `VP_EVT_${type}_${employeeId}_${Date.now()}`,
         request_id: `OFFICE_${employeeId}_${now.date}_${type}`,
@@ -617,8 +672,15 @@ export class OfficeService {
       const settings = await this.readSettings();
       const all: OfficeAttendanceEvent[] = Array.isArray(settings[SETTINGS_KEY_ATTENDANCE]) ? [...settings[SETTINGS_KEY_ATTENDANCE]] : [];
       const mineToday = all.filter((e) => String(e.employee_id) === String(employeeId) && e.date === now.date);
-      if (mineToday.some((e) => e.type === 'CHECK_IN')) {
+      const syntheticIn = mineToday.find((e) => e.type === 'CHECK_IN' && e.synthetic);
+      if (mineToday.some((e) => e.type === 'CHECK_IN' && !e.synthetic)) {
         throw new Error('ALREADY_CHECKED_IN: Hôm nay bạn đã vào ca rồi!');
+      }
+      // Phiếu bổ sung công đã dựng hộ CHECK_IN: NV bấm thật thì thay lượt giả lập
+      // bằng giờ thật (không chặn oan "đã vào ca rồi").
+      if (syntheticIn) {
+        const at = all.indexOf(syntheticIn);
+        if (at >= 0) all.splice(at, 1);
       }
       const event: OfficeAttendanceEvent = {
         event_id: `VP_ATT_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
@@ -631,13 +693,16 @@ export class OfficeService {
         accuracy: v.accuracy,
         distance_meters: v.distance_meters,
         gps_status: v.gps_status,
-      };
+      } as OfficeAttendanceEvent;
       all.push(event);
       await this.repo.updateSystemSettings({ [SETTINGS_KEY_ATTENDANCE]: all });
       // Mirror sang sổ điểm danh chuẩn để Admin thấy ngay (Lịch tuần/Chấm công/Lương).
       await this.mirrorAttendanceEvent(emp, now, 'CHECK_IN', gps, v, {
         is_late: now.minutesOfDay > OFFICE_CHECKIN_OPEN_HOUR * 60 + OFFICE_CHECKIN_OPEN_MINUTE,
         minutes_deviation: Math.max(0, now.minutesOfDay - (OFFICE_CHECKIN_OPEN_HOUR * 60 + OFFICE_CHECKIN_OPEN_MINUTE)),
+        replaceRequestId: syntheticIn?.source_adjustment_id
+          ? `OFFICE_ADJ_CHECK_IN_${syntheticIn.source_adjustment_id}`
+          : undefined,
       });
       return event;
     });
@@ -654,8 +719,15 @@ export class OfficeService {
       if (!mineToday.some((e) => e.type === 'CHECK_IN')) {
         throw new Error('CHECKOUT_WITHOUT_CHECKIN: Bạn chưa vào ca hôm nay nên chưa thể ra ca!');
       }
-      if (mineToday.some((e) => e.type === 'CHECK_OUT')) {
+      const syntheticOut = mineToday.find((e) => e.type === 'CHECK_OUT' && e.synthetic);
+      if (mineToday.some((e) => e.type === 'CHECK_OUT' && !e.synthetic)) {
         throw new Error('ALREADY_CHECKED_OUT: Hôm nay bạn đã ra ca rồi!');
+      }
+      // Phiếu bổ sung công đã dựng hộ CHECK_OUT: NV bấm thật thì thay lượt giả
+      // lập bằng giờ thật.
+      if (syntheticOut) {
+        const at = all.indexOf(syntheticOut);
+        if (at >= 0) all.splice(at, 1);
       }
       const event: OfficeAttendanceEvent = {
         event_id: `VP_ATT_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
@@ -668,11 +740,15 @@ export class OfficeService {
         accuracy: v.accuracy,
         distance_meters: v.distance_meters,
         gps_status: v.gps_status,
-      };
+      } as OfficeAttendanceEvent;
       all.push(event);
       await this.repo.updateSystemSettings({ [SETTINGS_KEY_ATTENDANCE]: all });
       // Mirror sang sổ điểm danh chuẩn để Admin thấy ngay (Lịch tuần/Chấm công/Lương).
-      await this.mirrorAttendanceEvent(emp, now, 'CHECK_OUT', gps, v);
+      await this.mirrorAttendanceEvent(emp, now, 'CHECK_OUT', gps, v, {
+        replaceRequestId: syntheticOut?.source_adjustment_id
+          ? `OFFICE_ADJ_CHECK_OUT_${syntheticOut.source_adjustment_id}`
+          : undefined,
+      });
       return event;
     });
   }
@@ -745,6 +821,329 @@ export class OfficeService {
     });
   }
 
+  /**
+   * Áp phiếu BỔ SUNG CÔNG đã duyệt vào dữ liệu công (idempotent):
+   *  1) Dựng lượt VÀO/RA CA còn thiếu trong sổ Văn Phòng (office_attendance_events)
+   *     theo giờ hành chính + số phút bổ sung; lượt đã có giữ nguyên.
+   *  2) Mirror lượt còn thiếu sang SỔ ĐIỂM DANH CHUẨN (assignment đúng ngày) để
+   *     lưới Admin / bảng công / lương thấy ngay.
+   *  3) Xóa vi phạm: gỡ cờ trễ/sớm/phạt trên mọi lượt IN/OUT của ca đúng ngày
+   *     (live + kho lưu trữ tuần cũ) và dọn bản ghi VẮNG (ABSENT).
+   *
+   * Không sửa giờ các lượt NV đã bấm thật — chỉ bù chân thiếu, nên chạy lại
+   * nhiều lần vẫn cho cùng kết quả.
+   */
+  private async applyApprovedAdjustmentLocked(
+    settings: any,
+    record: OfficeAdjustmentRecord,
+  ): Promise<{ officeEvents: OfficeAttendanceEvent[]; result: OfficeAdjustmentApplyResult }> {
+    const employeeId = String(record.employee_id || '');
+    const day = String(record.work_date || '').slice(0, 10);
+    const officeEvents: OfficeAttendanceEvent[] = Array.isArray(settings?.[SETTINGS_KEY_ATTENDANCE])
+      ? [...settings[SETTINGS_KEY_ATTENDANCE]]
+      : [];
+    const result: OfficeAdjustmentApplyResult = {
+      adjustment_id: String(record.adjustment_id || ''),
+      employee_id: employeeId,
+      work_date: day,
+      assignment_id: '',
+      office_in_at: null,
+      office_out_at: null,
+      created_office: [],
+      created_standard: [],
+      cleared: 0,
+      absent_removed: 0,
+      archived_cleared: 0,
+      archived_absent_removed: 0,
+    };
+    if (!employeeId || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return { officeEvents, result };
+
+    const emp: any = await this.repo.getEmployeeById(employeeId).catch(() => null);
+    if (!emp) return { officeEvents, result };
+
+    const mine = officeEvents.filter(
+      (e) => String(e?.employee_id) === employeeId && String(e?.date || '').slice(0, 10) === day,
+    );
+    // Ưu tiên lượt NV bấm thật; lượt giả lập cũ (nếu có) chỉ dùng khi không có thật.
+    const inEvt = mine.find((e) => e.type === 'CHECK_IN' && !e.synthetic) || mine.find((e) => e.type === 'CHECK_IN');
+    const outEvt = mine.find((e) => e.type === 'CHECK_OUT' && !e.synthetic) || mine.find((e) => e.type === 'CHECK_OUT');
+
+    const rule = officeDayRuleOfIso(day);
+    const startHour = rule.work ? rule.startHour : 8;
+    const startMinute = rule.work ? rule.startMinute : 0;
+    const endHour = rule.work ? rule.endHour : 17;
+    const endMinute = rule.work ? rule.endMinute : 0;
+    const stdStartMs = Date.parse(`${day}T${pad2(startHour)}:${pad2(startMinute)}:00+07:00`);
+    const stdEndMs = Date.parse(`${day}T${pad2(endHour)}:${pad2(endMinute)}:00+07:00`);
+    const stdMinutes = Number.isFinite(stdStartMs) && Number.isFinite(stdEndMs) && stdEndMs > stdStartMs
+      ? Math.max(60, Math.round((stdEndMs - stdStartMs) / 60000))
+      : 8 * 60;
+    const extraMinutes = Math.max(0, Math.min(24 * 60, Math.floor(Number(record.minutes_requested) || 0)));
+    const endOfDayMs = Date.parse(`${day}T23:59:59+07:00`);
+
+    let inMs = inEvt ? Date.parse(String(inEvt.at || '')) : NaN;
+    let outMs = outEvt ? Date.parse(String(outEvt.at || '')) : NaN;
+    if (inEvt && !Number.isFinite(inMs)) inMs = stdStartMs;
+    if (outEvt && !Number.isFinite(outMs)) outMs = stdEndMs;
+
+    if (!inEvt && !outEvt) {
+      // Quên cả vào lẫn ra (hoặc bù công cả ngày): dựng đủ cặp theo giờ hành chính.
+      inMs = stdStartMs;
+      outMs = inMs + (stdMinutes + extraMinutes) * 60000;
+    } else if (!inEvt) {
+      // Quên vào ca: lùi từ giờ ra thực tế đúng số phút công chuẩn (+ bổ sung).
+      inMs = outMs - (stdMinutes + extraMinutes) * 60000;
+      if (!Number.isFinite(inMs) || inMs >= outMs) inMs = outMs - 60000;
+      // Chỉ cho lùi tối đa đúng số phút bổ sung HR đã duyệt trước giờ hành
+      // chính; xa hơn (VD quên vào mà ra ca 12:00) thì kẹp về giờ chuẩn.
+      if (Number.isFinite(stdStartMs) && inMs < stdStartMs) {
+        const earliest = stdStartMs - extraMinutes * 60000;
+        if (inMs < earliest) inMs = Math.min(earliest, outMs - 60000);
+      }
+    } else if (!outEvt) {
+      // Quên ra ca: cộng từ giờ vào thực tế đủ số phút công chuẩn (+ bổ sung).
+      outMs = inMs + (stdMinutes + extraMinutes) * 60000;
+      if (Number.isFinite(endOfDayMs) && outMs > endOfDayMs) outMs = endOfDayMs;
+      if (!Number.isFinite(outMs) || outMs <= inMs) outMs = inMs + 60000;
+    }
+
+    const mkOffice = (type: 'CHECK_IN' | 'CHECK_OUT', atMs: number) => {
+      if (!Number.isFinite(atMs)) return;
+      const evt: OfficeAttendanceEvent = {
+        event_id: `VP_ADJ_${record.adjustment_id}_${type}`,
+        employee_id: employeeId,
+        date: day,
+        type,
+        at: new Date(atMs).toISOString(),
+        accuracy: 0,
+        distance_meters: 0,
+        gps_status: 'UNAVAILABLE',
+        synthetic: true,
+        source_adjustment_id: String(record.adjustment_id || ''),
+      };
+      officeEvents.push(evt);
+      result.created_office.push(type);
+    };
+    if (!inEvt) mkOffice('CHECK_IN', inMs);
+    if (!outEvt) mkOffice('CHECK_OUT', outMs);
+    result.office_in_at = inEvt ? String(inEvt.at || '') : (Number.isFinite(inMs) ? new Date(inMs).toISOString() : null);
+    result.office_out_at = outEvt ? String(outEvt.at || '') : (Number.isFinite(outMs) ? new Date(outMs).toISOString() : null);
+
+    // ---- Sổ điểm danh chuẩn (Admin lưới / bảng công / lương) ----
+    const shifts = await this.repo.getShiftsForEmployee(employeeId, day, day).catch(() => []);
+    const shift: any = (shifts || []).find((s: any) => String(s?.status || '') !== 'CANCELLED') || null;
+    const assignmentId = String(shift?.assignment_id || '');
+    result.assignment_id = assignmentId;
+    const branchId = String((emp as any)?.default_branch_id || shift?.branch_id || OFFICE_BRANCH_ID);
+
+    const dayEvents = await this.repo.getAttendanceEvents(employeeId, day).catch(() => []);
+    // Tuần đã archive không còn trong sổ live: đọc kho lưu trữ MỘT LẦN để vừa
+    // tránh dựng trùng chân đã có trong kho, vừa dọn phạt/VẮNG bên dưới.
+    const syncSvc: any = (this.repo as any)?.syncService;
+    let archivedDay: any[] = [];
+    if (syncSvc?.getArchivedAttendanceEvents) {
+      archivedDay = await syncSvc.getArchivedAttendanceEvents(day, day, employeeId).catch(() => []) || [];
+    }
+    // Chỉ xét lượt thuộc ca ĐÚNG NGÀY (hoặc mồ côi không gắn ca) để không đụng
+    // oan vi phạm của ca khác cùng ngày.
+    const belongsToDayShift = (e: any) => {
+      const aid = String(e?.assignment_id || '');
+      if (!assignmentId) return true;
+      return !aid || aid === assignmentId;
+    };
+    const archivedRelevant = (archivedDay || []).filter(belongsToDayShift);
+    // Có bất kỳ chân nào trong ngày rồi thì KHÔNG tạo trùng (kể cả mồ côi do
+    // đổi ca, hoặc tuần cũ đã nằm trong kho lưu trữ).
+    const hasStdIn = [...(dayEvents || []), ...archivedRelevant].some((e: any) => String(e?.type || '') === 'CHECK_IN');
+    const hasStdOut = [...(dayEvents || []), ...archivedRelevant].some((e: any) => String(e?.type || '') === 'CHECK_OUT');
+
+    const mkStandard = async (type: 'CHECK_IN' | 'CHECK_OUT', atMs: number) => {
+      if (!Number.isFinite(atMs)) return;
+      const requestId = `OFFICE_ADJ_${type}_${record.adjustment_id}`;
+      const dup = await this.repo.findAttendanceEventByRequestId(requestId).catch(() => null);
+      if (dup) return;
+      await this.repo.recordAttendanceEvent({
+        event_id: `EVT_OFFICE_ADJ_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        request_id: requestId,
+        assignment_id: assignmentId,
+        employee_id: employeeId,
+        branch_id: branchId,
+        type,
+        client_time: new Date(atMs).toISOString(),
+        server_received_at: new Date().toISOString(),
+        gps_latitude: 0,
+        gps_longitude: 0,
+        gps_accuracy: 0,
+        distance_meters: 0,
+        gps_status: 'UNAVAILABLE',
+        is_late: false,
+        is_early: false,
+        minutes_deviation: 0,
+        fine_tier: 'NONE',
+        fine_amount: 0,
+      } as any);
+      result.created_standard.push(type);
+    };
+    if (!hasStdIn) await mkStandard('CHECK_IN', inMs).catch(() => null);
+    if (!hasStdOut) await mkStandard('CHECK_OUT', outMs).catch(() => null);
+
+    // Chỉ đụng lượt thuộc ca ĐÚNG NGÀY (hoặc mồ côi không gắn ca) để không xóa
+    // oan vi phạm của ca khác cùng ngày.
+    const relevant = (dayEvents || []).filter(belongsToDayShift);
+    for (const e of relevant) {
+      const type = String(e?.type || '').toUpperCase();
+      if (type === 'ABSENT') {
+        try {
+          if (await this.repo.deleteAttendanceEvent(String(e?.event_id || ''))) result.absent_removed += 1;
+        } catch { /* best-effort */ }
+        continue;
+      }
+      if (type !== 'CHECK_IN' && type !== 'CHECK_OUT') continue;
+      const dirty = (e as any)?.is_late === true
+        || (e as any)?.is_early === true
+        || Number((e as any)?.minutes_deviation) > 0
+        || Number((e as any)?.fine_amount) > 0
+        || (!!(e as any)?.fine_tier && String((e as any)?.fine_tier).toUpperCase() !== 'NONE');
+      if (!dirty) continue;
+      try {
+        await this.repo.updateAttendanceEvent(String(e?.event_id || ''), {
+          is_late: false,
+          is_early: false,
+          minutes_deviation: 0,
+          fine_tier: 'NONE',
+          fine_amount: 0,
+        } as any);
+        result.cleared += 1;
+      } catch { /* best-effort */ }
+    }
+
+    // Tuần cũ đã archive: gỡ phạt + xóa VẮNG trong kho lưu trữ để kỳ lương
+    // không suy lại trễ/phạt và lưới tháng không còn chấm đỏ.
+    try {
+      if (syncSvc?.getArchivedAttendanceEvents) {
+        const fineIds: string[] = [];
+        for (const e of archivedRelevant) {
+          const type = String(e?.type || '').toUpperCase();
+          if (type === 'ABSENT') {
+            if (syncSvc.deleteArchivedAttendanceEvent && e?.event_id) {
+              const gone = await syncSvc.deleteArchivedAttendanceEvent(String(e.event_id)).catch(() => null);
+              if (gone) result.archived_absent_removed += 1;
+            }
+            continue;
+          }
+          if (type !== 'CHECK_IN' && type !== 'CHECK_OUT') continue;
+          const dirty = e?.is_late === true
+            || e?.is_early === true
+            || Number(e?.minutes_deviation) > 0
+            || Number(e?.fine_amount) > 0
+            || (!!e?.fine_tier && String(e.fine_tier).toUpperCase() !== 'NONE');
+          if (dirty && e?.event_id) fineIds.push(String(e.event_id));
+        }
+        if (fineIds.length > 0 && syncSvc.clearArchivedEventFines) {
+          result.archived_cleared += Number(await syncSvc.clearArchivedEventFines(fineIds).catch(() => 0)) || 0;
+        }
+      }
+    } catch { /* best-effort */ }
+
+    return { officeEvents, result };
+  }
+
+  /** Rà soát + áp lại toàn bộ phiếu ĐÃ DUYỆT của một tháng (mặc định tháng hiện tại). */
+  async repairApprovedAdjustments(month?: string): Promise<{
+    month: string;
+    checked: number;
+    applied: number;
+    failed: number;
+    created_office: number;
+    created_standard: number;
+    cleared: number;
+    absent_removed: number;
+    archived_cleared: number;
+    archived_absent_removed: number;
+    errors: string[];
+  }> {
+    const targetMonth = /^\d{4}-\d{2}$/.test(String(month || '')) ? String(month) : OfficeService.vnNow().month;
+    return withOfficeLock(async () => {
+      const settings = await this.readSettings();
+      const all: OfficeAdjustmentRecord[] = Array.isArray(settings[SETTINGS_KEY_ADJUSTMENTS])
+        ? [...settings[SETTINGS_KEY_ADJUSTMENTS]]
+        : [];
+      let officeEvents: OfficeAttendanceEvent[] = Array.isArray(settings[SETTINGS_KEY_ATTENDANCE])
+        ? [...settings[SETTINGS_KEY_ATTENDANCE]]
+        : [];
+      const targets = all.filter(
+        (a) => String(a?.status || '').toUpperCase() === 'APPROVED'
+          && String(a?.work_date || '').slice(0, 7) === targetMonth,
+      );
+      const summary = {
+        month: targetMonth,
+        checked: targets.length,
+        applied: 0,
+        failed: 0,
+        created_office: 0,
+        created_standard: 0,
+        cleared: 0,
+        absent_removed: 0,
+        archived_cleared: 0,
+        archived_absent_removed: 0,
+        errors: [] as string[],
+      };
+      let changedAny = false;
+      for (const record of targets) {
+        try {
+          const applied = await this.applyApprovedAdjustmentLocked(
+            { ...settings, [SETTINGS_KEY_ATTENDANCE]: officeEvents },
+            record,
+          );
+          officeEvents = applied.officeEvents;
+          summary.applied += 1;
+          summary.created_office += applied.result.created_office.length;
+          summary.created_standard += applied.result.created_standard.length;
+          summary.cleared += applied.result.cleared;
+          summary.absent_removed += applied.result.absent_removed;
+          summary.archived_cleared += applied.result.archived_cleared;
+          summary.archived_absent_removed += applied.result.archived_absent_removed;
+          const changed = applied.result.created_office.length > 0
+            || applied.result.created_standard.length > 0
+            || applied.result.cleared > 0
+            || applied.result.absent_removed > 0
+            || applied.result.archived_cleared > 0
+            || applied.result.archived_absent_removed > 0;
+          // Chỉ ghi lại phiếu khi thực sự có thay đổi: chạy rà soát mỗi lần
+          // khởi động không được đẩy timestamp rác lên Sheets.
+          const idx = all.findIndex((a) => String(a.adjustment_id) === String(record.adjustment_id));
+          if (changed && idx >= 0) {
+            all[idx] = {
+              ...all[idx],
+              attendance_applied_at: new Date().toISOString(),
+              attendance_applied_result: {
+                created_office: applied.result.created_office,
+                created_standard: applied.result.created_standard,
+                cleared: applied.result.cleared,
+                absent_removed: applied.result.absent_removed,
+                archived_cleared: applied.result.archived_cleared,
+                archived_absent_removed: applied.result.archived_absent_removed,
+              },
+            };
+            changedAny = true;
+          }
+        } catch (err: any) {
+          summary.failed += 1;
+          if (summary.errors.length < 10) {
+            summary.errors.push(`${record.adjustment_id}: ${err?.message || err}`);
+          }
+        }
+      }
+      if (changedAny) {
+        await this.repo.updateSystemSettings({
+          [SETTINGS_KEY_ADJUSTMENTS]: all,
+          [SETTINGS_KEY_ATTENDANCE]: officeEvents,
+        });
+      }
+      return summary;
+    });
+  }
+
   async reviewAdjustment(adjustmentId: string, actor: { id: string; role: string }, decision: 'APPROVE' | 'REJECT', note?: string): Promise<OfficeAdjustmentRecord> {
     const id = String(adjustmentId || '').trim();
     return withOfficeLock(async () => {
@@ -758,9 +1157,32 @@ export class OfficeService {
       record.reviewed_by = String(actor.id);
       record.reviewed_at = new Date().toISOString();
       record.review_note = String(note || '').slice(0, 500);
+      let applied: OfficeAdjustmentApplyResult | null = null;
+      let officeEvents: OfficeAttendanceEvent[] | null = null;
+      // DUYỆT = CÓ CÔNG: bù chân thiếu vào sổ Văn Phòng + sổ điểm danh chuẩn và
+      // xóa vi phạm/phạt của ca đúng ngày (live + lưu trữ), NGAY trong request duyệt.
+      if (record.status === 'APPROVED') {
+        const r = await this.applyApprovedAdjustmentLocked(settings, record);
+        applied = r.result;
+        officeEvents = r.officeEvents;
+        record.attendance_applied_at = new Date().toISOString();
+        record.attendance_applied_result = {
+          created_office: r.result.created_office,
+          created_standard: r.result.created_standard,
+          cleared: r.result.cleared,
+          absent_removed: r.result.absent_removed,
+          archived_cleared: r.result.archived_cleared,
+          archived_absent_removed: r.result.archived_absent_removed,
+        };
+      }
       all[idx] = record;
-      await this.repo.updateSystemSettings({ [SETTINGS_KEY_ADJUSTMENTS]: all });
-      return record;
+      await this.repo.updateSystemSettings({
+        [SETTINGS_KEY_ADJUSTMENTS]: all,
+        ...(officeEvents ? { [SETTINGS_KEY_ATTENDANCE]: officeEvents } : {}),
+      });
+      const out: any = { ...record };
+      if (applied) out._applied = applied;
+      return out as OfficeAdjustmentRecord;
     });
   }
 

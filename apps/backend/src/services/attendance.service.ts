@@ -1525,10 +1525,18 @@ export class AttendanceService {
               const evts = await this.repo.getAttendanceEvents(adjEmp).catch(() => []);
               for (const e of evts || []) {
                 if ((e as any).assignment_id !== adjAssign) continue;
+                // Duyệt bù công -> bản ghi VẮNG tự động của ca này là vi phạm giả:
+                // xóa NGAY (không chờ tick dọn vắng 15 phút) để lưới hết đỏ tức thì.
+                if (String((e as any).type || '').toUpperCase() === 'ABSENT') {
+                  const gone = await this.repo.deleteAttendanceEvent((e as any).event_id).catch(() => false);
+                  if (gone) violationCleared++;
+                  continue;
+                }
                 if ((e as any).type !== 'CHECK_IN' && (e as any).type !== 'CHECK_OUT') continue;
-                if (!(e as any).is_late && !(e as any).fine_amount && !(e as any).fine_tier) continue;
+                if (!(e as any).is_late && !(e as any).is_early && !(e as any).fine_amount && !(e as any).fine_tier) continue;
                 await this.repo.updateAttendanceEvent((e as any).event_id, {
                   is_late: false,
+                  is_early: false,
                   minutes_deviation: 0,
                   fine_tier: 'NONE',
                   fine_amount: 0,
@@ -1544,11 +1552,23 @@ export class AttendanceService {
             const syncSvc: any = (this.repo as any)?.syncService;
             if (syncSvc?.getArchivedAttendanceEvents && syncSvc?.clearArchivedEventFines && adjEmp && adjAssign && adjDay) {
               const archived: any[] = await syncSvc.getArchivedAttendanceEvents(adjDay, adjDay, adjEmp) || [];
-              const ids = (archived || [])
-                .filter((e: any) => String((e as any)?.assignment_id || '') === adjAssign
-                  && ['CHECK_IN', 'CHECK_OUT'].includes(String((e as any)?.type || '').toUpperCase()))
-                .map((e: any) => String((e as any)?.event_id || ''))
-                .filter(Boolean);
+              const ids: string[] = [];
+              for (const e of archived || []) {
+                if (String((e as any)?.assignment_id || '') !== adjAssign) continue;
+                const type = String((e as any)?.type || '').toUpperCase();
+                // Vắng tự động đã lưu trữ: xóa hẳn để lưới tháng/lương không còn vi phạm.
+                if (type === 'ABSENT') {
+                  if (syncSvc.deleteArchivedAttendanceEvent && (e as any)?.event_id) {
+                    const gone = await syncSvc.deleteArchivedAttendanceEvent(String((e as any).event_id)).catch(() => null);
+                    if (gone) violationCleared++;
+                  }
+                  continue;
+                }
+                if (type === 'CHECK_IN' || type === 'CHECK_OUT') {
+                  const id = String((e as any)?.event_id || '');
+                  if (id) ids.push(id);
+                }
+              }
               if (ids.length > 0) violationCleared += await syncSvc.clearArchivedEventFines(ids).catch(() => 0) || 0;
             }
           } catch { /* best-effort */ }
@@ -1599,6 +1619,7 @@ export class AttendanceService {
     }
 
     let cleared = 0;
+    let archivedAbsentCleared = 0;
     const archivedIds = new Set<string>();
     try { (this.repo as any)?.beginBulkAttendanceEvents?.(); } catch { /* adapter không hỗ trợ */ }
     try {
@@ -1611,13 +1632,23 @@ export class AttendanceService {
           for (const e of evts || []) {
             if (String((e as any)?.assignment_id || '') !== assign) continue;
             const type = String((e as any)?.type || '').toUpperCase();
+            // Vắng tự động của ca đã được duyệt bù công = vi phạm giả -> xóa.
+            if (type === 'ABSENT') {
+              const gone = await this.repo.deleteAttendanceEvent(String((e as any)?.event_id || '')).catch(() => false);
+              if (gone) {
+                (e as any)._deleted = true;
+                cleared++;
+              }
+              continue;
+            }
             if (type !== 'CHECK_IN' && type !== 'CHECK_OUT') continue;
             const stillFined = (e as any)?.is_late === true
+              || (e as any)?.is_early === true
               || Number((e as any)?.minutes_deviation) > 0
               || Number((e as any)?.fine_amount) > 0
               || (!!(e as any)?.fine_tier && (e as any)?.fine_tier !== 'NONE');
             if (!stillFined) continue;
-            const patch: any = { is_late: false, minutes_deviation: 0, fine_tier: 'NONE', fine_amount: 0 };
+            const patch: any = { is_late: false, is_early: false, minutes_deviation: 0, fine_tier: 'NONE', fine_amount: 0 };
             const saved = await this.repo.updateAttendanceEvent(String((e as any)?.event_id || ''), patch).catch(() => null);
             if (!saved) continue;
             Object.assign(e as any, patch);
@@ -1630,7 +1661,15 @@ export class AttendanceService {
             const archived: any[] = await syncSvc.getArchivedAttendanceEvents(day, day, emp).catch(() => []) || [];
             for (const e of archived || []) {
               if (String((e as any)?.assignment_id || '') !== assign) continue;
-              if (!['CHECK_IN', 'CHECK_OUT'].includes(String((e as any)?.type || '').toUpperCase())) continue;
+              const type = String((e as any)?.type || '').toUpperCase();
+              if (type === 'ABSENT') {
+                if (syncSvc.deleteArchivedAttendanceEvent && (e as any)?.event_id) {
+                  const gone = await syncSvc.deleteArchivedAttendanceEvent(String((e as any).event_id)).catch(() => null);
+                  if (gone) archivedAbsentCleared++;
+                }
+                continue;
+              }
+              if (type !== 'CHECK_IN' && type !== 'CHECK_OUT') continue;
               const id = String((e as any)?.event_id || '');
               if (id) archivedIds.add(id);
             }
@@ -1646,6 +1685,8 @@ export class AttendanceService {
       const syncSvc: any = (this.repo as any)?.syncService;
       archivedCleared = Number(await syncSvc?.clearArchivedEventFines?.([...archivedIds]).catch(() => 0)) || 0;
     }
+    // Vắng tự động đã xóa khỏi kho lưu trữ cũng tính là vi phạm đã dọn.
+    archivedCleared += archivedAbsentCleared;
 
     if (cleared > 0 || archivedCleared > 0) {
       console.log(`[attendance] Tự chữa phạt oan sau khi duyệt bù công: live=${cleared}, lưu trữ=${archivedCleared}.`);

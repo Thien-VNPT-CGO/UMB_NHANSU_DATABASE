@@ -69,6 +69,18 @@ export const OfficeApprovalsView: React.FC<{ currentUser: any; cols?: any; onTog
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+  // Hàng đợi realtime: NV nộp phiếu hoặc máy HR khác duyệt → danh sách tự tải
+  // lại ngay, không phải bấm "Tải lại" / F5. App.tsx phát 'ubm:adjustments-reload'
+  // khi socket báo office-adjustments/office-leaves.
+  useEffect(() => {
+    const handler = () => load();
+    window.addEventListener('ubm:adjustments-reload', handler);
+    window.addEventListener('ubm:office-approvals-reload', handler);
+    return () => {
+      window.removeEventListener('ubm:adjustments-reload', handler);
+      window.removeEventListener('ubm:office-approvals-reload', handler);
+    };
+  }, [load]);
 
   const review = async (kind: 'leave' | 'adjust', id: string, decision: 'APPROVE' | 'REJECT') => {
     let note = '';
@@ -78,11 +90,24 @@ export const OfficeApprovalsView: React.FC<{ currentUser: any; cols?: any; onTog
     }
     setBusy(`${id}:${decision}`); setNotice(null);
     try {
-      await apiRequest(`/office/${kind === 'leave' ? 'leaves' : 'adjustments'}/${encodeURIComponent(id)}/review`, {
+      const res: any = await apiRequest(`/office/${kind === 'leave' ? 'leaves' : 'adjustments'}/${encodeURIComponent(id)}/review`, {
         method: 'POST',
         body: JSON.stringify({ decision, note }),
       });
-      setNotice({ kind: 'ok', text: decision === 'APPROVE' ? 'Đã duyệt phiếu.' : 'Đã từ chối phiếu.' });
+      let text = decision === 'APPROVE' ? 'Đã duyệt phiếu.' : 'Đã từ chối phiếu.';
+      // Duyệt bù công -> báo luôn hệ thống đã dựng công / gỡ vi phạm cho ngày đó.
+      const applied = res?.adjustment?._applied;
+      if (decision === 'APPROVE' && kind === 'adjust' && applied) {
+        const bits: string[] = [];
+        const officeLegs = Array.isArray(applied.created_office) ? applied.created_office.length : 0;
+        const stdLegs = Array.isArray(applied.created_standard) ? applied.created_standard.length : 0;
+        if (officeLegs > 0) bits.push(`bù ${officeLegs} lượt chấm công`);
+        if (stdLegs > 0) bits.push(`đồng bộ ${stdLegs} lượt sang bảng công`);
+        if (Number(applied.cleared) > 0) bits.push(`gỡ ${applied.cleared} vi phạm`);
+        if (Number(applied.absent_removed) > 0) bits.push(`xóa ${applied.absent_removed} bản ghi vắng`);
+        if (bits.length > 0) text = `Đã duyệt phiếu: ${bits.join(', ')}.`;
+      }
+      setNotice({ kind: 'ok', text });
       await load();
     } catch (err: any) {
       setNotice({ kind: 'err', text: `Thao tác thất bại: ${err?.message || err}` });
