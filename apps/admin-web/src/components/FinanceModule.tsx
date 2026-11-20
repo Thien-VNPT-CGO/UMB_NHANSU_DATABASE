@@ -1933,32 +1933,40 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                     // Gợi ý (placeholder) phụ cấp / LCB đang cấu hình — Kế toán nhập > 0 để ghi đè kỳ này.
                     const cfgAllowance = Math.max(0, Math.floor(Number(salaryConfigs?.[emp.employee_id]?.allowance) || 0));
                     const cfgBase = Math.max(0, Math.floor(Number(salaryConfigs?.[emp.employee_id]?.base_salary) || 0));
-                    const cell = (field: string, width = '100%') => (
-                      <input type="number" inputMode="numeric" className={`fin-input fin-manual-cell${field === 'phu_cap' && Number(inp.phu_cap) > 0 ? ' is-manual' : ''}`} style={{ width }}
-                        data-mfield={field} data-memp={emp.employee_id}
-                        value={inp[field] ?? ''}
-                        placeholder={field === 'phu_cap' && cfgAllowance > 0 ? String(cfgAllowance) : field === 'luong_cb' && cfgBase > 0 ? String(cfgBase) : undefined}
-                        title={field === 'phu_cap' && cfgAllowance > 0 ? `Phụ cấp cấu hình: ${cfgAllowance.toLocaleString('vi-VN')}đ — nhập > 0 để ghi đè kỳ này, để trống dùng cấu hình`
-                          : field === 'luong_cb' && cfgBase > 0 ? `LCB cấu hình: ${cfgBase.toLocaleString('vi-VN')}đ — nhập > 0 để ghi đè kỳ này, để trống dùng cấu hình`
-                            : field === 'dong_phuc' && autoUniform && (inp as any).__autoUniform ? `Tự động từ Hồ Sơ NV: ${autoUniform.qty} áo${autoUniform.sizes ? ` (${autoUniform.sizes})` : ''} — gõ để sửa` : undefined}
-                        onKeyDown={(e) => {
-                          if (e.key !== 'Enter' && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-                          const root = (e.currentTarget as HTMLElement).closest('.fin-manual-scroll');
-                          if (!root) return;
-                          e.preventDefault();
-                          const list = Array.from(root.querySelectorAll<HTMLInputElement>(`input[data-mfield="${field}"]`));
-                          const i = list.indexOf(e.currentTarget as HTMLInputElement);
-                          const next = list[i + (e.key === 'ArrowUp' ? -1 : 1)];
-                          if (next) { next.focus(); next.select(); }
-                        }}
-                        onChange={v => upsertInput(emp.employee_id, field, v.target.value)} aria-label={field} />
-                    );
+                    const cell = (field: string, width = '100%') => {
+                      const manualOverride = field === 'phu_cap' && Number(inp.phu_cap) > 0;
+                      // Ô trống hiển thị gợi ý mờ: LCB/phụ cấp lấy số cấu hình, còn lại "0".
+                      const hint = field === 'phu_cap' && cfgAllowance > 0 ? String(cfgAllowance)
+                        : field === 'luong_cb' && cfgBase > 0 ? String(cfgBase) : '0';
+                      const tip = field === 'phu_cap' && cfgAllowance > 0 ? `Phụ cấp cấu hình: ${cfgAllowance.toLocaleString('vi-VN')}đ — nhập > 0 để ghi đè kỳ này, để trống dùng cấu hình`
+                        : field === 'luong_cb' && cfgBase > 0 ? `LCB cấu hình: ${cfgBase.toLocaleString('vi-VN')}đ — nhập > 0 để ghi đè kỳ này, để trống dùng cấu hình`
+                          : field === 'dong_phuc' && autoUniform && (inp as any).__autoUniform ? `Tự động từ Hồ Sơ NV: ${autoUniform.qty} áo${autoUniform.sizes ? ` (${autoUniform.sizes})` : ''} — gõ để sửa` : undefined;
+                      return (
+                        <input type="number" inputMode="numeric"
+                          className={`fin-input fin-manual-cell${manualOverride ? ' is-manual' : ''}`} style={{ width }}
+                          data-mfield={field} data-memp={emp.employee_id}
+                          value={inp[field] ?? ''}
+                          placeholder={hint}
+                          title={tip}
+                          onKeyDown={(e) => {
+                            if (e.key !== 'Enter' && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+                            const root = (e.currentTarget as HTMLElement).closest('.fin-manual-scroll');
+                            if (!root) return;
+                            e.preventDefault();
+                            const list = Array.from(root.querySelectorAll<HTMLInputElement>(`input[data-mfield="${field}"]`));
+                            const i = list.indexOf(e.currentTarget as HTMLInputElement);
+                            const next = list[i + (e.key === 'ArrowUp' ? -1 : 1)];
+                            if (next) { next.focus(); next.select(); }
+                          }}
+                          onChange={v => upsertInput(emp.employee_id, field, v.target.value)} aria-label={field} />
+                      );
+                    };
                     return (
                       <tr key={emp.employee_id} className={idx % 2 ? 'fin-alt' : undefined}>
                         {show('stt') && <td className="ctr">{idx + 1}</td>}
                         {show('code') && <td className="ctr fin-mono">{emp.employee_code}</td>}
-                        {show('name') && <td style={{ fontWeight: 700 }}>{emp.full_name}</td>}
-                        {show('branch') && <td>{branchLabelOf(g.id)}</td>}
+                        {show('name') && <td style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{emp.full_name}</td>}
+                        {show('branch') && <td title={branchLabelOf(g.id)} style={{ fontSize: 10.5, color: 'var(--fin-muted)', whiteSpace: 'nowrap' }}>{g.id}</td>}
                         {show('luong_cb') && <td className="num">{cell('luong_cb')}</td>}
                         {show('phu_cap') && <td className="num">{cell('phu_cap')}</td>}
                         {show('ot_extra') && <td className="num">{cell('ot_extra')}</td>}
