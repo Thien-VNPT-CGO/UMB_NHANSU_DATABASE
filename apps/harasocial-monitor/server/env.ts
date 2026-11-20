@@ -20,6 +20,8 @@ function clean(value: string | undefined): string {
 export const env = {
   nodeEnv: clean(process.env.NODE_ENV) || 'development',
   port: Number(process.env.PORT || 3000),
+  // Trên VPS đặt HOST=127.0.0.1 để chỉ Nginx nội bộ truy cập được cổng 3010.
+  host: clean(process.env.HOST) || '0.0.0.0',
   databaseUrl: clean(process.env.DATABASE_URL),
   publicUrl: clean(process.env.PUBLIC_URL).replace(/\/+$/, ''),
 

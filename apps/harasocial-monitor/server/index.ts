@@ -136,10 +136,10 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
   res.status(status).json(payload);
 });
 
-const server = app.listen(env.port, () => {
+const server = app.listen(env.port, env.host, () => {
   initFirebaseAdmin();
   startWorkers();
-  console.log(`[harasocial] http://localhost:${env.port} (${env.nodeEnv})`);
+  console.log(`[harasocial] http://${env.host}:${env.port} (${env.nodeEnv})`);
   console.log(`[harasocial] database: ${hasDatabase() ? 'configured' : 'NOT CONFIGURED'}`);
   console.log(`[harasocial] firebase admin: ${firebaseAdminStatus().ready ? 'ready' : 'not ready'}`);
   console.log(`[harasocial] auth modes: ${JSON.stringify(authModeSummary())}`);

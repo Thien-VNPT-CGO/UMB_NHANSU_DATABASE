@@ -74,6 +74,7 @@ cat > "$ENV_FILE" <<EOF
 # Tự sinh bởi deploy/vps/setup-harasocial.sh — không commit file này.
 NODE_ENV=production
 PORT=$SERVICE_PORT
+HOST=127.0.0.1
 PUBLIC_URL=https://$DOMAIN/harasocial
 
 DATABASE_URL=postgresql://$DB_USER:$DB_PASS@127.0.0.1:5432/$DB_NAME
