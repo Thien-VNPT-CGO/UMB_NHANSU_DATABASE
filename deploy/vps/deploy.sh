@@ -22,9 +22,20 @@ echo "==> 2. Build 3 web tro ve API VPS (${API_BASE})"
 export GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
 node apps/backend/scripts/gen-version.cjs 2>/dev/null || true
 
+# npm ci co the fail giua chung (ENOTEMPTY/ENOSPC) khi node_modules cu con sot
+# lai. Lan dau that bai -> don sach node_modules cua root + moi workspace roi thu lai.
+run_npm_ci() {
+  if npm ci; then
+    return 0
+  fi
+  echo "==> npm ci loi -> don node_modules cu (root + workspaces) va thu lai..."
+  rm -rf node_modules apps/*/node_modules packages/*/node_modules
+  npm ci
+}
+
 if [ ! -d "node_modules" ] || [ ! -f "node_modules/.bin/tsc" ]; then
   echo "==> Phat hien thieu node_modules tren VPS moi -> Dang chay npm ci..."
-  npm ci
+  run_npm_ci
   LOCK_HASH_FILE=".deploy-lock-hash"
   sha1sum package-lock.json | cut -d' ' -f1 > "$LOCK_HASH_FILE" 2>/dev/null || true
 else
@@ -35,7 +46,7 @@ else
   LAST_HASH=$(cat "$LOCK_HASH_FILE" 2>/dev/null || echo "")
   if [ "$CURRENT_HASH" != "$LAST_HASH" ]; then
     echo "==> package-lock.json da thay doi -> Dang chay npm ci..."
-    npm ci
+    run_npm_ci
     echo "$CURRENT_HASH" > "$LOCK_HASH_FILE"
   fi
 fi
