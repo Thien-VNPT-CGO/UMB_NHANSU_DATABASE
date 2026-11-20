@@ -142,5 +142,45 @@ systemctl enable harasocial-monitor >/dev/null 2>&1 || true
 systemctl restart harasocial-monitor
 echo "    service: $(systemctl is-active harasocial-monitor || true)"
 
+echo "==> 5. Kết nối HR webhook (UBM backend -> HaraSocial)"
+READY=0
+for i in $(seq 1 20); do
+  if curl -fsS "http://127.0.0.1:$SERVICE_PORT/api/health" >/dev/null 2>&1; then READY=1; break; fi
+  sleep 1
+done
+if [ "$READY" -eq 1 ] && [ -f apps/backend/.env ]; then
+  OWNER_UID="$(read_env HARA_OWNER_UID)"
+  OWNER_UID="${OWNER_UID:-ubm-director}"
+  TOKEN=$(curl -fsS -X POST "http://127.0.0.1:$SERVICE_PORT/api/auth/access" \
+    -H 'Content-Type: application/json' -d "{\"code\":\"$ACCESS_CODE\"}" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' 2>/dev/null || true)
+  if [ -n "$TOKEN" ]; then
+    curl -fsS -X PATCH "http://127.0.0.1:$SERVICE_PORT/api/workspace" \
+      -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+      -d '{"hr":{"enabled":true}}' >/dev/null 2>&1 || true
+    HR_SECRET=$(curl -fsS "http://127.0.0.1:$SERVICE_PORT/api/bootstrap" \
+      -H "Authorization: Bearer $TOKEN" \
+      | python3 -c 'import json,sys; print((json.load(sys.stdin).get("workspace",{}).get("hr",{}) or {}).get("webhookSecret",""))' 2>/dev/null || true)
+    if [ -n "$HR_SECRET" ]; then
+      cp apps/backend/.env "apps/backend/.env.bak-harasocial"
+      sed -i '/^HR_SCHEDULE_WEBHOOK_/d' apps/backend/.env
+      cat >> apps/backend/.env <<EOF
+HR_SCHEDULE_WEBHOOK_ENABLED=1
+HR_SCHEDULE_WEBHOOK_URL=https://$DOMAIN/harasocial/api/webhooks/hr?workspace=$OWNER_UID
+HR_SCHEDULE_WEBHOOK_SECRET=$HR_SECRET
+HR_SCHEDULE_WEBHOOK_TIMEOUT_MS=10000
+EOF
+      docker compose up -d backend >/dev/null 2>&1 || true
+      echo "    đã cấu hình HR_SCHEDULE_WEBHOOK_URL + secret cho backend UBM"
+    else
+      echo "    [CANH BAO] không đọc được hr.webhookSecret — cấu hình HR thủ công trong tab Cài đặt"
+    fi
+  else
+    echo "    [CANH BAO] không đăng nhập được bằng mã truy cập để tự cấu hình HR"
+  fi
+else
+  echo "    [CANH BAO] HaraSocial chưa sẵn sàng — bỏ qua cấu hình HR webhook"
+fi
+
 echo
 echo "Mã truy cập quản trị (lưu lại, không chia sẻ): $ACCESS_CODE"
