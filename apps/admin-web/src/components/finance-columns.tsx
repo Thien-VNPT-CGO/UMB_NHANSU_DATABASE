@@ -26,7 +26,7 @@ export const FINANCE_COLUMN_DEFS: Record<string, Array<{ key: string; label: str
   ],
   'fin-calculate': [
     { key: 'stt', label: 'STT' }, { key: 'code', label: 'Mã NV' }, { key: 'name', label: 'Họ tên' }, { key: 'branch', label: 'Chi nhánh' },
-    { key: 'luong_cb', label: 'LCB' }, { key: 'ot_extra', label: 'OT thêm' }, { key: 'bonus_extra', label: 'Bonus' }, { key: 'ung_luong', label: 'Ứng lương' },
+    { key: 'luong_cb', label: 'LCB' }, { key: 'phu_cap', label: 'Phụ cấp' }, { key: 'ot_extra', label: 'OT thêm' }, { key: 'bonus_extra', label: 'Bonus' }, { key: 'ung_luong', label: 'Ứng lương' },
     { key: 'tru_kpi', label: 'Trừ KPI' }, { key: 'dong_phuc', label: 'Trừ ĐP' }, { key: 'note', label: 'Ghi chú' },
     { key: 'b1', label: 'B1 Giờ/LCB' }, { key: 'b2', label: 'B2 Tổng cộng' }, { key: 'b3', label: 'B3 Tổng lương' }, { key: 'b4', label: 'B4 Thực lãnh' },
   ],

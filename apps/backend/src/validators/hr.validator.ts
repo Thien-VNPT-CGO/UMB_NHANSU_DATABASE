@@ -556,12 +556,13 @@ export const payrollFormulaBody = z.object({
   otThreshold2: z.coerce.number().min(0).max(24).default(15),
 }).passthrough();
 
-// Dữ liệu nhập tay theo kỳ cho 1 NV (6 cột: H/K/AW/O/N/P).
+// Dữ liệu nhập tay theo kỳ cho 1 NV (7 cột: LCB/Phụ cấp/OT/Bonus/Ứng/KPI/ĐP).
 // Chấp nhận cả employeeId (camel) lẫn employee_id (snake) để client cũ không 400 oan.
 export const payrollInputBody = z.object({
   employeeId: z.string().trim().min(1).max(64).optional(),
   employee_id: z.string().trim().min(1).max(64).optional(),
   luong_cb: z.coerce.number().min(0).max(1_000_000_000).default(0),
+  phu_cap: z.coerce.number().min(0).max(1_000_000_000).default(0),
   ot_extra: z.coerce.number().min(0).max(1_000_000_000).default(0),
   bonus_extra: z.coerce.number().min(0).max(1_000_000_000).default(0),
   ung_luong: z.coerce.number().min(0).max(1_000_000_000).default(0),

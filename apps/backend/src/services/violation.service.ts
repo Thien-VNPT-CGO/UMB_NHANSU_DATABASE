@@ -793,6 +793,7 @@ export async function applyPayrollDeduction(repo: ISheetsRepository, ticket: Vio
     period,
     employee_id: ticket.employee_id,
     luong_cb: 0,
+    phu_cap: 0,
     ot_extra: 0,
     bonus_extra: 0,
     ung_luong: 0,

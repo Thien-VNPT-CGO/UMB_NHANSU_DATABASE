@@ -1200,7 +1200,15 @@ export class OfficeService {
     // Văn phòng LUÔN lương theo tháng — cấu hình do Kế toán đặt (HR không sửa).
     const cfg = this.salaryConfig ? await this.salaryConfig.getForEmployee(employeeId).catch(() => null) : null;
     const baseSalary = Math.max(0, Math.floor(Number(cfg?.base_salary) || 0));
-    const allowance = Math.max(0, Math.floor(Number(cfg?.allowance) || 0));
+    // Kế toán nhập tay phụ cấp riêng kỳ này (> 0) thì ghi đè phụ cấp cấu hình.
+    const periodInputs = await this.repo.getPayrollInputs(p).catch(() => [] as any[]);
+    const periodInput = (periodInputs || []).find(
+      (x: any) => String(x?.employee_id || '') === String(employeeId),
+    );
+    const manualAllowance = Math.max(0, Math.floor(Number(periodInput?.phu_cap) || 0));
+    const allowance = manualAllowance > 0
+      ? manualAllowance
+      : Math.max(0, Math.floor(Number(cfg?.allowance) || 0));
     const monthlyTotal = baseSalary + allowance;
     let totalMinutes = 0;
     let workDays = 0;

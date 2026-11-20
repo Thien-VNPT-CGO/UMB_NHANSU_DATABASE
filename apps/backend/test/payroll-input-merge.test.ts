@@ -58,3 +58,11 @@ test('mergePayrollInputRows thêm dòng chỉ có trên Sheet + chuẩn hóa k�
   assert.equal(out[0].employee_id, 'E3');
   assert.equal(out[0].luong_cb, 2000000);
 });
+
+test('mergePayrollInputRows đọc cột Phụ cấp (tay) ở cuối Sheet', () => {
+  const out = mergePayrollInputRows([], [
+    ['2026-11', 'E4', 0, 0, 0, 0, 0, 0, '', 'ADM', '2026-11-07T11:00:00.000Z', '750.000'],
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].phu_cap, 750000);
+});

@@ -697,7 +697,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const buildInputPayload = useCallback((employeeId: string, field: string, value: string) => {
     const existing = (inputsRef.current || []).find((i: any) => i.employee_id === employeeId) || {};
     // Lưu ý: period/employeeId phải thắng existing (tránh dính kỳ cũ sau khi đổi tháng).
-    const payload: any = { luong_cb: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: '', ...existing, employeeId, employee_id: employeeId, period: month };
+    const payload: any = { luong_cb: 0, phu_cap: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: '', ...existing, employeeId, employee_id: employeeId, period: month };
     const num = Number(value);
     payload[field] = field === 'note' ? String(value ?? '').slice(0, 1000) : (isNaN(num) ? 0 : Math.max(0, Math.floor(num)));
     // Chưa có dòng nhập tay (hoặc ô trống) -> giữ tiền đồng phục HR đã nhập,
@@ -743,7 +743,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
       const arr = Array.isArray(prev) ? [...prev] : [];
       const i = arr.findIndex(x => x.employee_id === employeeId);
       if (i >= 0) arr[i] = { ...arr[i], [field]: val };
-      else arr.push({ employee_id: employeeId, employeeId, period: month, luong_cb: '', ot_extra: '', bonus_extra: '', ung_luong: '', tru_kpi: '', dong_phuc: '', note: field === 'note' ? val : '', [field]: val });
+      else arr.push({ employee_id: employeeId, employeeId, period: month, luong_cb: '', phu_cap: '', ot_extra: '', bonus_extra: '', ung_luong: '', tru_kpi: '', dong_phuc: '', note: field === 'note' ? val : '', [field]: val });
       return arr;
     });
     const key = `${employeeId}|${field}`;
@@ -773,7 +773,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
       const cur = (inputsRef.current || []).find((i: any) => i.employee_id === p.employeeId) || ({} as any);
       const payload = (() => {
         const existing = cur;
-        const body: any = { employeeId: p.employeeId, employee_id: p.employeeId, period: month, luong_cb: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: '', ...existing };
+        const body: any = { employeeId: p.employeeId, employee_id: p.employeeId, period: month, luong_cb: 0, phu_cap: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: '', ...existing };
         const num = Number(cur[p.field]);
         body[p.field] = p.field === 'note' ? String(cur[p.field] ?? '') : (isNaN(num) ? 0 : num);
         if (body.dong_phuc === undefined || body.dong_phuc === null || String(body.dong_phuc).trim() === '') {
@@ -812,7 +812,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
       return;
     }
     const scopeLabel = batch ? payrollBatchLabel(batch) : 'TOÀN BỘ NHÂN VIÊN';
-    if (!window.confirm(`TÍNH LƯƠNG ${periodLabel(month)} — ${scopeLabel} theo CÔNG THỨC EXCEL?\nTỔNG CỘNG = LCB + giờ công + OT thêm + Bonus; THỰC LÃNH = TỔNG CỘNG − KPI − phạt − ứng − đồng phục.\nChỉ nhân viên thuộc đợt này được tính; đợt còn lại giữ nguyên.`)) return;
+    if (!window.confirm(`TÍNH LƯƠNG ${periodLabel(month)} — ${scopeLabel} theo CÔNG THỨC EXCEL?\nTỔNG CỘNG = LCB + phụ cấp + giờ công + OT thêm + Bonus; THỰC LÃNH = TỔNG CỘNG − KPI − phạt − ứng − đồng phục.\nChỉ nhân viên thuộc đợt này được tính; đợt còn lại giữ nguyên.`)) return;
     setCalcBusy(true);
     try {
       // Flush mọi ô nhập tay đang chờ trước khi tính — nếu không, kỳ lương đọc số cũ.
@@ -1691,7 +1691,8 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
     return branchGroups(filtered, (e: any) => e.default_branch_id);
   }, [batchEmployees, q]);
   const inputTotals = useMemo(() => ({
-    lcb: sumBy(inputRows, 'luong_cb'), ot: sumBy(inputRows, 'ot_extra'), bonus: sumBy(inputRows, 'bonus_extra'),
+    lcb: sumBy(inputRows, 'luong_cb'), pc: sumBy(inputRows, 'phu_cap'),
+    ot: sumBy(inputRows, 'ot_extra'), bonus: sumBy(inputRows, 'bonus_extra'),
     ung: sumBy(inputRows, 'ung_luong'), kpi: sumBy(inputRows, 'tru_kpi'), dp: sumBy(inputRows, 'dong_phuc'),
   }), [inputRows]);
   // Đồng phục HR đã nhập cho đúng tháng đang chọn — hiển thị để Kế toán đối soát
@@ -1859,7 +1860,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
 
       {/* Nhập tay theo chi nhánh */}
       <div className="fin-card">
-        <CardHead title="Nhập liệu tay theo kỳ" icon={<FileSpreadsheet size={14} color="#E85D92" />} sub="Nhóm theo chi nhánh — tự động lưu 0,8s sau khi ngừng gõ"
+        <CardHead title="Nhập liệu tay theo kỳ" icon={<FileSpreadsheet size={14} color="#E85D92" />} sub="Nhóm theo chi nhánh — tự động lưu 0,8s sau khi ngừng gõ · Phụ cấp: nhập > 0 ghi đè cấu hình, trống/0 lấy cấu hình"
           >
           {inputsSaving
             ? <span className="fin-chip-stat" style={{ borderColor: '#fcd34d', background: '#fffbeb', color: '#92400e' }}><Loader2 size={11} className="fin-spin" style={{ verticalAlign: -1 }} /> Đang lưu {pendingCount} ô…</span>
@@ -1867,6 +1868,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
               ? <span className="fin-chip-stat" style={{ borderColor: '#86efac', background: '#f0fdf4', color: '#166534' }}>✓ Đã lưu lúc {inputsSavedAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
               : <span className="fin-chip-stat">Chưa có thay đổi</span>}
           <span className="fin-chip-stat">LCB {formatVND(inputTotals.lcb)}</span>
+          <span className="fin-chip-stat" title="Tổng phụ cấp Kế toán nhập tay (> 0 ghi đè cấu hình)">Phụ cấp tay {formatVND(inputTotals.pc)}</span>
           <span className="fin-chip-stat">OT {formatVND(inputTotals.ot)}</span>
           <span className="fin-chip-stat">Bonus {formatVND(inputTotals.bonus)}</span>
           <span className="fin-chip-stat">Ứng {formatVND(inputTotals.ung)}</span>
@@ -1876,9 +1878,9 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
           {batchPills}
         </div>
         <div className="fin-table-wrap" style={{ maxHeight: '62vh' }}>
-          <table className="fin-table" style={{ minWidth: 1080 }}>
+          <table className="fin-table" style={{ minWidth: 1180 }}>
             <thead>
-              <tr>{show('stt') && <th className="ctr">STT</th>}{show('code') && <th>Mã NV</th>}{show('name') && <th>Họ tên</th>}{show('branch') && <th>Chi nhánh</th>}{show('luong_cb') && <th className="num">LCB</th>}{show('ot_extra') && <th className="num">OT thêm</th>}{show('bonus_extra') && <th className="num">Bonus</th>}{show('ung_luong') && <th className="num">Ứng lương</th>}{show('tru_kpi') && <th className="num">Trừ KPI</th>}{show('dong_phuc') && <th className="num">Trừ ĐP</th>}{show('note') && <th style={{ minWidth: 280 }}>Ghi chú (nhiều dòng)</th>}</tr>
+              <tr>{show('stt') && <th className="ctr">STT</th>}{show('code') && <th>Mã NV</th>}{show('name') && <th>Họ tên</th>}{show('branch') && <th>Chi nhánh</th>}{show('luong_cb') && <th className="num">LCB</th>}{show('phu_cap') && <th className="num" title="Nhập tay > 0 sẽ ghi đè phụ cấp cấu hình; để trống/0 thì lấy cấu hình">Phụ cấp</th>}{show('ot_extra') && <th className="num">OT thêm</th>}{show('bonus_extra') && <th className="num">Bonus</th>}{show('ung_luong') && <th className="num">Ứng lương</th>}{show('tru_kpi') && <th className="num">Trừ KPI</th>}{show('dong_phuc') && <th className="num">Trừ ĐP</th>}{show('note') && <th style={{ minWidth: 280 }}>Ghi chú (nhiều dòng)</th>}</tr>
             </thead>
             <tbody>
               {groups.map(g => {
@@ -1887,14 +1889,18 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                 const colCount = FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols);
                 return (
                 <React.Fragment key={g.id}>
-                  <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={colCount} totalText={`LCB ${formatVND(gSum('luong_cb'))} · OT ${formatVND(gSum('ot_extra'))} · Bonus ${formatVND(gSum('bonus_extra'))} · Ứng ${formatVND(gSum('ung_luong'))} · KPI ${formatVND(gSum('tru_kpi'))} · ĐP ${formatVND(gSum('dong_phuc'))}`} />
+                  <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={colCount} totalText={`LCB ${formatVND(gSum('luong_cb'))} · PC tay ${formatVND(gSum('phu_cap'))} · OT ${formatVND(gSum('ot_extra'))} · Bonus ${formatVND(gSum('bonus_extra'))} · Ứng ${formatVND(gSum('ung_luong'))} · KPI ${formatVND(gSum('tru_kpi'))} · ĐP ${formatVND(gSum('dong_phuc'))}`} />
                   {g.rows.map((emp: any, idx: number) => {
                     const inp = rowInput(emp.employee_id);
                     const autoUniform = uniformByEmp.get(String(emp.employee_id));
+                    // Gợi ý (placeholder) phụ cấp đang cấu hình — Kế toán nhập > 0 để ghi đè kỳ này.
+                    const cfgAllowance = Math.max(0, Math.floor(Number(salaryConfigs?.[emp.employee_id]?.allowance) || 0));
                     const cell = (field: string, width = '100%') => (
                       <input type="number" className="fin-input" style={{ width, padding: '5px 7px', fontSize: 11.5 }}
                         value={inp[field] ?? ''}
-                        title={field === 'dong_phuc' && autoUniform && (inp as any).__autoUniform ? `Tự động từ Hồ Sơ NV: ${autoUniform.qty} áo${autoUniform.sizes ? ` (${autoUniform.sizes})` : ''} — gõ để sửa` : undefined}
+                        placeholder={field === 'phu_cap' && cfgAllowance > 0 ? String(cfgAllowance) : undefined}
+                        title={field === 'phu_cap' && cfgAllowance > 0 ? `Phụ cấp cấu hình: ${cfgAllowance.toLocaleString('vi-VN')}đ — nhập > 0 để ghi đè kỳ này, để trống dùng cấu hình`
+                          : field === 'dong_phuc' && autoUniform && (inp as any).__autoUniform ? `Tự động từ Hồ Sơ NV: ${autoUniform.qty} áo${autoUniform.sizes ? ` (${autoUniform.sizes})` : ''} — gõ để sửa` : undefined}
                         onChange={v => upsertInput(emp.employee_id, field, v.target.value)} aria-label={field} />
                     );
                     return (
@@ -1904,6 +1910,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                         {show('name') && <td style={{ fontWeight: 700 }}>{emp.full_name}</td>}
                         {show('branch') && <td>{branchLabelOf(g.id)}</td>}
                         {show('luong_cb') && <td className="num">{cell('luong_cb')}</td>}
+                        {show('phu_cap') && <td className="num">{cell('phu_cap')}</td>}
                         {show('ot_extra') && <td className="num">{cell('ot_extra')}</td>}
                         {show('bonus_extra') && <td className="num">{cell('bonus_extra')}</td>}
                         {show('ung_luong') && <td className="num">{cell('ung_luong')}</td>}
@@ -1916,8 +1923,9 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                     );
                   })}
                   <tr className="fin-subtotal">
-                    <td colSpan={Math.max(0, colCount - 7)}>CỘNG {branchLabelOf(g.id).toUpperCase()} ({g.rows.length} NV)</td>
+                    <td colSpan={Math.max(0, colCount - 8)}>CỘNG {branchLabelOf(g.id).toUpperCase()} ({g.rows.length} NV)</td>
                     {show('luong_cb') && <td className="num fin-money">{formatVND(gSum('luong_cb'))}</td>}
+                    {show('phu_cap') && <td className="num fin-money">{formatVND(gSum('phu_cap'))}</td>}
                     {show('ot_extra') && <td className="num fin-money">{formatVND(gSum('ot_extra'))}</td>}
                     {show('bonus_extra') && <td className="num fin-money">{formatVND(gSum('bonus_extra'))}</td>}
                     {show('ung_luong') && <td className="num fin-money">{formatVND(gSum('ung_luong'))}</td>}
@@ -1931,10 +1939,11 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
               {groups.length === 0 && <tr><td colSpan={FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols)} className="fin-empty">{q ? 'Không tìm thấy nhân viên phù hợp.' : 'Chưa có nhân viên.'}</td></tr>}
               {batchEmployees.length > 0 && (
                 <tr className="fin-grand">
-                  <td colSpan={Math.max(0, FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols) - 7)}>
+                  <td colSpan={Math.max(0, FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols) - 8)}>
                     {batchFilter === 'ALL' ? 'TỔNG TOÀN CÔNG TY' : `TỔNG ĐỢT ${payrollBatchLabel(batchFilter).toUpperCase()}`} ({batchEmployees.length} NV)
                   </td>
                   {show('luong_cb') && <td className="num fin-money">{formatVND(inputTotals.lcb)}</td>}
+                  {show('phu_cap') && <td className="num fin-money">{formatVND(inputTotals.pc)}</td>}
                   {show('ot_extra') && <td className="num fin-money">{formatVND(inputTotals.ot)}</td>}
                   {show('bonus_extra') && <td className="num fin-money">{formatVND(inputTotals.bonus)}</td>}
                   {show('ung_luong') && <td className="num fin-money">{formatVND(inputTotals.ung)}</td>}
@@ -1982,7 +1991,8 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                   const isMonthly = r.payMode === 'MONTHLY';
                   const manualCb = inp.luong_cb !== undefined && inp.luong_cb !== null && String(inp.luong_cb).trim() !== '' && Number(inp.luong_cb) > 0;
                   const luongCB = isMonthly ? (manualCb ? num(inp.luong_cb) : num(r.monthlyBase ?? r.monthly_base)) : 0;
-                  const allowance = num(r.allowance);
+                  const manualAllowance = num(inp.phu_cap);
+                  const allowance = manualAllowance > 0 ? manualAllowance : num(r.allowance);
                   const hourly = isMonthly ? 0 : num(r.standardPay);
                   const b1 = isMonthly ? luongCB + allowance : hourly + allowance;
                   const ot = num(inp.ot_extra), bonus = num(inp.bonus_extra) + num(r.bonus);
@@ -2001,7 +2011,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                   return [main, (
                     <tr key={`${r.employeeId}-x`} style={{ backgroundColor: '#f8fafc' }}>
                       <td colSpan={FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols)} style={{ padding: '8px 14px 14px 22px', fontSize: 12 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B1.</b> {isMonthly ? `Lương tháng = LCB ${fmt(luongCB)} + phụ cấp ${fmt(allowance)} (không tính ca/giờ)` : `Lương giờ = TV ${Number(r.tvHours || 0)}h × ${fmt(Number(r.tvHours || 0) > 0 && Number(r.tvPay || 0) > 0 ? Number(r.tvPay) / Number(r.tvHours) : (formula?.rateTV ?? 21000))} + CT ${Number(r.ctHours || 0)}h × ${fmt(Number(r.ctHours || 0) > 0 && Number(r.ctPay || 0) > 0 ? Number(r.ctPay) / Number(r.ctHours) : (Number(r.rate) || formula?.rateCT || 25500))}; + phụ cấp ${fmt(allowance)}`}</span><strong>= {fmt(b1)}</strong></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B1.</b> {isMonthly ? `Lương tháng = LCB ${fmt(luongCB)} + phụ cấp ${fmt(allowance)}${manualAllowance > 0 ? ' (nhập tay)' : ' (cấu hình)'} (không tính ca/giờ)` : `Lương giờ = TV ${Number(r.tvHours || 0)}h × ${fmt(Number(r.tvHours || 0) > 0 && Number(r.tvPay || 0) > 0 ? Number(r.tvPay) / Number(r.tvHours) : (formula?.rateTV ?? 21000))} + CT ${Number(r.ctHours || 0)}h × ${fmt(Number(r.ctHours || 0) > 0 && Number(r.ctPay || 0) > 0 ? Number(r.ctPay) / Number(r.ctHours) : (Number(r.rate) || formula?.rateCT || 25500))}; + phụ cấp ${fmt(allowance)}${manualAllowance > 0 ? ' (nhập tay)' : ' (cấu hình)'}`}</span><strong>= {fmt(b1)}</strong></div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B2.</b> TỔNG CỘNG = LCB/giờ {fmt(b1)} + OT thêm {fmt(ot)} + Bonus {fmt(bonus)}</span><strong>= {fmt(b2)}</strong></div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B3.</b> TỔNG LƯƠNG = TỔNG CỘNG {fmt(b2)} − KPI {fmt(kpi)} − phạt trễ/vắng {fmt(ded)}</span><strong>= {fmt(b3)}</strong></div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B4.</b> THỰC LÃNH = TỔNG LƯƠNG {fmt(b3)} − Ứng {fmt(num(inp.ung_luong))} − Đồng phục {fmt(num(inp.dong_phuc))}</span><strong style={{ color: '#059669' }}>= {fmt(b4)}</strong></div>
@@ -2227,6 +2237,8 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
     setEditingId(String(s?.item_id || s?.employee_id));
     setEditVals({
       luong_cb: s.luong_cb ?? inp.luong_cb ?? '',
+      // Giữ phụ cấp nhập tay khi sửa trực tiếp (không gửi 0 làm mất số Kế toán đã nhập).
+      phu_cap: inp.phu_cap ?? '',
       ot_extra: s.ot_extra ?? inp.ot_extra ?? '',
       bonus_extra: s.bonus ?? inp.bonus_extra ?? '',
       ung_luong: s.ung_luong ?? inp.ung_luong ?? '',
@@ -2236,7 +2248,7 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
     });
   };
   const saveEdit = async (s: any) => {
-    if (!String(editVals.note || '').trim() && !Number(editVals.luong_cb) && !Number(editVals.ot_extra) && !Number(editVals.bonus_extra) && !Number(editVals.ung_luong) && !Number(editVals.tru_kpi) && !Number(editVals.dong_phuc)) {
+    if (!String(editVals.note || '').trim() && !Number(editVals.luong_cb) && !Number(editVals.phu_cap) && !Number(editVals.ot_extra) && !Number(editVals.bonus_extra) && !Number(editVals.ung_luong) && !Number(editVals.tru_kpi) && !Number(editVals.dong_phuc)) {
       if (!window.confirm('Bạn đang lưu toàn 0/trống cho NV này — hệ thống sẽ tính theo mặc định. Tiếp tục?')) return;
     }
     setEditSaving(true);
@@ -2247,6 +2259,7 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
         body: JSON.stringify({
           employeeId: s.employee_id, employee_id: s.employee_id, period: month,
           luong_cb: Math.max(0, Math.floor(Number(editVals.luong_cb) || 0)),
+          phu_cap: Math.max(0, Math.floor(Number(editVals.phu_cap) || 0)),
           ot_extra: Math.max(0, Math.floor(Number(editVals.ot_extra) || 0)),
           bonus_extra: Math.max(0, Math.floor(Number(editVals.bonus_extra) || 0)),
           ung_luong: Math.max(0, Math.floor(Number(editVals.ung_luong) || 0)),

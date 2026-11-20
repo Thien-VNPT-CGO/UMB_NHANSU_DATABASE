@@ -229,9 +229,11 @@ export async function buildPayslipPdf(input: PayslipPdfInput): Promise<Buffer> {
   const deductTotal = kpi + ungLuong + dongPhuc;
   const luongCa = Number(slip.standard_pay) || 0;
   const luongCB = Number(slip.luong_cb) || 0;
+  // Phụ cấp hiệu lực của kỳ (nhập tay ghi đè, không nhập thì lấy cấu hình).
+  const phuCap = Number(slip.allowance) || 0;
   const otExtra = Number(slip.ot_extra) || 0;
   const bonus = Number(slip.bonus) || 0;
-  const tongCong = Number(slip.tong_cong) || (luongCa + luongCB + otExtra + bonus);
+  const tongCong = Number(slip.tong_cong) || (luongCa + luongCB + phuCap + otExtra + bonus);
   const rateSnapshot = Number(slip.rate_snapshot) || 0;
 
   // ---------- 1) Header band ----------
@@ -348,6 +350,7 @@ export async function buildPayslipPdf(input: PayslipPdfInput): Promise<Buffer> {
   y = drawHeaderRow(y);
   if (rateSnapshot > 0) y = drawRow(y, `Lương theo ca (giờ) — ${hours.toFixed(1)}h`, luongCa);
   y = drawRow(y, 'Lương cơ bản (tháng)', luongCB);
+  if (phuCap > 0) y = drawRow(y, 'Phụ cấp', phuCap);
   if (otExtra > 0) y = drawRow(y, 'OT thêm (nhập tay)', otExtra);
   if (bonus > 0) y = drawRow(y, 'Bonus / Thưởng', bonus);
   y = drawSubtotal(y, 'TỔNG CỘNG', tongCong, BRAND_DARK, SOFT_BRAND);

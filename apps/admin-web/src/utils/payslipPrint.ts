@@ -109,7 +109,7 @@ function renderSlip(p: any): string {
     <table class="ps-table">
       ${Number(p?.rate_snapshot) > 0 ? lineItem('Lương theo ca (giờ)', vnd(p?.standard_pay)) : ''}
       ${lineItem('Lương cơ bản (tháng)', vnd(p?.luong_cb))}
-      ${Number(p?.allowance) > 0 ? lineItem('Phụ cấp (theo cấu hình Kế toán)', vnd(p?.allowance)) : ''}
+      ${Number(p?.allowance) > 0 ? lineItem('Phụ cấp', vnd(p?.allowance)) : ''}
       ${lineItem('OT thêm (nhập tay)', vnd(p?.ot_extra))}
       ${lineItem('Bonus / Thưởng', vnd(p?.bonus))}
       ${lineItem('TỔNG CỘNG', vnd(p?.tong_cong ?? ((Number(p?.luong_cb) || 0) + (Number(p?.allowance) || 0) + (Number(p?.standard_pay) || 0) + (Number(p?.ot_extra) || 0) + (Number(p?.bonus) || 0))), { bold: true })}

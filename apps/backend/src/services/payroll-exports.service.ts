@@ -438,13 +438,13 @@ export async function buildTinhLuongXlsx(period: string, formula: any, inputs: a
     fr += 1;
   }
   fws.getRow(fr + 1).getCell(1).value =
-    'Ghi chú: THỰC LÃNH = TỔNG CỘNG − Trừ KPI − Phạt trễ/vắng − Ứng lương − Trừ đồng phục. TỔNG CỘNG = LCB (tháng) + Lương giờ + OT thêm + Bonus.';
+    'Ghi chú: THỰC LÃNH = TỔNG CỘNG − Trừ KPI − Phạt trễ/vắng − Ứng lương − Trừ đồng phục. TỔNG CỘNG = LCB (tháng) + Phụ cấp + Lương giờ + OT thêm + Bonus.';
   fws.getRow(fr + 1).getCell(1).font = { italic: true, size: 8, color: { argb: 'FF' + MUTED }, name: 'Be Vietnam Pro' };
   fws.mergeCells(fr + 1, 1, fr + 1, 3);
 
   // ---- Sheet NHAP_TAY ----
   const ws = wb.addWorksheet('NHAP_TAY', { views: [{ state: 'frozen', ySplit: 5 }] });
-  const lastCol = 'K';
+  const lastCol = 'L';
   addTitleBlock(ws, lastCol, [
     { text: 'CÔNG TY TNHH UNIQUE&NICHE GROUP', size: 10, color: BRAND_DARK },
     { text: 'TÍNH LƯƠNG — NHẬP TAY THEO KỲ', size: 15, color: DARK },
@@ -452,11 +452,11 @@ export async function buildTinhLuongXlsx(period: string, formula: any, inputs: a
   ]);
   ws.getRow(4).height = 6;
   const headerRow = ws.getRow(5);
-  headerRow.values = ['STT', 'MÃ NV', 'HỌ TÊN', 'LCB (đ)', 'OT THÊM (đ)', 'BONUS (đ)', 'ỨNG LƯƠNG (đ)', 'TRỪ KPI (đ)', 'TRỪ ĐỒNG PHỤC (đ)', 'GHI CHÚ', 'CHI NHÁNH'];
+  headerRow.values = ['STT', 'MÃ NV', 'HỌ TÊN', 'LCB (đ)', 'PHỤ CẤP (đ)', 'OT THÊM (đ)', 'BONUS (đ)', 'ỨNG LƯƠNG (đ)', 'TRỪ KPI (đ)', 'TRỪ ĐỒNG PHỤC (đ)', 'GHI CHÚ', 'CHI NHÁNH'];
   styleHeaderRow(headerRow);
   ws.columns = [
     { key: 'stt', width: 6 }, { key: 'code', width: 12 }, { key: 'name', width: 30 },
-    { key: 'lcb', width: 15 }, { key: 'ot', width: 14 }, { key: 'bonus', width: 14 }, { key: 'ung', width: 15 },
+    { key: 'lcb', width: 15 }, { key: 'phuCap', width: 15 }, { key: 'ot', width: 14 }, { key: 'bonus', width: 14 }, { key: 'ung', width: 15 },
     { key: 'kpi', width: 14 }, { key: 'dp', width: 16 }, { key: 'note', width: 46 }, { key: 'branch', width: 26 },
   ];
   const inputMap = new Map<string, any>();
@@ -464,37 +464,38 @@ export async function buildTinhLuongXlsx(period: string, formula: any, inputs: a
   const active = (employees || []).filter((e: any) => String(e?.employment_status || '').toUpperCase() !== 'TERMINATED');
   const groups = groupByBranch(active, (e: any) => e.default_branch_id);
   let rowIdx = 6, stt = 0;
-  let gLcb = 0, gOt = 0, gBonus = 0, gUng = 0, gKpi = 0, gDp = 0;
+  let gLcb = 0, gPhuCap = 0, gOt = 0, gBonus = 0, gUng = 0, gKpi = 0, gDp = 0;
   for (const g of groups) {
     branchBandRow(ws, rowIdx, lastCol, branchLabelOf(g.key), g.rows.length);
     rowIdx += 1;
-    let bLcb = 0, bOt = 0, bBonus = 0, bUng = 0, bKpi = 0, bDp = 0;
+    let bLcb = 0, bPhuCap = 0, bOt = 0, bBonus = 0, bUng = 0, bKpi = 0, bDp = 0;
     let zebraOn = false;
     for (const e of g.rows) {
       stt += 1; zebraOn = !zebraOn;
       const inp = inputMap.get(String(e.employee_id)) || {};
-      const lcb = Number(inp.luong_cb) || 0, ot = Number(inp.ot_extra) || 0, bonus = Number(inp.bonus_extra) || 0;
+      const lcb = Number(inp.luong_cb) || 0, phuCap = Number(inp.phu_cap) || 0;
+      const ot = Number(inp.ot_extra) || 0, bonus = Number(inp.bonus_extra) || 0;
       const ung = Number(inp.ung_luong) || 0, kpi = Number(inp.tru_kpi) || 0, dp = Number(inp.dong_phuc) || 0;
       const row = ws.getRow(rowIdx);
-      row.values = [stt, e.employee_code, e.full_name, lcb, ot, bonus, ung, kpi, dp, String(inp.note || ''), branchLabelOf(g.key)];
+      row.values = [stt, e.employee_code, e.full_name, lcb, phuCap, ot, bonus, ung, kpi, dp, String(inp.note || ''), branchLabelOf(g.key)];
       row.eachCell((cell, col) => {
-        bodyCell(cell, { align: col === 1 || col === 2 ? 'center' : (col >= 4 && col <= 9 ? 'right' : 'left'), fmt: col >= 4 && col <= 9 ? money : undefined, bold: col === 4 && lcb > 0 });
+        bodyCell(cell, { align: col === 1 || col === 2 ? 'center' : (col >= 4 && col <= 10 ? 'right' : 'left'), fmt: col >= 4 && col <= 10 ? money : undefined, bold: col === 4 && lcb > 0 });
       });
       row.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
-      zebra(ws, rowIdx, 11, zebraOn);
+      zebra(ws, rowIdx, 12, zebraOn);
       row.height = 17;
-      bLcb += lcb; bOt += ot; bBonus += bonus; bUng += ung; bKpi += kpi; bDp += dp;
+      bLcb += lcb; bPhuCap += phuCap; bOt += ot; bBonus += bonus; bUng += ung; bKpi += kpi; bDp += dp;
       rowIdx += 1;
     }
     subtotalRow(ws, rowIdx, `CỘNG ${branchLabelOf(g.key).toUpperCase()}`,
-      { 4: bLcb, 5: bOt, 6: bBonus, 7: bUng, 8: bKpi, 9: bDp },
-      { 4: money, 5: money, 6: money, 7: money, 8: money, 9: money });
-    gLcb += bLcb; gOt += bOt; gBonus += bBonus; gUng += bUng; gKpi += bKpi; gDp += bDp;
+      { 4: bLcb, 5: bPhuCap, 6: bOt, 7: bBonus, 8: bUng, 9: bKpi, 10: bDp },
+      { 4: money, 5: money, 6: money, 7: money, 8: money, 9: money, 10: money });
+    gLcb += bLcb; gPhuCap += bPhuCap; gOt += bOt; gBonus += bBonus; gUng += bUng; gKpi += bKpi; gDp += bDp;
     rowIdx += 1;
   }
   grandTotalRow(ws, rowIdx, 'TỔNG CỘNG TOÀN CÔNG TY',
-    { 4: gLcb, 5: gOt, 6: gBonus, 7: gUng, 8: gKpi, 9: gDp },
-    { 4: money, 5: money, 6: money, 7: money, 8: money, 9: money });
+    { 4: gLcb, 5: gPhuCap, 6: gOt, 7: gBonus, 8: gUng, 9: gKpi, 10: gDp },
+    { 4: money, 5: money, 6: money, 7: money, 8: money, 9: money, 10: money });
   pageSetup(ws, lastCol, `Tính lương ${monthLabel(period)}`);
   void p;
   return toBuffer(wb);

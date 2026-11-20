@@ -110,7 +110,7 @@ export interface PayslipItem {
   ct_hours?: number;
   /** Lương giờ giai đoạn chính thức trong kỳ. */
   ct_pay?: number;
-  /** Legacy: đã bỏ phụ cấp, luôn ghi 0 (giữ trường để đọc phiếu cũ). */
+  /** Phụ cấp hiệu lực của kỳ: số Kế toán nhập tay (nếu > 0) hoặc phụ cấp cấu hình. */
   allowance: number;
   bonus: number;
   deduction: number;
@@ -133,7 +133,7 @@ export interface PayslipItem {
   tru_kpi?: number;
   /** Trừ đồng phục nhập tay theo kỳ (Excel cột P). */
   dong_phuc?: number;
-  /** TỔNG CỘNG = luong_cb + standard_pay + ot_extra + bonus (Excel M, đã bỏ phụ cấp). */
+  /** TỔNG CỘNG = luong_cb + allowance + standard_pay + ot_extra + bonus (Excel M). */
   tong_cong?: number;
   /** TỔNG LƯƠNG = tong_cong - tru_kpi - deduction (Excel Q). */
   tong_luong?: number;
@@ -215,7 +215,7 @@ export function vietQrUrl(cfg: BankQrConfig, amount: number, info: string): stri
 
 /**
  * Công thức tính lương 1 kỳ (lưu từ file Excel lương của Kế toán):
- * TỔNG CỘNG = luong_cb + luong_gio + ot_extra + bonus (đã bỏ phụ cấp)
+ * TỔNG CỘNG = luong_cb + phụ cấp + luong_gio + ot_extra + bonus
  * TỔNG LƯƠNG = TỔNG CỘNG − tru_kpi − phạt trễ/vắng
  * THỰC LÃNH = TỔNG LƯƠNG − ung_luong − dong_phuc
  */
@@ -235,11 +235,15 @@ export interface PayrollFormula {
   updatedAt?: string;
 }
 
-/** Dữ liệu nhập tay theo kỳ cho 1 NV (6 cột Kế toán nhập: H/K/AW/O/N/P). */
+/**
+ * Dữ liệu nhập tay theo kỳ cho 1 NV (7 cột Kế toán nhập: LCB/Phụ cấp/OT/Bonus/Ứng/KPI/ĐP).
+ * `phu_cap` > 0 ghi đè phụ cấp cấu hình cho riêng kỳ này; trống/0 thì lấy cấu hình.
+ */
 export interface PayrollPeriodInput {
   period: string; // YYYY-MM
   employee_id: string;
   luong_cb: number;
+  phu_cap: number;
   ot_extra: number;
   bonus_extra: number;
   ung_luong: number;

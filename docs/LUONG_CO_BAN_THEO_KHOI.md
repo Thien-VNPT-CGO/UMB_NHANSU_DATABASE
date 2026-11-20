@@ -20,6 +20,7 @@
 - Cấu hình là **hồ sơ gốc** cho kỳ lương:
   - NV **theo tháng**: kỳ lương tự lấy **LCB cấu hình** làm mặc định (`luong_cb`); kế toán vẫn nhập tay ghi đè được.
   - NV **theo ca**: giữ nguyên cách tính ca; phụ cấp cấu hình được cộng vào phiếu lương.
+  - **Phụ cấp nhập tay theo kỳ** (`phu_cap` trong `DULIEU_LUONG_KY`): Kế toán nhập > 0 thì **ghi đè** phụ cấp cấu hình cho riêng kỳ đó; để trống/0 thì tự lấy phụ cấp cấu hình (giống cách LCB hoạt động).
 - **Phúc lợi VP cũ** (`office_benefits`, trước đây HR sửa ở tab Duyệt Văn Phòng) được **gộp một lần** vào phụ cấp và xóa khỏi UI; HR không còn quyền sửa lương/phúc lợi.
 
 ## Màn hình
@@ -40,7 +41,8 @@
 | `GET /office/timesheet` (cổng NV) | Nhân viên Văn Phòng | Trả `pay_mode: 'MONTHLY'`, `base_salary`, `allowance`, `monthly_total`, `work_days`, `total_hours` — **không còn** `rate_per_hour` / `estimated_pay` |
 
 - `POST /employees` mở rộng: nhận `bankName/bank_name`, `bankAccount/bank_account`, `bankHolder/bank_holder`, `gender`, `birthDate`, `idCardNumber`, `email`, `startDate` và (riêng **ADMIN**) `baseSalary` + `allowance` — HR gửi lương lên server sẽ bị **bỏ qua**.
-- Kỳ lương: `POST /payroll/:period/calculate` (draft & formula) dùng `pay_mode` hiệu lực; NV MONTHLY không cộng tiền theo ca, cộng LCB cấu hình + phụ cấp.
+- Kỳ lương: `POST /payroll/:period/calculate` (draft & formula) dùng `pay_mode` hiệu lực; NV MONTHLY không cộng tiền theo ca, cộng LCB cấu hình + phụ cấp (phụ cấp nhập tay > 0 được ưu tiên).
+- `PUT /payroll/inputs/:period` nhận thêm `phu_cap` (≥ 0) — cột **Phụ cấp** ở tab "Tính lương — Công thức & Nhập tay".
 
 ## Bền vững dữ liệu
 
@@ -48,7 +50,8 @@
 - Migration một lần: `office_benefits` → `allowance` (chỉ điền khi NV chưa có phụ cấp; đánh dấu `office_benefits_merged_v1 = true`, xóa `office_benefits`).
 - Ghi tuần tự qua mutex trong process; restart không mất dữ liệu (đồng bộ Sheets).
 - Append `NHAN_VIEN_MASTER` khi tạo NV mới đã mở rộng ghi đủ cột 13–19 (gender, ngày sinh, CCCD, ngân hàng/STK/chủ TK).
-- Tab `PHIEU_LUONG` thêm cột 40 **"Phụ Cấp (cấu hình)"** (không tái sử dụng cột OT cũ để tránh dữ liệu legacy); khi đọc lại Sheets, phiếu chưa chốt tự tính tổng = LCB + phụ cấp + lương giờ + OT + bonus.
+- Tab `PHIEU_LUONG` thêm cột 40 **"Phụ Cấp"** (số hiệu lực: nhập tay ghi đè, không nhập thì lấy cấu hình; không tái sử dụng cột OT cũ để tránh dữ liệu legacy); khi đọc lại Sheets, phiếu chưa chốt tự tính tổng = LCB + phụ cấp + lương giờ + OT + bonus.
+- Tab `DULIEU_LUONG_KY` thêm cột 12 **"Phụ Cấp (tay)"** ở cuối (không xô lệch thứ tự cột cũ) — lưu phụ cấp Kế toán điều chỉnh tay theo kỳ.
 
 ## Frontend
 

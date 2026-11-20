@@ -450,7 +450,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'PHIEU_LUONG',
-    headers: ['ID Phiếu', 'Mã Kỳ Lương', 'ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Kỳ Lương', 'Số Ca', 'Ca Vắng', 'Giờ Chuẩn', 'Đơn Giá', 'Lương Chuẩn', 'Không Dùng', 'Thưởng', 'Khấu Trừ', 'Thực Nhận', 'Trạng Thái', 'Không Dùng', 'Không Dùng', 'Lương CB (tay)', 'OT Thêm (tay)', 'Bonus Thêm (tay)', 'Ứng Lương', 'Trừ KPI (tay)', 'Trừ Đồng Phục', 'Tổng Cộng', 'Tổng Lương', 'Thực Lãnh', 'Ký Lập (tên)', 'Ký Lập Lúc', 'Ký QL (tên)', 'Ký QL Lúc', 'Ký NV (tên)', 'Ký NV Lúc', 'Ảnh Ký Lập', 'Ảnh Ký QL', 'Ảnh Ký NV', 'Phát Hành Lúc', 'Xác Nhận Lúc', 'Chi Trả Lúc', 'Phụ Cấp (cấu hình)'],
+    headers: ['ID Phiếu', 'Mã Kỳ Lương', 'ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Kỳ Lương', 'Số Ca', 'Ca Vắng', 'Giờ Chuẩn', 'Đơn Giá', 'Lương Chuẩn', 'Không Dùng', 'Thưởng', 'Khấu Trừ', 'Thực Nhận', 'Trạng Thái', 'Không Dùng', 'Không Dùng', 'Lương CB (tay)', 'OT Thêm (tay)', 'Bonus Thêm (tay)', 'Ứng Lương', 'Trừ KPI (tay)', 'Trừ Đồng Phục', 'Tổng Cộng', 'Tổng Lương', 'Thực Lãnh', 'Ký Lập (tên)', 'Ký Lập Lúc', 'Ký QL (tên)', 'Ký QL Lúc', 'Ký NV (tên)', 'Ký NV Lúc', 'Ảnh Ký Lập', 'Ảnh Ký QL', 'Ảnh Ký NV', 'Phát Hành Lúc', 'Xác Nhận Lúc', 'Chi Trả Lúc', 'Phụ Cấp'],
   },
   {
     title: 'CONG_THUC_LUONG',
@@ -458,7 +458,8 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'DULIEU_LUONG_KY',
-    headers: ['Kỳ Lương', 'ID Nhân Viên', 'Lương CB (tay)', 'OT Thêm (tay)', 'Bonus Thêm (tay)', 'Ứng Lương', 'Trừ KPI (tay)', 'Trừ Đồng Phục', 'Ghi Chú', 'Người Cập Nhật', 'Cập Nhật Lúc'],
+    // "Phụ Cấp (tay)" thêm Ở CUỐI để không xô lệch thứ tự cột của Sheet đang dùng.
+    headers: ['Kỳ Lương', 'ID Nhân Viên', 'Lương CB (tay)', 'OT Thêm (tay)', 'Bonus Thêm (tay)', 'Ứng Lương', 'Trừ KPI (tay)', 'Trừ Đồng Phục', 'Ghi Chú', 'Người Cập Nhật', 'Cập Nhật Lúc', 'Phụ Cấp (tay)'],
   },
   {
     title: 'LICH_SU_GIAI_DOAN',
@@ -532,6 +533,8 @@ export function mergePayrollInputRows(memory: any[], inputRows: any[][]): any[] 
       note: r[8] ? String(r[8]) : undefined,
       updatedBy: r[9] ? String(r[9]) : undefined,
       updatedAt: r[10] ? String(r[10]) : undefined,
+      // Cột 12 (index 11) thêm sau — Sheet cũ chưa có thì coi như chưa nhập (0).
+      phu_cap: parseSheetCurrency(r[11]) ?? 0,
     };
     const ex = out.find((x: any) => x.period === row.period && x.employee_id === row.employee_id);
     if (!ex) {
@@ -4412,7 +4415,7 @@ export class GoogleSheetsSyncService {
           const isFinal = ['PAID', 'CONFIRMED'].includes(String(status).toUpperCase());
           const luong_cb = numOr(r[18]);
           const standard_pay = Number(r[10]) || 0;
-          // Phụ cấp theo cấu hình Kế toán (cột 40 — thêm mới, không đụng cột legacy).
+          // Phụ cấp hiệu lực (cột 40 — nhập tay ghi đè, không nhập thì lấy cấu hình).
           const allowance = numOr(r[39]) || 0;
           const ot_extra = numOr(r[19]);
           const bonus = Number(r[12]) || 0;
@@ -5785,7 +5788,7 @@ export class GoogleSheetsSyncService {
         details.payrollFormulas = formulas.length;
         const inputs: any[] = ((fb as any)?.payrollInputs || []).map((x: any) => ([
           x.period, x.employee_id, x.luong_cb ?? 0, x.ot_extra ?? 0, x.bonus_extra ?? 0,
-          x.ung_luong ?? 0, x.tru_kpi ?? 0, x.dong_phuc ?? 0, x.note || '', x.updatedBy || '', x.updatedAt || '',
+          x.ung_luong ?? 0, x.tru_kpi ?? 0, x.dong_phuc ?? 0, x.note || '', x.updatedBy || '', x.updatedAt || '', x.phu_cap ?? 0,
         ]));
         await this.overwriteSheetData('DULIEU_LUONG_KY', SHEETS_DEFINITIONS.find(d => d.title === 'DULIEU_LUONG_KY')!.headers, inputs);
         details.payrollInputs = inputs.length;
@@ -6208,7 +6211,7 @@ export class GoogleSheetsSyncService {
     try {
       const inputs: any[] = ((fb as any)?.payrollInputs || []).map((x: any) => ([
         x.period, x.employee_id, x.luong_cb ?? 0, x.ot_extra ?? 0, x.bonus_extra ?? 0,
-        x.ung_luong ?? 0, x.tru_kpi ?? 0, x.dong_phuc ?? 0, x.note || '', x.updatedBy || '', x.updatedAt || '',
+        x.ung_luong ?? 0, x.tru_kpi ?? 0, x.dong_phuc ?? 0, x.note || '', x.updatedBy || '', x.updatedAt || '', x.phu_cap ?? 0,
       ]));
       if (inputs.length > 0) {
         await this.overwriteSheetData('DULIEU_LUONG_KY', headers('DULIEU_LUONG_KY'), inputs);
@@ -6287,7 +6290,7 @@ export class GoogleSheetsSyncService {
     // Tính lại rows mỗi lượt (kể cả lượt follow-up) để không ghi snapshot cũ.
     const buildRows = (): any[] => ((fb?.payrollInputs || []).map((x: any) => ([
       x.period, x.employee_id, x.luong_cb ?? 0, x.ot_extra ?? 0, x.bonus_extra ?? 0,
-      x.ung_luong ?? 0, x.tru_kpi ?? 0, x.dong_phuc ?? 0, x.note || '', x.updatedBy || '', x.updatedAt || '',
+      x.ung_luong ?? 0, x.tru_kpi ?? 0, x.dong_phuc ?? 0, x.note || '', x.updatedBy || '', x.updatedAt || '', x.phu_cap ?? 0,
     ])));
     if (buildRows().length === 0) return { skipped: 'NO_INPUTS', errors, rows: 0 };
     try {

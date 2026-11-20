@@ -60,6 +60,17 @@ export function isStoredFineStillValid(storedTier: string | undefined, lateMin: 
 }
 
 /**
+ * Phụ cấp hiệu lực của 1 NV trong kỳ:
+ * - Kế toán nhập tay > 0 ở cột "Phụ cấp" (DULIEU_LUONG_KY.phu_cap) -> ghi đè.
+ * - Trống/0 -> lấy phụ cấp đã cấu hình ở tab "Cấu hình Lương CB & Phụ cấp".
+ */
+export function effectiveAllowance(manual: unknown, config: unknown): number {
+  const m = Math.max(0, Math.floor(Number(manual) || 0));
+  if (m > 0) return m;
+  return Math.max(0, Math.floor(Number(config) || 0));
+}
+
+/**
  * Số phút trễ của 1 lượt check-in — DÙNG CHUNG cho mọi báo cáo/kỳ lương.
  *
  * Quy tắc:
@@ -530,10 +541,10 @@ export class PayrollService {
           // lương = LBH (cấu hình) + phụ cấp; HOURLY giữ nguyên tính theo ca + phụ cấp.
           const cfgEmp = salaryConfigs[emp.employee_id];
           const monthly = effectivePayMode((emp as any).group, cfgEmp?.pay_mode) === 'MONTHLY';
-          const allowance = Math.max(0, Math.floor(Number(cfgEmp?.allowance) || 0));
-          const standardPayEff = monthly ? 0 : standardPay;
-          // LCB: kế toán nhập tay theo kỳ sẽ ghi đè mặc định lấy từ cấu hình.
+          // LCB/phụ cấp: kế toán nhập tay theo kỳ ghi đè mặc định lấy từ cấu hình.
           const inp: any = inputs.get(emp.employee_id) || {};
+          const allowance = effectiveAllowance(inp.phu_cap, cfgEmp?.allowance);
+          const standardPayEff = monthly ? 0 : standardPay;
           // Chỉ coi là nhập tay ghi đè khi > 0 — dữ liệu cũ/lưu mặc định có 0
           // thì NV lương THÁNG vẫn lấy LCB cấu hình (tránh tính lương = 0đ).
           const hasManualCb = inp.luong_cb !== undefined && inp.luong_cb !== null && inp.luong_cb !== '' && Number(inp.luong_cb) > 0;
@@ -1269,6 +1280,8 @@ export class PayrollService {
       period,
       employee_id: employeeId,
       luong_cb: luongCb,
+      // 0 = chưa nhập -> khi tính lương tự lấy phụ cấp cấu hình.
+      phu_cap: num(data.phu_cap),
       ot_extra: num(data.ot_extra),
       bonus_extra: num(data.bonus_extra),
       ung_luong: num(data.ung_luong),
@@ -1277,6 +1290,8 @@ export class PayrollService {
       note: String(data.note || '').slice(0, 1000) || undefined,
       updatedBy: actorId,
     });
+    // Bảng công/B4 xem trước đang cache theo kỳ -> xóa để thấy phụ cấp vừa nhập.
+    this.invalidateFinanceTimesheetCache(period);
     // Ghi bộ nhớ là nguồn sự thật ngay; Sheets đẩy sớm (3s, riêng tab nhập tay)
     // để F5/restart ngay sau khi lưu vẫn không mất. Nút "Lưu tất cả" gửi
     // flush=true -> đẩy NGAY trong request và chỉ báo thành công khi Sheet đã ghi.
@@ -1488,9 +1503,10 @@ export class PayrollService {
           // LBH tự lấy cấu hình làm mặc định (kế toán nhập tay luong_cb theo kỳ sẽ ghi đè).
           const cfgEmp = salaryConfigs[emp.employee_id];
           const monthly = effectivePayMode((emp as any).group, cfgEmp?.pay_mode) === 'MONTHLY';
-          const allowanceCfg = Math.max(0, Math.floor(Number(cfgEmp?.allowance) || 0));
-          const standardPayEff = monthly ? 0 : standardPay;
           const inp: any = inputs.get(emp.employee_id) || {};
+          // Phụ cấp nhập tay theo kỳ ghi đè cấu hình (trống/0 -> dùng cấu hình).
+          const allowanceCfg = effectiveAllowance(inp.phu_cap, cfgEmp?.allowance);
+          const standardPayEff = monthly ? 0 : standardPay;
           // Chỉ coi là nhập tay ghi đè khi > 0 — dữ liệu cũ/lưu mặc định có 0
           // thì NV lương THÁNG vẫn lấy LCB cấu hình (tránh tính lương = 0đ).
           const hasManualCb = inp.luong_cb !== undefined && inp.luong_cb !== null && inp.luong_cb !== '' && Number(inp.luong_cb) > 0;
@@ -1777,7 +1793,8 @@ export class PayrollService {
     // LCB nhập tay > 0 mới ghi đè; NV lương tháng lấy LCB cấu hình làm mặc định.
     const manualCb = num(inp?.luong_cb);
     const luongCb = manualCb > 0 ? manualCb : payMode === 'MONTHLY' ? num(row?.monthlyBase) : 0;
-    const allowance = num(row?.allowance);
+    // Phụ cấp nhập tay theo kỳ ghi đè cấu hình (trống/0 -> dùng cấu hình).
+    const allowance = effectiveAllowance(inp?.phu_cap, row?.allowance);
     const standardPay = num(row?.standardPay);
     const otExtra = num(inp?.ot_extra);
     const bonusExtra = num(inp?.bonus_extra);
@@ -2902,6 +2919,10 @@ export class PayrollService {
       payMode = effectivePayMode((emp as any)?.group, cfg?.pay_mode);
       monthlyBase = Math.max(0, Math.floor(Number(cfg?.base_salary) || 0));
       allowanceCfg = Math.max(0, Math.floor(Number(cfg?.allowance) || 0));
+      // Kế toán nhập tay phụ cấp riêng kỳ này -> hồ sơ NV thấy đúng số sẽ tính.
+      const perInputs = await this.repo.getPayrollInputs(per).catch(() => [] as any[]);
+      const inp = (perInputs || []).find((x: any) => String(x?.employee_id || '') === String(employeeId));
+      allowanceCfg = effectiveAllowance(inp?.phu_cap, allowanceCfg);
     } catch { payMode = 'HOURLY'; }
     const isMonthly = payMode === 'MONTHLY';
     const monthlyGross = monthlyBase + allowanceCfg;
@@ -3148,6 +3169,12 @@ export class PayrollService {
     const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
     const all = await this.repo.listEmployees({ branch: branchScope });
     const salaryConfigs: any = await this.salaryConfig?.getAll().catch(() => ({})) || {};
+    // Phụ cấp nhập tay theo kỳ (nếu có) ghi đè phụ cấp cấu hình — Bảng tổng hợp,
+    // B4 xem trước và cổng NV phải thấy cùng một số với lúc bấm Tính lương.
+    const inputsArr = await this.repo.getPayrollInputs(period).catch(() => [] as any[]);
+    const inputByEmp = new Map<string, any>(
+      (inputsArr || []).map((x: any) => [String(x?.employee_id || ''), x]),
+    );
     const employees = (all || []).filter(
       e => (e as any)?.employment_status !== 'TERMINATED' &&
         (!onlyEmployeeId || String((e as any)?.employee_id) === String(onlyEmployeeId))
@@ -3186,7 +3213,8 @@ export class PayrollService {
       const payMode = effectivePayMode((emp as any).group, cfgEmp?.pay_mode);
       const monthly = payMode === 'MONTHLY';
       const monthlyBase = Math.max(0, Math.floor(Number(cfgEmp?.base_salary) || 0));
-      const allowance = Math.max(0, Math.floor(Number(cfgEmp?.allowance) || 0));
+      const inpEmp: any = inputByEmp.get(String(empId)) || {};
+      const allowance = effectiveAllowance(inpEmp.phu_cap, cfgEmp?.allowance);
       const published = (empShifts || []).filter(
         s => (s as any).status === 'PUBLISHED' && String((s as any).date || '').slice(0, 10) >= fromDate && String((s as any).date || '').slice(0, 10) <= toDate
       );

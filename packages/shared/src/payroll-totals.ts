@@ -2,7 +2,8 @@
  * Công thức tiền lương dùng chung cho Phiếu lương (Kế toán tính) và tab
  * Công/Lương của nhân viên (xem realtime số Kế toán đã nhập).
  *
- *   TỔNG CỘNG  = LCB + phụ cấp + lương theo ca + OT nhập tay + thưởng nhập tay
+ *   TỔNG CỘNG  = LCB + phụ cấp (nhập tay ghi đè, không nhập thì lấy cấu hình)
+ *                + lương theo ca + OT nhập tay + thưởng nhập tay
  *   TỔNG LƯƠNG = TỔNG CỘNG − trừ KPI (nhập tay) − phạt trễ/vắng (chấm công)
  *   THỰC LÃNH  = TỔNG LƯƠNG − ứng lương − tiền đồng phục
  *

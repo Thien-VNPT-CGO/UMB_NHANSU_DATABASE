@@ -261,7 +261,7 @@ export const SalaryConfigView: React.FC<{ currentUser: any; cols?: any; onToggle
           <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '4px', maxWidth: '900px' }}>
             Kế toán cấu hình <strong>hình thức lương</strong> + <strong>lương cơ bản</strong> + <strong>phụ cấp</strong> cho từng nhân viên, phụ thuộc khối làm việc.
             Khối <strong>Cửa hàng</strong>: theo ca (cố định) · Khối <strong>Văn phòng</strong>: lương cơ bản theo tháng (cố định) · Khối <strong>Xưởng / Sale</strong>: tùy chọn theo tháng hoặc theo ca, đổi riêng từng NV.
-            <strong>Lương (theo tháng) = Lương cơ bản + Phụ cấp</strong>; phụ cấp cộng cả cho hình thức theo ca. HR không đặt lương (chỉ xem). Cấu hình là hồ sơ gốc — kỳ lương nhập tay như cũ tại tab "Tính Lương" (NV lương tháng để trống LCB = tự lấy số cấu hình).
+            <strong>Lương (theo tháng) = Lương cơ bản + Phụ cấp</strong>; phụ cấp cộng cả cho hình thức theo ca. HR không đặt lương (chỉ xem). Cấu hình là hồ sơ gốc — kỳ lương nhập tay như cũ tại tab "Tính Lương" (NV lương tháng để trống LCB = tự lấy số cấu hình; cột <strong>Phụ cấp</strong> nhập &gt; 0 = ghi đè phụ cấp cấu hình cho riêng kỳ đó).
           </p>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -591,7 +591,7 @@ export const SalaryConfigView: React.FC<{ currentUser: any; cols?: any; onToggle
 
       <div style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', gap: '8px', alignItems: 'center' }}>
         <DollarSign size={12} />
-        Văn phòng & NV hình thức lương tháng: lương theo THÁNG = LCB + phụ cấp (không tính theo ca). NV hình thức theo ca: giờ công × đơn giá + phụ cấp. HR thêm hồ sơ NV mới (tab Nhân sự) nhưng không đặt lương — Kế toán cấu hình tại đây, phụ thuộc khối làm việc. Lưu xong áp dụng cho hồ sơ gốc; kỳ lương nhập tại tab "Tính Lương".
+        Văn phòng & NV hình thức lương tháng: lương theo THÁNG = LCB + phụ cấp (không tính theo ca). NV hình thức theo ca: giờ công × đơn giá + phụ cấp. HR thêm hồ sơ NV mới (tab Nhân sự) nhưng không đặt lương — Kế toán cấu hình tại đây, phụ thuộc khối làm việc. Lưu xong áp dụng cho hồ sơ gốc; kỳ lương nhập tại tab "Tính Lương" (cột Phụ cấp nhập tay &gt; 0 sẽ ghi đè số cấu hình cho kỳ đó).
       </div>
     </div>
   );

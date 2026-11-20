@@ -4023,6 +4023,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
             {
               employeeId,
               luong_cb: existing?.luong_cb,
+              phu_cap: existing?.phu_cap,
               ot_extra: existing?.ot_extra,
               bonus_extra: existing?.bonus_extra,
               ung_luong: existing?.ung_luong,
@@ -8441,7 +8442,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const FIN_TABLE_COLUMNS: Record<string, string[]> = {
     'fin-timesheet': ['stt', 'fullName', 'code', 'branch', 'full', 'partial', 'absent', 'hours', 'standardPay', 'deduction', 'netPay'],
     'fin-bcc': ['summary', 'date', 'shift', 'hours', 'status', 'checkIn', 'lateMin', 'shiftPay', 'fineAmount'],
-    'fin-calculate': ['stt', 'code', 'name', 'branch', 'luong_cb', 'ot_extra', 'bonus_extra', 'ung_luong', 'tru_kpi', 'dong_phuc', 'note', 'b1', 'b2', 'b3', 'b4'],
+    'fin-calculate': ['stt', 'code', 'name', 'branch', 'luong_cb', 'phu_cap', 'ot_extra', 'bonus_extra', 'ung_luong', 'tru_kpi', 'dong_phuc', 'note', 'b1', 'b2', 'b3', 'b4'],
     'fin-payroll-sheet': ['stt', 'full_name', 'employee_code', 'branch', 'gio', 'banCa', 'phuCap', 'lcb', 'ot', 'bonus', 'tongCong', 'truKpiPhat', 'ung', 'dongPhuc', 'tongLuong', 'thuc', 'status'],
     'fin-payroll-periods': ['stt', 'full_name', 'employee_code', 'branch', 'gio', 'banCa', 'phuCap', 'lcb', 'ot', 'bonus', 'tongCong', 'truKpiPhat', 'ung', 'dongPhuc', 'tongLuong', 'thuc', 'status', 'edit'],
     'fin-payslips': ['stt', 'full_name', 'employee_code', 'branch', 'gio', 'banCa', 'phuCap', 'lcb', 'ot', 'bonus', 'tongCong', 'truKpiPhat', 'ung', 'dongPhuc', 'tongLuong', 'thuc', 'sign', 'action'],
