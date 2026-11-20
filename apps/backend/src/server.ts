@@ -394,13 +394,19 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
       // Bản vá dữ liệu chạy ĐÚNG 1 LẦN cho mỗi hệ thống (lưu mốc vào cấu hình):
       // chỉ dọn phạt oan tồn đọng từ lỗi cũ, không đụng các mức phạt HR cố ý ghi
       // nhận về sau. Lỗi giữa đường thì không lưu mốc -> lần khởi động sau chạy lại.
+      // V2: quét cả lượt gắn assignment CŨ đã hủy/đổi lịch (mồ côi) — V1 chỉ khớp
+      // đúng assignment nên các phiếu đã duyệt trước bản vá này vẫn còn phạt.
+      // V3: phiếu gắn ca ĐÃ HỦY (HR "Sửa ca" sinh ca thay thế cùng mã) — V2 vẫn
+      // coi lượt trên ca thay thế là "ca live khác" nên bỏ sót, phạt còn nguyên.
       const settings: any = await adapter.getSystemSettings().catch(() => ({}));
-      if (settings?.attendanceFineRepairV1At) return;
+      if (settings?.attendanceFineRepairV3At) return;
       const r = await services.attendanceService.repairApprovedAdjustmentFines();
       await adapter.updateSystemSettings({
         ...(settings || {}),
-        attendanceFineRepairV1At: new Date().toISOString(),
-        attendanceFineRepairV1Result: r,
+        attendanceFineRepairV1At: settings?.attendanceFineRepairV1At || new Date().toISOString(),
+        attendanceFineRepairV2At: settings?.attendanceFineRepairV2At || new Date().toISOString(),
+        attendanceFineRepairV3At: new Date().toISOString(),
+        attendanceFineRepairV3Result: r,
       }).catch(() => null);
       if (r.cleared > 0 || r.archivedCleared > 0) {
         console.log(`[attendance-repair] Đã gỡ phạt oan cho ${r.cleared} lượt live + ${r.archivedCleared} lượt lưu trữ (phiếu bù công đã duyệt).`);

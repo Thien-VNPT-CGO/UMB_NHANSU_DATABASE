@@ -990,18 +990,163 @@ export class AttendanceService {
    * Chốt ca đúng NGÀY sự cố của phiếu: ưu tiên assignment client gửi nếu cùng ngày,
    * ngược lại lấy ca đầu (không hủy) của NV đúng ngày đó. Không có ca -> null
    * (chặn tạo/duyệt sai ngày).
+   *
+   * QUAN TRỌNG: ca gắn trên phiếu có thể ĐÃ BỊ HỦY khi HR "Sửa ca"/xếp lại lịch;
+   * khi đó phải bám sang ca THAY THẾ còn sống cùng ngày + cùng mã ca. Nếu vẫn trả
+   * ca đã hủy thì dựng công/duyệt bù sẽ tạo chân trùng và KHÔNG gỡ được phạt trên
+   * lượt chấm công thật (đang gắn ca thay thế).
    */
   private async resolveAdjustmentShift(employeeId: string, assignmentId?: string, dateInput?: string): Promise<any | null> {
     const day = AttendanceService.incidentDateOf(dateInput || '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
-    if (assignmentId && !String(assignmentId).startsWith('SHIFT_UNKNOWN_')) {
-      const direct = await this.repo.getShiftById(assignmentId).catch(() => null);
-      if (direct && String((direct as any).date || '').slice(0, 10) === day) return direct;
-    }
     const list = await this.repo.getShiftsForEmployee(employeeId, day, day).catch(() => []);
     const same = (list || []).filter((s: any) => String((s as any).date || '').slice(0, 10) === day);
+    const live = same.filter((s: any) => String((s as any)?.status || '').toUpperCase() !== 'CANCELLED');
+    if (assignmentId && !String(assignmentId).startsWith('SHIFT_UNKNOWN_')) {
+      const direct = await this.repo.getShiftById(assignmentId).catch(() => null);
+      if (direct && String((direct as any).date || '').slice(0, 10) === day) {
+        if (String((direct as any)?.status || '').toUpperCase() !== 'CANCELLED') return direct;
+        // Ca trên phiếu đã bị hủy -> tìm ca thay thế cùng ngày + cùng mã ca.
+        const code = String((direct as any)?.shift_code || '');
+        const replacement = code
+          ? live.find((s: any) => String((s as any)?.shift_code || '') === code)
+          : null;
+        return replacement || direct;
+      }
+    }
     if (same.length === 0) return null;
-    return same.find((s: any) => (s as any).status !== 'CANCELLED') || same[0];
+    return live[0] || same[0];
+  }
+
+  /**
+   * Map assignment còn sống (không CANCELLED) của NV trong đúng NGÀY phiếu ->
+   * mã ca. Dùng để nhận diện lượt điểm danh "mồ côi" (ca cũ đã bị hủy/đổi lịch)
+   * và ca THAY THẾ cùng mã ca mà lưới + payroll vẫn gộp lượt vào.
+   */
+  private async adjustmentLiveAssignments(employeeId: string, day: string): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    if (!employeeId || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return out;
+    const list = await this.repo.getShiftsForEmployee(employeeId, day, day).catch(() => [] as any[]);
+    for (const s of list || []) {
+      if (String((s as any)?.status || '').toUpperCase() === 'CANCELLED') continue;
+      const id = String((s as any)?.assignment_id || '');
+      if (id) out.set(id, String((s as any)?.shift_code || ''));
+    }
+    return out;
+  }
+
+  /**
+   * Lượt điểm danh có thuộc ca/ngày của phiếu bù công không?
+   *  - Đúng assignment của ca -> có.
+   *  - Mồ côi (không gắn ca) -> có.
+   *  - Gắn assignment KHÔNG còn sống trong ngày (ca cũ bị hủy/xếp lại, ca ngày
+   *    khác) và rơi đúng NGÀY phiếu -> có (lưới/payroll đều gộp vào ca đúng ngày).
+   *  - Ca trên phiếu ĐÃ HỦY, lượt nằm trên ca THAY THẾ cùng mã ca (VD HR "Sửa ca"
+   *    tạo assignment mới cho đúng ca đó) -> có.
+   *  - Gắn ca live KHÁC cùng ngày (phiếu vẫn còn ca live) -> KHÔNG (tránh xóa
+   *    phạt oan ca khác).
+   */
+  private adjustmentEventRelevant(
+    e: any,
+    adjAssign: string,
+    day: string,
+    liveAssigns: Map<string, string>,
+    adjShiftCode = '',
+  ): boolean {
+    const aid = String((e as any)?.assignment_id || '');
+    if (adjAssign && aid === adjAssign) return true;
+    if (!aid) return true;
+    const liveCode = liveAssigns.get(aid);
+    if (liveCode === undefined) {
+      const t = new Date(String((e as any)?.client_time || '')).getTime();
+      if (!Number.isFinite(t)) return true;
+      return AttendanceService.vnDateStr(new Date(t)) === day;
+    }
+    // Lượt thuộc 1 ca live khác. Chỉ nhận khi ca trên phiếu KHÔNG còn live
+    // (đã hủy/đổi lịch) và đây là ca thay thế cùng mã ca.
+    if (liveAssigns.has(adjAssign)) return false;
+    if (adjShiftCode) return String(liveCode) === String(adjShiftCode);
+    return liveAssigns.size === 1;
+  }
+
+  /**
+   * Duyệt (hoặc áp lại) phiếu bù công = XÓA VI PHẠM của ca đúng ngày:
+   * gỡ cờ trễ/sớm/mức phạt trên mọi lượt IN/OUT + dọn bản ghi VẮNG — cả sổ live
+   * lẫn kho lưu trữ tuần cũ. Idempotent; dùng chung cho lúc duyệt và nút "áp lại"
+   * để 2 đường không bao giờ lệch nhau.
+   */
+  private async clearApprovedAdjustmentViolations(adj: any): Promise<{ cleared: number; archivedCleared: number }> {
+    let cleared = 0;
+    let archivedCleared = 0;
+    const emp = String(adj?.employee_id || '');
+    if (!emp) return { cleared, archivedCleared };
+    const fixedShift = await this.resolveAdjustmentShift(adj?.employee_id, adj?.assignment_id, adj?.reason).catch(() => null);
+    const day = String((fixedShift as any)?.date || '').slice(0, 10) || AttendanceService.incidentDateOf(adj?.reason);
+    const assign = String((fixedShift as any)?.assignment_id || adj?.assignment_id || '');
+    if (!assign) return { cleared, archivedCleared };
+    const shiftCode = String((fixedShift as any)?.shift_code || '');
+    const liveAssigns = await this.adjustmentLiveAssignments(emp, day);
+    try {
+      const evts = await this.repo.getAttendanceEvents(emp).catch(() => [] as any[]);
+      for (const e of evts || []) {
+        if (!this.adjustmentEventRelevant(e, assign, day, liveAssigns, shiftCode)) continue;
+        const type = String((e as any)?.type || '').toUpperCase();
+        // Duyệt bù công -> bản ghi VẮNG tự động của ca này là vi phạm giả: xóa
+        // NGAY (không chờ tick dọn vắng 15 phút) để lưới hết đỏ tức thì.
+        if (type === 'ABSENT') {
+          const gone = await this.repo.deleteAttendanceEvent(String((e as any)?.event_id || '')).catch(() => false);
+          if (gone) cleared++;
+          continue;
+        }
+        if (type !== 'CHECK_IN' && type !== 'CHECK_OUT') continue;
+        const dirty = (e as any)?.is_late === true
+          || (e as any)?.is_early === true
+          || Number((e as any)?.minutes_deviation) > 0
+          || Number((e as any)?.fine_amount) > 0
+          || (!!(e as any)?.fine_tier && String((e as any)?.fine_tier).toUpperCase() !== 'NONE');
+        // is_late TRỐNG (dòng Sheet cũ/được ghi bởi luồng khác) khiến payroll +
+        // lưới tự suy lại phút trễ từ giờ vào ca -> duyệt xong vẫn phạt. Phải
+        // đóng dấu is_late=false tường minh, không chỉ khi đang có cờ phạt.
+        const needsStamp = dirty || (e as any)?.is_late !== false;
+        if (needsStamp) {
+          const patch: any = { is_late: false, is_early: false, minutes_deviation: 0, fine_tier: 'NONE', fine_amount: 0 };
+          const saved = await this.repo.updateAttendanceEvent(String((e as any)?.event_id || ''), patch).catch(() => null);
+          if (!saved) continue;
+          Object.assign(e as any, patch);
+        }
+        // Đếm cả chân vốn đã sạch: đây là số lượt của ca đã được xác nhận hợp lệ
+        // (giữ nguyên ý nghĩa "_violationCleared" trước đây cho UI/thông báo).
+        cleared++;
+      }
+    } catch { /* best-effort */ }
+    // Tuần cũ đã archive: lượt điểm danh không còn ở bộ nhớ realtime. Duyệt bù
+    // công sau mốc archive vẫn phải gỡ phạt trong kho, nếu không kỳ lương đọc kho
+    // sẽ tự suy trễ từ giờ vào ca và phạt 100% lần nữa.
+    try {
+      const syncSvc: any = (this.repo as any)?.syncService;
+      if (syncSvc?.getArchivedAttendanceEvents && syncSvc?.clearArchivedEventFines && day) {
+        const archived: any[] = await syncSvc.getArchivedAttendanceEvents(day, day, emp) || [];
+        const ids: string[] = [];
+        for (const e of archived || []) {
+          if (!this.adjustmentEventRelevant(e, assign, day, liveAssigns, shiftCode)) continue;
+          const type = String((e as any)?.type || '').toUpperCase();
+          // Vắng tự động đã lưu trữ: xóa hẳn để lưới tháng/lương không còn vi phạm.
+          if (type === 'ABSENT') {
+            if (syncSvc.deleteArchivedAttendanceEvent && (e as any)?.event_id) {
+              const gone = await syncSvc.deleteArchivedAttendanceEvent(String((e as any).event_id)).catch(() => null);
+              if (gone) archivedCleared++;
+            }
+            continue;
+          }
+          if (type === 'CHECK_IN' || type === 'CHECK_OUT') {
+            const id = String((e as any)?.event_id || '');
+            if (id) ids.push(id);
+          }
+        }
+        if (ids.length > 0) archivedCleared += Number(await syncSvc.clearArchivedEventFines(ids).catch(() => 0)) || 0;
+      }
+    } catch { /* best-effort */ }
+    return { cleared, archivedCleared };
   }
 
   async listAdjustments(branchId?: string, employeeId?: string) {
@@ -1430,10 +1575,14 @@ export class AttendanceService {
         const shift = await this.resolveAdjustmentShift(adj.employee_id, adj.assignment_id, adj.reason).catch(() => null);
         if (!shift) throw new Error('ADJUSTMENT_NO_SHIFT: Không tìm thấy ca đúng ngày phiếu!');
         const fixed: string[] = await this.backfillFromAdjustment(adj).catch(() => []);
-        if (this.io && fixed.length > 0) {
+        // Nút "áp lại" cũng phải gỡ vi phạm/phạt như lúc duyệt — trước đây chỉ
+        // dựng chân thiếu nên HR bấm áp lại mà ca vẫn còn trễ/phạt.
+        const viol = await this.clearApprovedAdjustmentViolations(adj)
+          .catch(() => ({ cleared: 0, archivedCleared: 0 }));
+        if (this.io && (fixed.length > 0 || viol.cleared + viol.archivedCleared > 0)) {
           this.io.emit('data:updated', { entity: 'attendance', data: { action: 'adjustment-repair', adjId }, timestamp: new Date().toISOString() });
         }
-        return { adjustmentId: adjId, date: (shift as any).date, fixed };
+        return { adjustmentId: adjId, date: (shift as any).date, fixed, cleared: viol.cleared, archivedCleared: viol.archivedCleared };
       },
     });
   }
@@ -1510,68 +1659,11 @@ export class AttendanceService {
         if (status === 'APPROVED') {
           backfilled = await this.backfillFromAdjustment(updated).catch(() => []);
           // Duyệt = xóa vi phạm: gỡ cờ trễ + phạt trên mọi lượt IN/OUT của ca ĐÚNG
-          // NGÀY phiếu (không phải assignment cũ gắn nhầm) để NV không bị tính vi
-          // phạm (lưới realtime + kỳ lương đều đọc từ đây).
-          let adjEmp = '';
-          let adjAssign = '';
-          let adjDay = '';
-          try {
-            adjEmp = String((updated as any).employee_id || '');
-            const fixedShift = await this.resolveAdjustmentShift((updated as any).employee_id, (updated as any).assignment_id, (updated as any).reason).catch(() => null);
-            adjAssign = String((fixedShift as any)?.assignment_id || (updated as any).assignment_id || '');
-            adjDay = String((fixedShift as any)?.date || '').slice(0, 10)
-              || AttendanceService.incidentDateOf((updated as any).reason);
-            if (adjEmp && adjAssign) {
-              const evts = await this.repo.getAttendanceEvents(adjEmp).catch(() => []);
-              for (const e of evts || []) {
-                if ((e as any).assignment_id !== adjAssign) continue;
-                // Duyệt bù công -> bản ghi VẮNG tự động của ca này là vi phạm giả:
-                // xóa NGAY (không chờ tick dọn vắng 15 phút) để lưới hết đỏ tức thì.
-                if (String((e as any).type || '').toUpperCase() === 'ABSENT') {
-                  const gone = await this.repo.deleteAttendanceEvent((e as any).event_id).catch(() => false);
-                  if (gone) violationCleared++;
-                  continue;
-                }
-                if ((e as any).type !== 'CHECK_IN' && (e as any).type !== 'CHECK_OUT') continue;
-                if (!(e as any).is_late && !(e as any).is_early && !(e as any).fine_amount && !(e as any).fine_tier) continue;
-                await this.repo.updateAttendanceEvent((e as any).event_id, {
-                  is_late: false,
-                  is_early: false,
-                  minutes_deviation: 0,
-                  fine_tier: 'NONE',
-                  fine_amount: 0,
-                } as any).catch(() => null);
-                violationCleared++;
-              }
-            }
-          } catch { /* best-effort */ }
-          // Tuần cũ đã archive: lượt điểm danh không còn ở bộ nhớ realtime. Duyệt
-          // bù công sau mốc archive vẫn phải gỡ phạt trong kho lưu trữ, nếu không
-          // kỳ lương đọc kho sẽ tự suy trễ từ giờ vào ca và phạt 100% lần nữa.
-          try {
-            const syncSvc: any = (this.repo as any)?.syncService;
-            if (syncSvc?.getArchivedAttendanceEvents && syncSvc?.clearArchivedEventFines && adjEmp && adjAssign && adjDay) {
-              const archived: any[] = await syncSvc.getArchivedAttendanceEvents(adjDay, adjDay, adjEmp) || [];
-              const ids: string[] = [];
-              for (const e of archived || []) {
-                if (String((e as any)?.assignment_id || '') !== adjAssign) continue;
-                const type = String((e as any)?.type || '').toUpperCase();
-                // Vắng tự động đã lưu trữ: xóa hẳn để lưới tháng/lương không còn vi phạm.
-                if (type === 'ABSENT') {
-                  if (syncSvc.deleteArchivedAttendanceEvent && (e as any)?.event_id) {
-                    const gone = await syncSvc.deleteArchivedAttendanceEvent(String((e as any).event_id)).catch(() => null);
-                    if (gone) violationCleared++;
-                  }
-                  continue;
-                }
-                if (type === 'CHECK_IN' || type === 'CHECK_OUT') {
-                  const id = String((e as any)?.event_id || '');
-                  if (id) ids.push(id);
-                }
-              }
-              if (ids.length > 0) violationCleared += await syncSvc.clearArchivedEventFines(ids).catch(() => 0) || 0;
-            }
-          } catch { /* best-effort */ }
+          // NGÀY phiếu (kể cả lượt còn gắn assignment cũ đã hủy/đổi lịch) để NV
+          // không bị tính vi phạm (lưới realtime + kỳ lương đều đọc từ đây).
+          const viol = await this.clearApprovedAdjustmentViolations(updated)
+            .catch(() => ({ cleared: 0, archivedCleared: 0 }));
+          violationCleared += viol.cleared + viol.archivedCleared;
         }
         if (this.io && (backfilled.length > 0 || violationCleared > 0)) {
           this.io.emit('data:updated', { entity: 'attendance', data: { action: 'adjustment-backfill', adjId }, timestamp: new Date().toISOString() });
@@ -1629,8 +1721,12 @@ export class AttendanceService {
           const fixedShift = await this.resolveAdjustmentShift(emp, adj.assignment_id, adj.reason).catch(() => null);
           const assign = String((fixedShift as any)?.assignment_id || adj.assignment_id || '');
           if (!assign) continue;
+          const day = String((fixedShift as any)?.date || '').slice(0, 10) || AttendanceService.incidentDateOf(adj.reason);
+          // Gồm cả lượt mồ côi gắn ca cũ đã hủy/đổi lịch trong cùng ngày.
+          const shiftCode = String((fixedShift as any)?.shift_code || '');
+          const liveAssigns = await this.adjustmentLiveAssignments(emp, day);
           for (const e of evts || []) {
-            if (String((e as any)?.assignment_id || '') !== assign) continue;
+            if (!this.adjustmentEventRelevant(e, assign, day, liveAssigns, shiftCode)) continue;
             const type = String((e as any)?.type || '').toUpperCase();
             // Vắng tự động của ca đã được duyệt bù công = vi phạm giả -> xóa.
             if (type === 'ABSENT') {
@@ -1646,8 +1742,10 @@ export class AttendanceService {
               || (e as any)?.is_early === true
               || Number((e as any)?.minutes_deviation) > 0
               || Number((e as any)?.fine_amount) > 0
-              || (!!(e as any)?.fine_tier && (e as any)?.fine_tier !== 'NONE');
-            if (!stillFined) continue;
+              || (!!(e as any)?.fine_tier && String((e as any)?.fine_tier).toUpperCase() !== 'NONE');
+            // is_late trống -> payroll/lưới tự suy trễ từ giờ vào ca; đóng dấu
+            // false tường minh ngay cả khi chưa có cờ phạt nào được ghi.
+            if (!stillFined && (e as any)?.is_late === false) continue;
             const patch: any = { is_late: false, is_early: false, minutes_deviation: 0, fine_tier: 'NONE', fine_amount: 0 };
             const saved = await this.repo.updateAttendanceEvent(String((e as any)?.event_id || ''), patch).catch(() => null);
             if (!saved) continue;
@@ -1656,11 +1754,10 @@ export class AttendanceService {
           }
           // Tuần đã archive: nhặt event_id để gỡ phạt trong kho (ghi 1 lượt sau).
           const syncSvc: any = (this.repo as any)?.syncService;
-          const day = String((fixedShift as any)?.date || '').slice(0, 10) || AttendanceService.incidentDateOf(adj.reason);
           if (syncSvc?.getArchivedAttendanceEvents && day) {
             const archived: any[] = await syncSvc.getArchivedAttendanceEvents(day, day, emp).catch(() => []) || [];
             for (const e of archived || []) {
-              if (String((e as any)?.assignment_id || '') !== assign) continue;
+              if (!this.adjustmentEventRelevant(e, assign, day, liveAssigns, shiftCode)) continue;
               const type = String((e as any)?.type || '').toUpperCase();
               if (type === 'ABSENT') {
                 if (syncSvc.deleteArchivedAttendanceEvent && (e as any)?.event_id) {

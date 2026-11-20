@@ -933,6 +933,14 @@ export class OfficeService {
     const shifts = await this.repo.getShiftsForEmployee(employeeId, day, day).catch(() => []);
     const shift: any = (shifts || []).find((s: any) => String(s?.status || '') !== 'CANCELLED') || null;
     const assignmentId = String(shift?.assignment_id || '');
+    // Ca còn sống trong ngày: dùng để nhận diện lượt gắn ca CŨ đã bị hủy/đổi
+    // lịch (mồ côi) — lưới Admin + payroll vẫn gộp lượt đó vào ca đúng ngày.
+    const liveAssignIds = new Set<string>();
+    for (const s of shifts || []) {
+      if (String((s as any)?.status || '').toUpperCase() === 'CANCELLED') continue;
+      const id = String((s as any)?.assignment_id || '');
+      if (id) liveAssignIds.add(id);
+    }
     result.assignment_id = assignmentId;
     const branchId = String((emp as any)?.default_branch_id || shift?.branch_id || OFFICE_BRANCH_ID);
 
@@ -949,7 +957,10 @@ export class OfficeService {
     const belongsToDayShift = (e: any) => {
       const aid = String(e?.assignment_id || '');
       if (!assignmentId) return true;
-      return !aid || aid === assignmentId;
+      if (!aid || aid === assignmentId) return true;
+      // Gắn ca KHÔNG còn sống trong ngày (ca cũ bị hủy/đổi lịch): vẫn là lượt của
+      // ngày này — lưới Admin gộp vào ca hiện tại nên phải gỡ phạt luôn.
+      return !liveAssignIds.has(aid);
     };
     const archivedRelevant = (archivedDay || []).filter(belongsToDayShift);
     // Có bất kỳ chân nào trong ngày rồi thì KHÔNG tạo trùng (kể cả mồ côi do
@@ -1004,7 +1015,9 @@ export class OfficeService {
         || Number((e as any)?.minutes_deviation) > 0
         || Number((e as any)?.fine_amount) > 0
         || (!!(e as any)?.fine_tier && String((e as any)?.fine_tier).toUpperCase() !== 'NONE');
-      if (!dirty) continue;
+      // is_late trống -> payroll/lưới tự suy trễ từ giờ vào ca; duyệt xong vẫn
+      // phạt. Đóng dấu false tường minh ngay cả khi chưa có cờ phạt.
+      if (!dirty && (e as any)?.is_late === false) continue;
       try {
         await this.repo.updateAttendanceEvent(String(e?.event_id || ''), {
           is_late: false,
@@ -1032,12 +1045,14 @@ export class OfficeService {
             continue;
           }
           if (type !== 'CHECK_IN' && type !== 'CHECK_OUT') continue;
+          // Nhặt chân còn cờ phạt HOẶC chưa có cờ is_late (dòng cũ) để lương
+          // không tự suy trễ; dòng đã sạch (is_late=false) bỏ qua.
           const dirty = e?.is_late === true
             || e?.is_early === true
             || Number(e?.minutes_deviation) > 0
             || Number(e?.fine_amount) > 0
             || (!!e?.fine_tier && String(e.fine_tier).toUpperCase() !== 'NONE');
-          if (dirty && e?.event_id) fineIds.push(String(e.event_id));
+          if ((dirty || e?.is_late !== false) && e?.event_id) fineIds.push(String(e.event_id));
         }
         if (fineIds.length > 0 && syncSvc.clearArchivedEventFines) {
           result.archived_cleared += Number(await syncSvc.clearArchivedEventFines(fineIds).catch(() => 0)) || 0;
