@@ -13,7 +13,7 @@ import {
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
 import { deleteAttendancePhotoDisk, readAdjustmentPhotoDisk, readAttendancePhotoDiskAsDataUrl } from './photo-disk.store.js';
-import { lateFineFor, linkDayEvents, LATE_FINE_GRACE_MINUTES } from './payroll.service.js';
+import { lateFineFor, lateMinutesOfEvent, linkDayEvents, LATE_FINE_GRACE_MINUTES } from './payroll.service.js';
 import { getAttendanceFolderForBranch } from '../config/drive-folders.js';
 
 import { Server } from 'socket.io';
@@ -289,11 +289,16 @@ export class AttendanceService {
   }
 
   /**
-   * Engine bù công ca làm (DỰ PHÒNG, hiện không còn route trực tiếp nào gọi):
-   * công chỉ ghi nhận qua phiếu NV tạo → HR duyệt (reviewAdjustment dùng
-   * backfillFromAdjustment). Giữ lại để tái dùng cho luồng duyệt tự động.
-   * Ghi trực tiếp CHECK_IN (+CHECK_OUT) gắn đúng ca, không phạt trễ, tôn trọng
-   * kho archive, gắn check-in mồ côi, mặc định giờ ca khi thiếu.
+   * Engine bù/hoàn thành ca làm.
+   *
+   * - Luồng thường (bot Cập Nhật Ca): ghi các chân còn thiếu, mặc định giờ ca,
+   *   gắn check-in mồ côi, tôn trọng kho archive; ca đã đủ cặp thì báo
+   *   `SHIFT_ALREADY_COMPLETE` như cũ.
+   * - `adminOverride` (nút "Admin hoàn thành ca" — quyền tối thượng): ca đã đủ
+   *   cặp VẪN được xử lý lại: quét toàn bộ chân live + kho archive, xóa sạch
+   *   cờ trễ/sớm/phạt (kể cả dòng cũ thiếu cờ `is_late` khiến payroll tự suy
+   *   lại từ giờ vào), dọn bản ghi VẮNG và tự phát hành ca DRAFT để kỳ lương
+   *   tính đủ công ngay. Idempotent — bấm nhiều lần vẫn an toàn.
    */
   async compensateShift(data: {
     assignmentId: string;
@@ -301,7 +306,29 @@ export class AttendanceService {
     checkOutTime?: string;
     reason?: string;
     actorId: string;
-  }): Promise<{ operationId: string; result: { checkIn: any; checkOut: any; created: Array<'CHECK_IN' | 'CHECK_OUT'> } }> {
+    /** Quyền tối thượng của Admin: cho phép áp lại ca đã đủ cặp + xóa mọi phạt. */
+    adminOverride?: boolean;
+    /** Tự đưa ca DRAFT sang PUBLISHED để công/lương được tính ngay (mặc định bật khi override). */
+    autoPublish?: boolean;
+  }): Promise<{
+    operationId: string;
+    result: {
+      checkIn: any;
+      checkOut: any;
+      created: Array<'CHECK_IN' | 'CHECK_OUT'>;
+      alreadyComplete: boolean;
+      cleared: number;
+      archivedCleared: number;
+      absentCleared: number;
+      published: boolean;
+      employeeId: string;
+      date: string;
+      shiftCode: string;
+      branchId: string;
+      period: string;
+    };
+  }> {
+    const override = !!data.adminOverride;
     return singleWriterQueue.enqueue({
       entityType: 'SU_KIEN_DIEM_DANH',
       entityId: `${data.assignmentId}_ADMIN_COMP`,
@@ -312,32 +339,40 @@ export class AttendanceService {
         if (String((shift as any).status || '') === 'CANCELLED') {
           throw new Error('SHIFT_CANCELLED: ca này đã bị hủy, không bù công được!');
         }
+        const assignmentId = String(data.assignmentId);
         const employeeId = String((shift as any).employee_id || '');
         if (!employeeId) throw new Error('SHIFT_NO_OWNER: ca chưa gán nhân viên!');
+        const day = String((shift as any).date || '').slice(0, 10);
+        const shiftCode = String((shift as any).shift_code || '');
+        const branchId = String((shift as any).branch_id || '');
         const reason = String(data.reason || '').trim().slice(0, 500) || 'Admin bù công do hệ thống lỗi';
+        const nowIso = new Date().toISOString();
+        const sync: any = (this.repo as any)?.syncService;
 
-        const mine = await this.repo.getAttendanceEvents(employeeId).catch(() => []);
-        let hasIn = (mine || []).find((e: any) =>
-          String((e as any).assignment_id) === String(data.assignmentId) && (e as any).type === 'CHECK_IN');
-        let hasOut = (mine || []).find((e: any) =>
-          String((e as any).assignment_id) === String(data.assignmentId) && (e as any).type === 'CHECK_OUT');
+        const mine = await this.repo.getAttendanceEvents(employeeId).catch(() => [] as any[]);
+        const liveMine = (mine || []).filter((e: any) =>
+          String((e as any)?.assignment_id || '') === assignmentId);
+        const liveIns = liveMine.filter((e: any) => (e as any)?.type === 'CHECK_IN');
+        const liveOuts = liveMine.filter((e: any) => (e as any)?.type === 'CHECK_OUT');
+        const liveAbsents = liveMine.filter((e: any) => (e as any)?.type === 'ABSENT');
+
         // Ngày cũ: điểm danh tuần qua đã archive sang kho LUUTRU (xóa khỏi bảng
-        // realtime) — tra thêm kho để không đòi nhập lại giờ vào / bù trùng.
-        if (!hasIn || !hasOut) {
-          try {
-            const day = String((shift as any).date || '').slice(0, 10);
-            const sync = (this.repo as any)?.syncService;
-            if (day && sync?.getArchivedAttendanceEvents) {
-              const archived = await sync.getArchivedAttendanceEvents(day, day, employeeId).catch(() => []);
-              const archMine = (archived || []).filter((e: any) =>
-                String((e as any)?.employee_id || '') === employeeId &&
-                String((e as any)?.assignment_id || '') === String(data.assignmentId));
-              if (!hasIn) hasIn = archMine.find((e: any) => (e as any)?.type === 'CHECK_IN');
-              if (!hasOut) hasOut = archMine.find((e: any) => (e as any)?.type === 'CHECK_OUT');
-            }
-          } catch { /* giữ kết quả bảng live */ }
-        }
-        if (hasIn && hasOut) {
+        // realtime) — tra thêm kho để không đòi nhập lại giờ vào / bù trùng và
+        // còn xóa được phạt đã nằm trong kho.
+        let archMine: any[] = [];
+        try {
+          if (day && sync?.getArchivedAttendanceEvents) {
+            const archived = await sync.getArchivedAttendanceEvents(day, day, employeeId).catch(() => []);
+            archMine = (archived || []).filter((e: any) =>
+              String((e as any)?.employee_id || '') === employeeId &&
+              String((e as any)?.assignment_id || '') === assignmentId);
+          }
+        } catch { /* giữ kết quả bảng live */ }
+
+        const hasIn = liveIns[0] || archMine.find((e: any) => (e as any)?.type === 'CHECK_IN');
+        const hasOut = liveOuts[0] || archMine.find((e: any) => (e as any)?.type === 'CHECK_OUT');
+        const alreadyComplete = !!(hasIn && hasOut);
+        if (alreadyComplete && !override) {
           throw new Error('SHIFT_ALREADY_COMPLETE: ca này đã đủ check-in + check-out, không cần bù!');
         }
 
@@ -350,7 +385,6 @@ export class AttendanceService {
         let attachedIn: any = null;
         if (needIn && !inIso) {
           try {
-            const day = String((shift as any).date || '').slice(0, 10);
             const orphans = (mine || []).filter((e: any) => {
               if ((e as any)?.type !== 'CHECK_IN' || (e as any)?.assignment_id) return false;
               if (String((e as any)?.employee_id || '') !== employeeId) return false;
@@ -366,18 +400,17 @@ export class AttendanceService {
             });
             const pick = orphans[0];
             if (pick && this.repo.updateAttendanceEvent) {
-              const stamp = new Date().toISOString();
               attachedIn = await this.repo.updateAttendanceEvent((pick as any).event_id, {
-                assignment_id: data.assignmentId,
+                assignment_id: assignmentId,
                 compensated_by: data.actorId,
-                compensated_at: stamp,
+                compensated_at: nowIso,
                 compensate_reason: reason,
               } as any);
             }
-          } catch { /* không gắn được thì báo nhập giờ như cũ */ }
+          } catch { /* không gắn được thì dùng giờ ca */ }
         }
-        // Admin bấm bù là ca mặc định điểm danh đủ: thiếu giờ nào thì tự lấy
-        // giờ vào/tan ca (không bắt nhập). Ca legacy thiếu giờ mẫu mới báo lỗi.
+        // Admin bấm là ca mặc định điểm danh đủ: thiếu giờ nào thì tự lấy giờ
+        // vào/tan ca (không bắt nhập). Ca legacy thiếu giờ mẫu mới báo lỗi.
         if (needIn && !attachedIn && !inIso) {
           const dflt = String((shift as any).start_at || '');
           if (!dflt || !Number.isFinite(new Date(dflt).getTime())) {
@@ -392,15 +425,17 @@ export class AttendanceService {
           }
           outIso = dflt;
         }
-        const inMs = needIn ? new Date(inIso).getTime() : NaN;
+        // Giờ vào thực tế: chân vừa gắn (mồ côi) hoặc giờ Admin/bot nhập.
+        const inMs = attachedIn
+          ? new Date(String((attachedIn as any)?.client_time || '')).getTime()
+          : (needIn ? new Date(inIso).getTime() : NaN);
         const outMs = needOut ? new Date(outIso).getTime() : NaN;
         if (needIn && !attachedIn && !Number.isFinite(inMs)) throw new Error('INVALID_CHECKIN_TIME: giờ vào không hợp lệ!');
         if (needOut && !Number.isFinite(outMs)) throw new Error('INVALID_CHECKOUT_TIME: giờ ra không hợp lệ!');
-        if (needIn && needOut && outMs <= inMs) {
+        if (needIn && needOut && Number.isFinite(inMs) && outMs <= inMs) {
           throw new Error('INVALID_RANGE: giờ ra phải sau giờ vào!');
         }
 
-        const nowIso = new Date().toISOString();
         const mkEvent = (type: 'CHECK_IN' | 'CHECK_OUT', clientTime: string) => {
           const eventId = `EVT_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
           const dateObj = new Date(clientTime);
@@ -409,17 +444,17 @@ export class AttendanceService {
           const dd = String(dateObj.getDate()).padStart(2, '0');
           return {
             event_id: eventId,
-            request_id: `ADMIN_COMP_${data.assignmentId}_${type}`,
-            assignment_id: data.assignmentId,
+            request_id: `ADMIN_COMP_${assignmentId}_${type}`,
+            assignment_id: assignmentId,
             employee_id: employeeId,
-            branch_id: (shift as any).branch_id,
+            branch_id: branchId,
             type,
             client_time: clientTime,
             server_received_at: nowIso,
             distance_meters: 0,
             gps_status: 'UNAVAILABLE' as GPSStatus,
             drive_object_id: `DRV_ADMIN_COMP_${Date.now()}`,
-            drive_path: `admin-compensate/${yyyy}/${mm}/${dd}/${(shift as any).branch_id}/${employeeId}/${data.assignmentId}/${eventId}${type === 'CHECK_IN' ? '_IN.jpg' : '_OUT.jpg'}`,
+            drive_path: `admin-compensate/${yyyy}/${mm}/${dd}/${branchId}/${employeeId}/${assignmentId}/${eventId}${type === 'CHECK_IN' ? '_IN.jpg' : '_OUT.jpg'}`,
             is_early: false,
             is_late: false,
             minutes_deviation: 0,
@@ -437,29 +472,40 @@ export class AttendanceService {
         if (attachedIn) created.push('CHECK_IN');
         // Idempotent: request_id ADMIN_COMP_* đã có thì dùng lại, không ghi đôi.
         if (needIn && !checkIn) {
-          const dup = await this.repo.findAttendanceEventByRequestId(`ADMIN_COMP_${data.assignmentId}_CHECK_IN`).catch(() => null);
+          const dup = await this.repo.findAttendanceEventByRequestId(`ADMIN_COMP_${assignmentId}_CHECK_IN`).catch(() => null);
           checkIn = dup || await this.repo.recordAttendanceEvent(mkEvent('CHECK_IN', inIso) as any);
           if (!dup) created.push('CHECK_IN');
         }
         if (needOut) {
-          const dup = await this.repo.findAttendanceEventByRequestId(`ADMIN_COMP_${data.assignmentId}_CHECK_OUT`).catch(() => null);
+          const dup = await this.repo.findAttendanceEventByRequestId(`ADMIN_COMP_${assignmentId}_CHECK_OUT`).catch(() => null);
           checkOut = dup || await this.repo.recordAttendanceEvent(mkEvent('CHECK_OUT', outIso) as any);
           if (!dup) created.push('CHECK_OUT');
         }
-        // Quyền tối thượng của Admin hoàn thành ca: ca này tính FULL lương, KHÔNG
-        // phạt — xóa mọi phạt/trễ/sớm còn dính trên các chân có sẵn (kể cả chân
-        // mồ côi vừa gắn) để Bảng Tổng Hợp + Kỳ lương + Cổng NV đồng loạt đủ công.
-        const waiveTargets = [hasIn, hasOut, attachedIn].filter(Boolean);
-        for (const ev of waiveTargets) {
+
+        // QUYỀN TỐI THƯỢNG: xóa mọi dấu vết phạt của ca trên TOÀN BỘ chân live
+        // (không chỉ chân đầu tiên) + kho archive. Đóng dấu `is_late=false`
+        // tường minh kể cả khi cờ đang trống — payroll coi cờ trống là "dòng cũ"
+        // và tự suy lại phút trễ từ giờ vào, nếu không stamp sẽ phạt lại 100%.
+        let cleared = 0;
+        const waive = new Map<string, any>();
+        for (const ev of [...liveIns, ...liveOuts, attachedIn, checkIn, checkOut]) {
+          if (!ev) continue;
+          const id = String((ev as any)?.event_id || '');
+          if (!id) continue;
+          if (String((ev as any)?.assignment_id || '') !== assignmentId) continue;
+          waive.set(id, ev);
+        }
+        for (const ev of waive.values()) {
           const dirty =
-            (String((ev as any)?.fine_tier || 'NONE') !== 'NONE') ||
+            (String((ev as any)?.fine_tier || 'NONE').toUpperCase() !== 'NONE') ||
             Number((ev as any)?.fine_amount || 0) > 0 ||
             !!(ev as any)?.is_late || !!(ev as any)?.is_early ||
             Number((ev as any)?.minutes_deviation || 0) !== 0;
-          if (!dirty) continue;
+          const needsStamp = dirty || (ev as any)?.is_late !== false || (ev as any)?.is_early !== false;
+          if (!needsStamp) continue;
           try {
             if (this.repo.updateAttendanceEvent) {
-              await this.repo.updateAttendanceEvent((ev as any).event_id, {
+              await this.repo.updateAttendanceEvent(String((ev as any).event_id), {
                 is_late: false,
                 is_early: false,
                 minutes_deviation: 0,
@@ -467,19 +513,60 @@ export class AttendanceService {
                 fine_amount: 0,
                 compensated_by: data.actorId,
                 compensated_at: nowIso,
-                compensate_reason: `${reason} (xóa phạt — hoàn thành full lương)`,
+                compensate_reason: `${reason} (hoàn thành ca — xóa phạt, full lương)`,
               } as any);
               (ev as any).is_late = false;
               (ev as any).is_early = false;
               (ev as any).minutes_deviation = 0;
               (ev as any).fine_tier = 'NONE';
               (ev as any).fine_amount = 0;
+              cleared++;
             }
           } catch { /* chân tiếp theo */ }
         }
+        // Kho archive: gỡ phạt của MỌI chân IN/OUT thuộc ca này (1 lượt ghi).
+        let archivedCleared = 0;
+        try {
+          const archIds = archMine
+            .filter((e: any) => ['CHECK_IN', 'CHECK_OUT'].includes(String((e as any)?.type || '')))
+            .map((e: any) => String((e as any)?.event_id || ''))
+            .filter(Boolean);
+          if (archIds.length > 0 && sync?.clearArchivedEventFines) {
+            archivedCleared = Number(await sync.clearArchivedEventFines(archIds).catch(() => 0)) || 0;
+          }
+        } catch { /* best-effort */ }
+        // Bản ghi VẮNG tự động của ca (live + archive) là vi phạm giả sau khi
+        // Admin xác nhận hoàn thành — xóa hẳn để lưới/lương không còn đỏ.
+        let absentCleared = 0;
+        for (const ev of liveAbsents) {
+          const id = String((ev as any)?.event_id || '');
+          if (!id) continue;
+          const gone = await this.repo.deleteAttendanceEvent(id).catch(() => false);
+          if (gone) absentCleared++;
+        }
+        try {
+          const archAbsents = archMine.filter((e: any) => String((e as any)?.type || '') === 'ABSENT');
+          for (const ev of archAbsents) {
+            const id = String((ev as any)?.event_id || '');
+            if (!id || !sync?.deleteArchivedAttendanceEvent) continue;
+            const gone = await sync.deleteArchivedAttendanceEvent(id).catch(() => null);
+            if (gone) absentCleared++;
+          }
+        } catch { /* best-effort */ }
+
+        // Ca DRAFT: phát hành ngay để kỳ lương/lưới tính đủ công (Admin tối thượng).
+        let published = false;
+        if (override && data.autoPublish !== false && String((shift as any)?.status || '').toUpperCase() === 'DRAFT') {
+          try {
+            await (this.repo as any).updateShiftAssignment(assignmentId, { status: 'PUBLISHED' });
+            (shift as any).status = 'PUBLISHED';
+            published = true;
+          } catch { /* không phát hành được thì vẫn giữ công live */ }
+        }
+
         // Vừa bù đủ cặp cho ca từng thiếu -> tích điểm hoàn thành ca cho NV.
-        if (!(hasIn && hasOut) && checkIn && checkOut && created.length > 0) {
-          await this.creditCompletionPoints(employeeId, String(data.assignmentId));
+        if (!alreadyComplete && checkIn && checkOut && created.length > 0) {
+          await this.creditCompletionPoints(employeeId, assignmentId);
         }
 
         // Realtime như điểm danh thường (đồng bộ, không await hàng đợi khác).
@@ -487,7 +574,7 @@ export class AttendanceService {
           for (const ev of [checkIn, checkOut]) {
             if (!ev) continue;
             try {
-              this.io.to(`branch:${(shift as any).branch_id}`).emit('attendance.recorded', {
+              this.io.to(`branch:${branchId}`).emit('attendance.recorded', {
                 eventId: (ev as any).event_id,
                 employeeId: (ev as any).employee_id,
                 branchId: (ev as any).branch_id,
@@ -497,9 +584,155 @@ export class AttendanceService {
             } catch { /* non-fatal */ }
           }
         }
-        return { checkIn, checkOut, created };
+        return {
+          checkIn,
+          checkOut,
+          created,
+          alreadyComplete,
+          cleared,
+          archivedCleared,
+          absentCleared,
+          published,
+          employeeId,
+          date: day,
+          shiftCode,
+          branchId,
+          period: /^\d{4}-\d{2}-\d{2}$/.test(day) ? day.slice(0, 7) : '',
+        };
       },
     });
+  }
+
+  /**
+   * Bảng "Ca cần hoàn thành" của 1 ngày (tab Bổ Sung & Điều Chỉnh Dữ Liệu Công):
+   * mọi ca live (không CANCELLED) kèm trạng thái check-in/out và mức phạt để
+   * Admin thấy ngay ai thiếu công / quên chấm / ca đang bị phạt rồi bấm hoàn
+   * thành. Đọc cả kho archive để tuần cũ vẫn hiện đúng.
+   */
+  async listShiftCompletionBoard(date: string, opts?: { employeeId?: string; branchScope?: string }): Promise<{
+    date: string;
+    rows: any[];
+    totals: { shifts: number; employees: number; incomplete: number; fined: number; drafts: number; complete: number };
+  }> {
+    const day = String(date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      throw new Error('BOARD_BAD_DATE: ngày phải dạng YYYY-MM-DD!');
+    }
+    const wantEmp = String(opts?.employeeId || '').trim();
+    const canon = (b?: string): string => {
+      const x = String(b || '').trim().toUpperCase();
+      if (x === 'CN1' || x === 'CN130') return 'CN130';
+      if (x === 'CN2' || x === 'CN261') return 'CN261';
+      if (x === 'CN3' || x === 'CN120') return 'CN120';
+      if (x === 'CN4' || x === 'CN111') return 'CN111';
+      return x;
+    };
+    const branchScope = String(opts?.branchScope || '*');
+    const [employees, weekShifts, liveEvents] = await Promise.all([
+      this.repo.listEmployees().catch(() => [] as any[]),
+      this.repo.getShiftsForWeek('*', day).catch(() => [] as any[]),
+      this.repo.getAttendanceEvents(undefined, day).catch(() => [] as any[]),
+    ]);
+    let archived: any[] = [];
+    try {
+      archived = await (this.repo as any)?.syncService?.getArchivedAttendanceEvents?.(day, day) || [];
+    } catch { archived = []; }
+    const empById = new Map((employees || []).map((e: any) => [String((e as any)?.employee_id || ''), e]));
+    const dayShifts = (weekShifts || []).filter((s: any) => {
+      if (String((s as any)?.status || '').toUpperCase() === 'CANCELLED') return false;
+      if (String((s as any)?.date || '').slice(0, 10) !== day) return false;
+      const empId = String((s as any)?.employee_id || '');
+      if (wantEmp && empId !== wantEmp) return false;
+      const emp: any = empById.get(empId);
+      const empBranch = (emp as any)?.default_branch_id || (emp as any)?.branch_id || (s as any)?.branch_id;
+      if (branchScope && branchScope !== '*' && canon(empBranch) !== canon(branchScope)) return false;
+      return true;
+    });
+    const rows: any[] = [];
+    for (const s of dayShifts) {
+      const empId = String((s as any)?.employee_id || '');
+      const emp: any = empById.get(empId) || {};
+      const dayEvents = [
+        ...(liveEvents || []).filter((e: any) => String((e as any)?.employee_id || '') === empId),
+        ...(archived || []).filter((e: any) => String((e as any)?.employee_id || '') === empId),
+      ];
+      // Dedupe live/archive theo event_id (kho archive có thể chứa bản cũ).
+      const seen = new Set<string>();
+      const uniq = dayEvents.filter((e: any) => {
+        const id = String((e as any)?.event_id || '');
+        if (id && seen.has(id)) return false;
+        if (id) seen.add(id);
+        return true;
+      });
+      // Ghép lượt điểm danh trên TOÀN BỘ ca của NV trong ngày (không ghép
+      // riêng từng ca): nếu chỉ truyền 1 ca, lượt của ca khác bị coi là "ca
+      // chết" và bù nhầm sang ca đang thiếu chân.
+      const empShifts = dayShifts.filter((x: any) => String((x as any)?.employee_id || '') === empId);
+      const linked = linkDayEvents(empShifts, uniq);
+      const slot: any = linked.get(String((s as any)?.assignment_id || '')) || {};
+      const inEvt = slot.CHECK_IN;
+      const outEvt = slot.CHECK_OUT;
+      const absentEvt = slot.ABSENT;
+      const hours = shiftHoursOf(String((s as any)?.shift_code || ''), (emp as any)?.group);
+      const rate = Number((emp as any)?.current_rate_per_hour) || 0;
+      const lateMin = lateMinutesOfEvent(inEvt, String((s as any)?.start_at || ''));
+      const storedTier = String((inEvt as any)?.fine_tier || '').toUpperCase();
+      const storedAmt = Number((inEvt as any)?.fine_amount) || 0;
+      const storedValid = !!storedTier && storedTier !== 'NONE' && !(storedTier === 'FLAT_30K' && lateMin < LATE_FINE_GRACE_MINUTES);
+      const calcFine = lateFineFor(lateMin, hours * rate);
+      const hasFine = storedValid || storedAmt > 0 || lateMin >= LATE_FINE_GRACE_MINUTES;
+      const fineTier = hasFine ? (storedValid ? storedTier : calcFine.tier) : 'NONE';
+      const fineAmount = hasFine
+        ? (storedValid ? (storedTier === 'FULL_SHIFT' ? 0 : storedAmt) : calcFine.deduction)
+        : 0;
+      const status = String((s as any)?.status || '');
+      const flags: string[] = [];
+      if (!inEvt) flags.push('MISSING_IN');
+      if (!outEvt) flags.push('MISSING_OUT');
+      if (hasFine) flags.push('FINE');
+      if (absentEvt) flags.push('ABSENT');
+      if (status.toUpperCase() === 'DRAFT') flags.push('DRAFT');
+      if (inEvt && outEvt) flags.push('COMPLETE');
+      const needsAction = !inEvt || !outEvt || hasFine || !!absentEvt || status.toUpperCase() === 'DRAFT';
+      rows.push({
+        assignment_id: String((s as any)?.assignment_id || ''),
+        employee_id: empId,
+        employee_code: String((emp as any)?.employee_code || ''),
+        employee_name: String((emp as any)?.full_name || empId),
+        branch_id: String((emp as any)?.default_branch_id || (s as any)?.branch_id || ''),
+        shift_code: String((s as any)?.shift_code || ''),
+        start_at: String((s as any)?.start_at || ''),
+        end_at: String((s as any)?.end_at || ''),
+        status,
+        in_time: inEvt ? String((inEvt as any)?.client_time || '') : null,
+        out_time: outEvt ? String((outEvt as any)?.client_time || '') : null,
+        is_late: !!inEvt && lateMin > 0,
+        minutes_late: lateMin,
+        fine_tier: fineTier,
+        fine_amount: fineAmount,
+        has_absent: !!absentEvt,
+        is_complete: !!(inEvt && outEvt),
+        has_fine: hasFine,
+        needs_action: needsAction,
+        flags,
+      });
+    }
+    rows.sort((a: any, b: any) =>
+      String(a.employee_name).localeCompare(String(b.employee_name), 'vi') ||
+      String(a.start_at).localeCompare(String(b.start_at)));
+    const uniqueEmp = new Set(rows.map((r: any) => r.employee_id));
+    return {
+      date: day,
+      rows,
+      totals: {
+        shifts: rows.length,
+        employees: uniqueEmp.size,
+        incomplete: rows.filter((r: any) => !r.is_complete).length,
+        fined: rows.filter((r: any) => r.has_fine).length,
+        drafts: rows.filter((r: any) => String(r.status).toUpperCase() === 'DRAFT').length,
+        complete: rows.filter((r: any) => r.is_complete).length,
+      },
+    };
   }
 
   /**

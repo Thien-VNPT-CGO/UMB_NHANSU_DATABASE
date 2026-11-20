@@ -7585,40 +7585,88 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Bảng "Ca cần hoàn thành" theo ngày: ai thiếu check-in/out, ca nào đang bị
+  // phạt, ca nháp chưa tính công — Admin nhìn 1 màn hình rồi bấm hoàn thành.
+  app.get('/admin/attendance/shift-board', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const q: any = req.query || {};
+      const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+      const date = String(q.date || q.fromDate || today).slice(0, 10);
+      const board = await attendanceService.listShiftCompletionBoard(date, {
+        employeeId: String(q.employeeId || '').trim() || undefined,
+        branchScope: req.user?.role === 'STORE' ? req.user.branchScope || '*' : String(q.branchId || '*'),
+      });
+      res.json({ success: true, ...board });
+    } catch (err: any) {
+      res.status(400).json({ error: String(err?.message || 'Lỗi tải bảng ca cần hoàn thành') });
+    }
+  });
+
   // Admin hoàn thành ca làm cho NV (chọn ngày + nhân viên + ca): CHỈ ADMIN.
-  // CHECK_OUT còn thiếu về đúng ca qua engine compensateShift (mặc định giờ
-  // vào/tan ca khi không nhập) — lương đồng bộ theo sự kiện đã đủ cặp.
-  // Realtime Sheet + socket như điểm danh thường.
+  // QUYỀN TỐI THƯỢNG: ghi đủ CHECK_IN/OUT còn thiếu (mặc định giờ vào/tan ca),
+  // xóa sạch phạt live + kho archive, dọn VẮNG, phát hành ca nháp — áp lại được
+  // cả ca đã báo "hoàn thành". Realtime Sheet + socket + inbox cho Kế toán/HR/NV.
   app.post('/attendance/complete-shift', authMiddleware, requireRole(['ADMIN']), validate({ body: completeShiftBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const b: any = req.body || {};
       const assignmentId = String(b.assignmentId || b.assignment_id || '').trim();
       if (!assignmentId) return res.status(400).json({ error: 'MISSING_ASSIGNMENT: chọn ca cần hoàn thành!' });
-      const result = await attendanceService.compensateShift({
+      const queued: any = await attendanceService.compensateShift({
         assignmentId,
         checkInTime: b.checkInTime || b.check_in_time || undefined,
         checkOutTime: b.checkOutTime || b.check_out_time || undefined,
         reason: b.reason || 'Admin hoàn thành ca làm',
         actorId: req.user!.id,
+        adminOverride: true,
+        autoPublish: true,
       });
-      const shift: any = await adapter.getShiftById(assignmentId).catch(() => null);
+      const result: any = queued?.result ?? queued;
+      const employeeId = String(result?.employeeId || '').trim();
+      const date = String(result?.date || '').slice(0, 10);
+      const period = String(result?.period || (date ? date.slice(0, 7) : ''));
       await adapter.recordAuditLog({
         actor_id: req.user!.id,
         action: 'SHIFT_COMPLETED_BY_ADMIN',
         target_type: 'SU_KIEN_DIEM_DANH',
         target_id: assignmentId,
       } as any).catch(() => null);
-      broadcastUpdate('attendance', { action: 'admin-complete', assignmentId, employeeId: (shift as any)?.employee_id });
-      broadcastUpdate('payroll', { action: 'admin-complete', assignmentId });
+      // Realtime toàn hệ thống: Bảng chấm công/Bảng tổng hợp/Kế toán tải lại
+      // ngay; chỉ máy đúng nhân viên nhận sự kiện điểm danh (app NV không lag).
+      const payload = {
+        action: 'admin-complete',
+        assignmentId,
+        employeeId,
+        date,
+        period,
+        created: result?.created || [],
+        cleared: Number(result?.cleared || 0) + Number(result?.archivedCleared || 0),
+        absentCleared: result?.absentCleared || 0,
+        published: !!result?.published,
+        alreadyComplete: !!result?.alreadyComplete,
+      };
+      broadcastUpdate('attendance', payload);
+      broadcastUpdate('payroll', payload);
+      broadcastUpdate('adjustments', payload);
+      if (result?.published) broadcastUpdate('schedules', payload);
+      if (employeeId) {
+        // Nhắc riêng cổng NV (bảng công/lịch/lương của tôi) tải lại tức thì.
+        try {
+          const io = app.get('io');
+          io?.to(`user:${employeeId}`).emit('attendance.updated', payload);
+        } catch { /* non-fatal */ }
+      }
       broadcastNotification({
         type: 'ADJUSTMENT',
-        title: '✅ Ca làm đã được Admin hoàn thành',
-        message: `Ca ${assignmentId} đã được Admin hoàn thành thủ công — công và lương đã đồng bộ.`,
+        title: result?.alreadyComplete
+          ? '✅ Ca đã được Admin áp lại — đã xóa phạt'
+          : '✅ Ca làm đã được Admin hoàn thành',
+        message: `Ca ${result?.shiftCode || assignmentId}${date ? ` ngày ${date}` : ''} của ${employeeId || 'NV'} đã hoàn thành — đủ công, không phạt${result?.published ? ', ca nháp đã phát hành' : ''}. Đã đồng bộ Sheet + Kế toán + HR + App nhân viên.`,
         linkTab: 'adjustment',
-        metadata: { assignmentId },
-        targetRoles: ['ADMIN', 'HR', 'STORE', 'EMPLOYEE'],
+        metadata: { assignmentId, employeeId, date },
+        targetRoles: ['ADMIN', 'HR', 'FINANCE', 'DIRECTOR', 'STORE', 'EMPLOYEE'],
+        targetEmployeeIds: employeeId ? [employeeId] : undefined,
       });
-      res.json(result);
+      res.json({ ...queued, result });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
