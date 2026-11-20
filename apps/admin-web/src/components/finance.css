@@ -318,6 +318,8 @@
 .fin-qr-card:hover { border-color: var(--fin-brand-line); box-shadow: 0 4px 12px rgba(180,69,124,.1); }
 
 /* ---------- Nhập liệu tay: thanh công cụ + chế độ toàn màn hình ---------- */
+/* Ẩn menu trái khi mở bảng nhập tay toàn màn hình (menu là <aside> của layout Admin) */
+body.fin-manual-fullscreen aside { display: none !important; }
 .fin-manual-toolbar { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid #f1f5f9; align-items: center; background: #fffdfd; }
 /* Ô nhập "ghost": chỉ hiện khung khi rê chuột / đang nhập — bảng gọn, không đầy ô trống */
 .fin-manual-cell {

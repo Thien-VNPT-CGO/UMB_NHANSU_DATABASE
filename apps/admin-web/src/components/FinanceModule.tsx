@@ -1644,11 +1644,14 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
   const [batchFilter, setBatchFilter] = useState<string>('ALL');
   // Bảng nhập tay toàn màn hình: đủ chỗ cho 12 cột, chữ/ô nhập lớn, thao tác nhanh.
   const [manualFull, setManualFull] = useState(false);
-  // Khóa cuộn nền + Esc đóng + Ctrl/Cmd+Enter lưu tất cả khi đang mở toàn màn hình.
+  // Khóa cuộn nền + ẩn menu trái + Esc đóng + Ctrl/Cmd+Enter lưu tất cả khi đang mở toàn màn hình.
   useEffect(() => {
     if (!manualFull) return;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    // Menu trái nằm ngoài vùng nội dung (stacking context riêng) nên phải ẩn hẳn,
+    // nếu không nó sẽ nổi lên trên bảng nhập tay. Thoát ra là hiện lại.
+    document.body.classList.add('fin-manual-fullscreen');
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); setManualFull(false); }
       else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); saveAllInputs?.(); }
@@ -1656,6 +1659,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
     window.addEventListener('keydown', onKey);
     return () => {
       document.body.style.overflow = prevOverflow;
+      document.body.classList.remove('fin-manual-fullscreen');
       window.removeEventListener('keydown', onKey);
     };
   }, [manualFull, saveAllInputs]);
