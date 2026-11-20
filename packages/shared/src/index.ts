@@ -8,6 +8,7 @@ export * from './types/notifications.js';
 export * from './types/operations.js';
 export * from './types/tests.js';
 export * from './types/milkroute.js';
+export * from './types/sale-monitor.js';
 export * from './constants/index.js';
 export * from './constants/payslip-drive.js';
 export * from './constants/office.js';

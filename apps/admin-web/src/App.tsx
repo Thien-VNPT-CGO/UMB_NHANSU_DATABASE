@@ -51,9 +51,12 @@ import {
   Banknote,
   Ban,
   Truck,
+  MessageSquareWarning,
 } from 'lucide-react';
 import { RoleViews } from './components/RoleViews';
 import { ChangePasswordView } from './components/ChangePasswordView';
+import { SaleMonitorView } from './components/SaleMonitorView';
+import { HarasocialAlertView } from './components/HarasocialAlertView';
 import { VpsPasswordCard } from './components/VpsPasswordCard';
 import { DirectorPayrollView } from './components/DirectorPayrollView';
 import { InternalWorkflowView } from './components/InternalWorkflowView';
@@ -139,7 +142,8 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'internal-workflow', label: '8. Yêu cầu công việc nội bộ', icon: Send },
     { id: 'office-approvals', label: '9. Duyệt Văn Phòng', icon: FileText },
     { id: 'ev-transport', label: '10. Vận chuyển sữa (EV)', icon: Truck },
-    { id: 'change-password', label: '11. Đổi mật khẩu', icon: KeyRound },
+    { id: 'harasocial-alert', label: '11. HaraSocial Zalo Alert', icon: MessageSquareWarning },
+    { id: 'change-password', label: '12. Đổi mật khẩu', icon: KeyRound },
   ],
   IT: [
     { id: 'internal-workflow', label: '1. Yêu cầu công việc nội bộ', icon: Send },
@@ -153,16 +157,17 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'hr-schedule', label: '5. Lịch làm việc', icon: Calendar },
     { id: 'hr-leave', label: '6. Nghỉ OFF', icon: Clock },
     { id: 'hr-swap', label: '7. Đổi ca', icon: RefreshCw },
-    { id: 'hr-adjustments', label: '8. Bổ sung công', icon: FileText },
-    { id: 'notify', label: '9. Thông báo', icon: Bell },
-    { id: 'policies', label: '10. Chính sách', icon: Sliders },
-    { id: 'integrations', label: '11. Tích hợp & Đồng bộ', icon: Database },
-    { id: 'maintenance', label: '12. Bảo trì', icon: Activity },
-    { id: 'audit', label: '13. Nhật ký Audit', icon: FileCheck },
-    { id: 'backup', label: '14. Sao lưu & Phục hồi', icon: HardDrive },
-    { id: 'office-approvals', label: '15. Duyệt Văn Phòng', icon: FileText },
-    { id: 'ev-transport', label: '16. Vận chuyển sữa (EV)', icon: Truck },
-    { id: 'change-password', label: '17. Đổi mật khẩu', icon: KeyRound },
+    { id: 'sale-monitor', label: '8. Giám sát nhân viên Sale', icon: Radio },
+    { id: 'hr-adjustments', label: '9. Bổ sung công', icon: FileText },
+    { id: 'notify', label: '10. Thông báo', icon: Bell },
+    { id: 'policies', label: '11. Chính sách', icon: Sliders },
+    { id: 'integrations', label: '12. Tích hợp & Đồng bộ', icon: Database },
+    { id: 'maintenance', label: '13. Bảo trì', icon: Activity },
+    { id: 'audit', label: '14. Nhật ký Audit', icon: FileCheck },
+    { id: 'backup', label: '15. Sao lưu & Phục hồi', icon: HardDrive },
+    { id: 'office-approvals', label: '16. Duyệt Văn Phòng', icon: FileText },
+    { id: 'ev-transport', label: '17. Vận chuyển sữa (EV)', icon: Truck },
+    { id: 'change-password', label: '18. Đổi mật khẩu', icon: KeyRound },
     // GỠ khỏi cổng ADMIN (chỉ HR/Kế toán nghiệp vụ): "Chuyển ca hỗ trợ" (hr-support)
     // và "Duyệt đổi STK" (bank-changes). Toàn bộ chức năng KẾ TOÁN (kể cả
     // "Cấu hình Lương CB & Phụ cấp — theo Khối") chỉ hiển thị trên tài khoản FINANCE.
@@ -364,8 +369,16 @@ export const ADMIN_TAB_GROUPS: RoleTabGroup[] = [
     ],
   },
   {
+    id: 'admin-group-sale-monitor',
+    label: '4. Giám sát Sales',
+    icon: Radio,
+    tabs: [
+      { id: 'sale-monitor', label: 'Nhân viên Sale realtime', icon: Radio },
+    ],
+  },
+  {
     id: 'admin-group-work',
-    label: '4. Công',
+    label: '5. Công',
     icon: CheckCircle,
     tabs: [
       { id: 'hr-adjustments', label: 'Bổ sung công', icon: FileText },
@@ -373,7 +386,7 @@ export const ADMIN_TAB_GROUPS: RoleTabGroup[] = [
   },
   {
     id: 'admin-group-approvals',
-    label: '5. Duyệt & Thông báo',
+    label: '6. Duyệt & Thông báo',
     icon: Bell,
     tabs: [
       { id: 'notify', label: 'Thông báo', icon: Bell },
@@ -383,7 +396,7 @@ export const ADMIN_TAB_GROUPS: RoleTabGroup[] = [
   },
   {
     id: 'admin-group-system',
-    label: '6. Hệ thống & Dữ liệu',
+    label: '7. Hệ thống & Dữ liệu',
     icon: Database,
     tabs: [
       { id: 'integrations', label: 'Tích hợp & Đồng bộ', icon: Database },
@@ -394,7 +407,7 @@ export const ADMIN_TAB_GROUPS: RoleTabGroup[] = [
   },
   {
     id: 'admin-group-transport',
-    label: '7. Vận chuyển sữa',
+    label: '8. Vận chuyển sữa',
     icon: Truck,
     tabs: [{ id: 'ev-transport', label: 'Tài xế & Định vị GPS', icon: Truck }],
   },
@@ -1931,12 +1944,15 @@ export function App() {
           // Realtime lịch tuần: backend bắn data:updated(schedules/swaps/leaves)
           // sau mọi nút xếp/publish/đổi ca/duyệt OFF — báo cho tab Lịch tải lại
           // ca + điểm danh ngay, không chờ vòng tải chung.
-          if (payload?.entity === 'schedules' || payload?.entity === 'swaps' || payload?.entity === 'leaves' || payload?.entity === 'office-leaves' || payload?.entity === 'attendance' || payload?.entity === 'office-attendance' || payload?.entity === 'all') {
+          if (payload?.entity === 'schedules' || payload?.entity === 'swaps' || payload?.entity === 'leaves' || payload?.entity === 'office-leaves' || payload?.entity === 'attendance' || payload?.entity === 'office-attendance' || payload?.entity === 'employees' || payload?.entity === 'all') {
             if (payload?.entity === 'all' && Array.isArray(payload?.data?.changedTabs) && payload.data.changedTabs.some((t: string) => /^PHAN_CONG_CA(_P\d+)?$/i.test(t))) {
               apiRequest('/schedules').then(sList => { if (Array.isArray(sList)) setShifts(sList); }).catch(() => null);
             }
             try {
               window.dispatchEvent(new CustomEvent('ubm:schedule-reload', { detail: payload?.data }));
+              // Tool Giám sát nhân viên Sale (ADMIN): tải lại snapshot ngay khi
+              // NV Sale check-in/check-out, HR đổi ca, duyệt OFF hoặc đổi hồ sơ.
+              window.dispatchEvent(new CustomEvent('ubm:sale-monitor-reload', { detail: payload?.data }));
             } catch { /* non-fatal */ }
           }
           if (payload?.entity === 'adjustments' || payload?.entity === 'office-adjustments' || payload?.entity === 'office-leaves' || payload?.entity === 'all') {
@@ -6192,6 +6208,12 @@ export function App() {
 
           {/* ĐỔI MẬT KHẨU TÀI KHOẢN NỘI BỘ (GIÁM ĐỐC / IT) */}
           {activeTab === 'change-password' && <ChangePasswordView />}
+
+          {/* TOOL GIÁM SÁT NHÂN VIÊN SALE (ADMIN) — realtime 100% qua Socket.IO */}
+          {activeTab === 'sale-monitor' && <SaleMonitorView showToast={stableShowToast} />}
+
+          {/* HARASOCIAL ZALO ALERT (GIÁM ĐỐC) — SaaS độc lập, nhúng/link sang app riêng */}
+          {activeTab === 'harasocial-alert' && <HarasocialAlertView showToast={stableShowToast} />}
 
           {/* GIÁM ĐỐC KÝ PHIẾU LƯƠNG (trước Quản lý chi nhánh) */}
           {activeTab === 'director-payroll' && <DirectorPayrollView currentUser={currentUser} />}
