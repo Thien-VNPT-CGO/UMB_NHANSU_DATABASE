@@ -15,6 +15,7 @@ import {
   Send, Check, X, ChevronDown, Folder, HardDrive, Lock,
   Clock, Wallet, History, Archive, Search, FileDown, Building2,
   ShieldCheck, AlertCircle, Banknote, Calculator, Settings2, Inbox,
+  Maximize2, Minimize2,
 } from 'lucide-react';
 import { apiRequest, getApiBase, getAuthToken } from '../services/api.js';
 import {
@@ -1641,6 +1642,25 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
   const [expandId, setExpandId] = useState<string | null>(null);
   // Bộ lọc ĐỢT cho 2 bảng (nhập tay + B4 xem trước). 'ALL' = cả công ty.
   const [batchFilter, setBatchFilter] = useState<string>('ALL');
+  // Bảng nhập tay toàn màn hình: đủ chỗ cho 12 cột, chữ/ô nhập lớn, thao tác nhanh.
+  const [manualFull, setManualFull] = useState(false);
+  // Khóa cuộn nền + Esc đóng + Ctrl/Cmd+Enter lưu tất cả khi đang mở toàn màn hình.
+  useEffect(() => {
+    if (!manualFull) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); setManualFull(false); }
+      else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); saveAllInputs?.(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [manualFull, saveAllInputs]);
+  // Đổi kỳ thì đóng bảng toàn màn hình để tránh nhập nhầm tháng.
+  useEffect(() => { setManualFull(false); }, [month]);
   const show = cols?.show || (() => true);
   const fmt = useCallback((n: any) => `${Math.round(Number(n) || 0).toLocaleString('vi-VN')}đ`, []);
   const allEmps = useMemo(() => (Array.isArray(allEmployees) ? allEmployees : []), [allEmployees]);
@@ -1756,6 +1776,9 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <TabHead step={4} title="Tính lương — Công thức & Nhập tay" desc={`Lưu công thức kỳ, nhập liệu tay từng NV, rồi bấm TÍNH LƯƠNG để sinh kỳ + phiếu. Kỳ ${periodLabel(month)}.`}>
         <SearchBox value={q} onChange={setQ} />
+        <button type="button" className="fin-btn fin-btn-dark fin-btn-sm" onClick={() => setManualFull(true)} title="Mở bảng nhập liệu tay toàn màn hình — nhiều chỗ, chữ lớn, dễ nhập">
+          <Maximize2 size={13} /> Nhập tay toàn màn hình
+        </button>
         <ColumnSettings tabKey="fin-calculate" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-calculate')} saving={colVisSaving} />
       </TabHead>
 
@@ -1858,10 +1881,18 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
         </div>
       </div>
 
-      {/* Nhập tay theo chi nhánh */}
-      <div className="fin-card">
-        <CardHead title="Nhập liệu tay theo kỳ" icon={<FileSpreadsheet size={14} color="#E85D92" />} sub="Nhóm theo chi nhánh — tự động lưu 0,8s sau khi ngừng gõ · Phụ cấp: nhập > 0 ghi đè cấu hình, trống/0 lấy cấu hình"
+      {/* Nhập tay theo chi nhánh — bấm "Toàn màn hình" để nhập thoải mái hơn */}
+      <div className={manualFull ? 'fin-card fin-manual-full' : 'fin-card'}
+        {...(manualFull ? { role: 'dialog', 'aria-modal': true, 'aria-label': 'Nhập liệu tay theo kỳ — toàn màn hình' } : {})}>
+        <CardHead title={manualFull ? `Nhập liệu tay — kỳ ${periodLabel(month)}` : 'Nhập liệu tay theo kỳ'} icon={<FileSpreadsheet size={14} color={manualFull ? '#fff' : '#E85D92'} />} sub={manualFull
+          ? 'Toàn màn hình · Esc để thoát · Enter / ↑ ↓ chuyển dòng cùng cột · Ctrl+Enter lưu tất cả'
+          : 'Nhóm theo chi nhánh — tự động lưu 0,8s sau khi ngừng gõ · Phụ cấp: nhập > 0 ghi đè cấu hình, trống/0 lấy cấu hình'}
           >
+          <button type="button" className={manualFull ? 'fin-btn fin-btn-ghost fin-btn-sm' : 'fin-btn fin-btn-primary fin-btn-sm'}
+            onClick={() => setManualFull(v => !v)}
+            title={manualFull ? 'Thoát toàn màn hình (Esc)' : 'Mở bảng nhập tay toàn màn hình — rộng hơn, chữ và ô nhập lớn hơn'}>
+            {manualFull ? <Minimize2 size={13} /> : <Maximize2 size={13} />} {manualFull ? 'Thoát (Esc)' : 'Toàn màn hình'}
+          </button>
           {inputsSaving
             ? <span className="fin-chip-stat" style={{ borderColor: '#fcd34d', background: '#fffbeb', color: '#92400e' }}><Loader2 size={11} className="fin-spin" style={{ verticalAlign: -1 }} /> Đang lưu {pendingCount} ô…</span>
             : inputsSavedAt
@@ -1873,12 +1904,18 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
           <span className="fin-chip-stat">Bonus {formatVND(inputTotals.bonus)}</span>
           <span className="fin-chip-stat">Ứng {formatVND(inputTotals.ung)}</span>
         </CardHead>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 16px', borderBottom: '1px solid #f1f5f9', alignItems: 'center' }}>
+        <div className="fin-manual-toolbar">
           <span style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--fin-muted)', textTransform: 'uppercase', letterSpacing: .6 }}>Đợt:</span>
           {batchPills}
+          {manualFull && <div style={{ marginLeft: 'auto', minWidth: 240, maxWidth: 320, flex: '1 1 240px' }}><SearchBox value={q} onChange={setQ} /></div>}
+          {manualFull && (
+            <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>
+              {batchEmployees.length} NV · {groups.length} chi nhánh
+            </span>
+          )}
         </div>
-        <div className="fin-table-wrap" style={{ maxHeight: '62vh' }}>
-          <table className="fin-table" style={{ minWidth: 1180 }}>
+        <div className="fin-table-wrap fin-manual-scroll" style={manualFull ? undefined : { maxHeight: '62vh' }}>
+          <table className="fin-table fin-manual-table" style={{ minWidth: manualFull ? 1240 : 1180 }}>
             <thead>
               <tr>{show('stt') && <th className="ctr">STT</th>}{show('code') && <th>Mã NV</th>}{show('name') && <th>Họ tên</th>}{show('branch') && <th>Chi nhánh</th>}{show('luong_cb') && <th className="num">LCB</th>}{show('phu_cap') && <th className="num" title="Nhập tay > 0 sẽ ghi đè phụ cấp cấu hình; để trống/0 thì lấy cấu hình">Phụ cấp</th>}{show('ot_extra') && <th className="num">OT thêm</th>}{show('bonus_extra') && <th className="num">Bonus</th>}{show('ung_luong') && <th className="num">Ứng lương</th>}{show('tru_kpi') && <th className="num">Trừ KPI</th>}{show('dong_phuc') && <th className="num">Trừ ĐP</th>}{show('note') && <th style={{ minWidth: 280 }}>Ghi chú (nhiều dòng)</th>}</tr>
             </thead>
@@ -1893,18 +1930,31 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                   {g.rows.map((emp: any, idx: number) => {
                     const inp = rowInput(emp.employee_id);
                     const autoUniform = uniformByEmp.get(String(emp.employee_id));
-                    // Gợi ý (placeholder) phụ cấp đang cấu hình — Kế toán nhập > 0 để ghi đè kỳ này.
+                    // Gợi ý (placeholder) phụ cấp / LCB đang cấu hình — Kế toán nhập > 0 để ghi đè kỳ này.
                     const cfgAllowance = Math.max(0, Math.floor(Number(salaryConfigs?.[emp.employee_id]?.allowance) || 0));
+                    const cfgBase = Math.max(0, Math.floor(Number(salaryConfigs?.[emp.employee_id]?.base_salary) || 0));
                     const cell = (field: string, width = '100%') => (
-                      <input type="number" className="fin-input" style={{ width, padding: '5px 7px', fontSize: 11.5 }}
+                      <input type="number" inputMode="numeric" className={`fin-input fin-manual-cell${field === 'phu_cap' && Number(inp.phu_cap) > 0 ? ' is-manual' : ''}`} style={{ width }}
+                        data-mfield={field} data-memp={emp.employee_id}
                         value={inp[field] ?? ''}
-                        placeholder={field === 'phu_cap' && cfgAllowance > 0 ? String(cfgAllowance) : undefined}
+                        placeholder={field === 'phu_cap' && cfgAllowance > 0 ? String(cfgAllowance) : field === 'luong_cb' && cfgBase > 0 ? String(cfgBase) : undefined}
                         title={field === 'phu_cap' && cfgAllowance > 0 ? `Phụ cấp cấu hình: ${cfgAllowance.toLocaleString('vi-VN')}đ — nhập > 0 để ghi đè kỳ này, để trống dùng cấu hình`
-                          : field === 'dong_phuc' && autoUniform && (inp as any).__autoUniform ? `Tự động từ Hồ Sơ NV: ${autoUniform.qty} áo${autoUniform.sizes ? ` (${autoUniform.sizes})` : ''} — gõ để sửa` : undefined}
+                          : field === 'luong_cb' && cfgBase > 0 ? `LCB cấu hình: ${cfgBase.toLocaleString('vi-VN')}đ — nhập > 0 để ghi đè kỳ này, để trống dùng cấu hình`
+                            : field === 'dong_phuc' && autoUniform && (inp as any).__autoUniform ? `Tự động từ Hồ Sơ NV: ${autoUniform.qty} áo${autoUniform.sizes ? ` (${autoUniform.sizes})` : ''} — gõ để sửa` : undefined}
+                        onKeyDown={(e) => {
+                          if (e.key !== 'Enter' && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+                          const root = (e.currentTarget as HTMLElement).closest('.fin-manual-scroll');
+                          if (!root) return;
+                          e.preventDefault();
+                          const list = Array.from(root.querySelectorAll<HTMLInputElement>(`input[data-mfield="${field}"]`));
+                          const i = list.indexOf(e.currentTarget as HTMLInputElement);
+                          const next = list[i + (e.key === 'ArrowUp' ? -1 : 1)];
+                          if (next) { next.focus(); next.select(); }
+                        }}
                         onChange={v => upsertInput(emp.employee_id, field, v.target.value)} aria-label={field} />
                     );
                     return (
-                      <tr key={emp.employee_id}>
+                      <tr key={emp.employee_id} className={idx % 2 ? 'fin-alt' : undefined}>
                         {show('stt') && <td className="ctr">{idx + 1}</td>}
                         {show('code') && <td className="ctr fin-mono">{emp.employee_code}</td>}
                         {show('name') && <td style={{ fontWeight: 700 }}>{emp.full_name}</td>}
@@ -1917,7 +1967,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                         {show('tru_kpi') && <td className="num">{cell('tru_kpi')}</td>}
                         {show('dong_phuc') && <td className="num">{cell('dong_phuc')}</td>}
                         {show('note') && <td>
-                          <textarea className="fin-input" rows={2} value={inp.note ?? ''} onChange={v => upsertInput(emp.employee_id, 'note', v.target.value)} placeholder="Ghi chú… (nhiều dòng)" aria-label="Ghi chú" style={{ fontSize: 11.5, padding: '6px 8px', resize: 'vertical', minHeight: 42, lineHeight: 1.4, whiteSpace: 'pre-wrap' }} />
+                          <textarea className="fin-input fin-manual-note" rows={2} value={inp.note ?? ''} onChange={v => upsertInput(emp.employee_id, 'note', v.target.value)} placeholder="Ghi chú… (nhiều dòng)" aria-label="Ghi chú" />
                         </td>}
                       </tr>
                     );
@@ -1955,8 +2005,11 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
             </tbody>
           </table>
         </div>
-        <div style={{ padding: '10px 16px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Tự lưu 0,8s sau khi ngừng gõ · Sheets cập nhật gom 1 lượt sau 20s · Tổng trích: KPI <b className="fin-money">{formatVND(inputTotals.kpi)}</b> • Đồng phục <b className="fin-money">{formatVND(totals.dp)}</b></span>
+        <div className="fin-manual-foot" style={{ padding: '10px 16px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>
+            Tự lưu 0,8s sau khi ngừng gõ · Sheets cập nhật gom 1 lượt sau 20s · Tổng trích: KPI <b className="fin-money">{formatVND(inputTotals.kpi)}</b> • Đồng phục <b className="fin-money">{formatVND(totals.dp)}</b>
+            {manualFull && <span> · <b>Enter / ↑ ↓</b> chuyển dòng cùng cột · <b>Esc</b> thoát · <b>Ctrl+Enter</b> lưu tất cả</span>}
+          </span>
           <button type="button" className="fin-btn fin-btn-dark fin-btn-sm" onClick={saveAllInputs} disabled={inputsLoading || pendingCount === 0 && !inputsSaving}><Save size={13} /> Lưu tất cả nhập tay{pendingCount > 0 ? ` (${pendingCount})` : ''}</button>
         </div>
       </div>
