@@ -4285,6 +4285,25 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [liveAttendanceEvents, setLiveAttendanceEvents] = useState<any[]>([]);
   // Lọc/gom Bảng Chấm Công Thời Gian Thực theo chi nhánh (ALL = xem tất cả, có header từng CN).
   const [attBranchFilter, setAttBranchFilter] = useState<string>('ALL');
+  // Bảng Chấm Công Thời Gian Thực khóa hiển thị Y HỆT tab Lịch Làm Việc Tuần:
+  //  - Tài khoản HR/Store bị khóa phạm vi → chỉ xem đúng chi nhánh của mình.
+  //  - Admin ẩn/khóa chi nhánh → chi nhánh đó biến mất khỏi bộ lọc + bảng NGAY
+  //    (branches cập nhật qua socket realtime, không cần F5).
+  useEffect(() => {
+    if (scheduleBranchLocked) {
+      const lockedId = canonicalBranchId(branchScope);
+      setAttBranchFilter(prev => prev === lockedId ? prev : lockedId);
+      return;
+    }
+    setAttBranchFilter(prev => {
+      if (!prev || prev === 'ALL') return 'ALL';
+      const stillActive = activeScheduleBranches.some(
+        (b: any) => canonicalBranchId(branchIdOf(b)) === canonicalBranchId(prev)
+      );
+      return stillActive ? prev : 'ALL';
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branches, branchScope]);
   const liveAttendanceEventsRef = useRef<any[]>([]);
   useEffect(() => {
     liveAttendanceEventsRef.current = liveAttendanceEvents;
@@ -13172,6 +13191,39 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   if (activeTab === 'hr-attendance' || activeTab === 'operations') {
     // Tab Chấm công đã khóa với tài khoản Admin (chỉ HR) — chặn cả truy cập trực tiếp.
     if (currentUser?.role === 'ADMIN') return null;
+    // Chi nhánh bị Admin khóa/ẩn lịch: khóa hiển thị NGAY như tab Lịch Làm Việc
+    // Tuần — không lộ bảng chấm công của chi nhánh đã ngừng hoạt động.
+    const myAttBranchHidden =
+      scheduleBranchLocked && hiddenScheduleBranchIds.has(canonicalBranchId(branchScope));
+    if (myAttBranchHidden) {
+      return (
+        <TabErrorBoundary tabName="Bảng Chấm Công Thời Gian Thực">
+          <div id="sec-attendance" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <h1 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: 'var(--text)' }}>
+              Bảng Chấm Công Thời Gian Thực
+            </h1>
+            <div style={{
+              backgroundColor: 'var(--surface)',
+              border: '1px solid #FCA5A5',
+              borderRadius: '16px',
+              padding: '40px 24px',
+              textAlign: 'center',
+              boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
+            }}>
+              <div style={{ fontSize: '42px', lineHeight: 1 }}>🚫</div>
+              <div style={{ marginTop: '12px', fontSize: '17px', fontWeight: 800, color: '#B91C1C' }}>
+                Bảng chấm công chi nhánh đã bị khóa
+              </div>
+              <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                Chi nhánh <strong>{getDisplayBranch(branchScope)}</strong> đã ngừng hoạt động.
+                Bảng chấm công thời gian thực của chi nhánh đã được Admin ẩn trên toàn hệ thống.
+                {currentUser?.role === 'DIRECTOR' ? '' : ' Vui lòng liên hệ Admin nếu cần mở lại.'}
+              </div>
+            </div>
+          </div>
+        </TabErrorBoundary>
+      );
+    }
     // Lưới tuần Mon–CN như lịch làm việc: 1 ô = các ca trong ngày kèm đúng trạng thái.
     // Dùng CHUNG tuần với tab Lịch (scheduleWeekOffset) để 2 tab luôn cùng tuần.
     const attMon = mondayIsoOfOffset(scheduleWeekOffset);
@@ -13214,8 +13266,17 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         (allEmployees || []).find((x: any) => x.employee_id === e.employee_id)?.default_shift_code ||
         e.default_shift_code || ''
       );
+    // Khóa hiển thị Y HỆT tab Lịch Làm Việc Tuần: tài khoản bị khóa phạm vi →
+    // đúng chi nhánh mình; chi nhánh Admin ẩn/khóa → loại khỏi bảng NGAY (realtime).
+    const attBranchKeyOf = (e: any) => String(e?.default_branch_id || e?.branch_id || '');
+    const attScopeBranchId = scheduleBranchLocked ? canonicalBranchId(branchScope) : '';
     const attEmps = ((allEmployees || []) as any[])
       .filter((e: any) => !isEmpAccountLocked(e) && e.employment_status !== 'TERMINATED')
+      .filter((e: any) => {
+        const bid = canonicalBranchId(attBranchKeyOf(e));
+        if (bid && hiddenScheduleBranchIds.has(bid)) return false;
+        return attScopeBranchId ? bid === attScopeBranchId : true;
+      })
       .sort((a: any, b: any) =>
         (schedBranchRankOf(a.default_branch_id || (a as any).branch_id) - schedBranchRankOf(b.default_branch_id || (b as any).branch_id)) ||
         (schedShiftRankOf(attSortShiftOf(a)) - schedShiftRankOf(attSortShiftOf(b))) ||
@@ -13223,7 +13284,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi')
       );
     // Gom NV theo chi nhánh: Bảng chấm công hiển thị header từng CN để dễ quan sát.
-    const attBranchKeyOf = (e: any) => String(e?.default_branch_id || e?.branch_id || '');
     const attBranchGroupsAll = (() => {
       const map = new Map<string, any[]>();
       for (const e of attEmps) {
@@ -13234,9 +13294,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       }
       return [...map.entries()].sort((a, b) => schedBranchRankOf(a[0]) - schedBranchRankOf(b[0]));
     })();
-    const attBranchGroups = attBranchFilter === 'ALL'
+    // Bộ lọc chi nhánh an toàn: chi nhánh vừa bị khóa/ẩn → tự về "Tất cả chi nhánh"
+    // ngay trong cùng nhịp render, không hiện bảng rỗng oan.
+    const attVisibleBranchFilter = attBranchFilter === 'ALL' || attBranchGroupsAll.some(
+      ([bid]) => canonicalBranchId(bid) === canonicalBranchId(attBranchFilter)
+    ) ? attBranchFilter : 'ALL';
+    const attBranchGroups = attVisibleBranchFilter === 'ALL'
       ? attBranchGroupsAll
-      : attBranchGroupsAll.filter(([bid]) => bid === attBranchFilter);
+      : attBranchGroupsAll.filter(([bid]) => canonicalBranchId(bid) === canonicalBranchId(attVisibleBranchFilter));
     const attCellOf = (empArg: any, iso: string) => {
       const emp = typeof empArg === 'string' ? { employee_id: empArg } : empArg;
       const empId = String(emp?.employee_id || '');
@@ -13516,19 +13581,33 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setScheduleWeekOffset(o => o - 1)}>◀</button>
             <button className="btn-primary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setScheduleWeekOffset(o => o + 1)}>▶</button>
             <span style={{ fontSize: '12px', fontWeight: 700, marginLeft: '6px' }}>Chi nhánh:</span>
-            <select
-              value={attBranchFilter}
-              onChange={(e) => setAttBranchFilter(e.target.value)}
-              title="Tách bảng chấm công theo từng chi nhánh"
-              style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px', fontWeight: 700, maxWidth: '240px' }}
-            >
-              <option value="ALL">Tất cả chi nhánh ({attEmps.length} NV)</option>
-              {attBranchGroupsAll.map(([bid, list]) => (
-                <option key={bid || '_unknown'} value={bid}>
-                  {getDisplayBranch(bid) || 'Chưa rõ chi nhánh'} ({list.length} NV)
-                </option>
-              ))}
-            </select>
+            {scheduleBranchLocked ? (
+              <span
+                title="Tài khoản của bạn chỉ được xem bảng chấm công chi nhánh này"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '5px',
+                  padding: '6px 12px', borderRadius: '999px',
+                  backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE',
+                  color: '#1D4ED8', fontSize: '12px', fontWeight: 800,
+                }}
+              >
+                🔒 {getDisplayBranch(branchScope)}
+              </span>
+            ) : (
+              <select
+                value={attVisibleBranchFilter}
+                onChange={(e) => setAttBranchFilter(e.target.value)}
+                title="Tách bảng chấm công theo từng chi nhánh (chi nhánh bị khóa/ẩn tự biến mất realtime)"
+                style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px', fontWeight: 700, maxWidth: '240px' }}
+              >
+                <option value="ALL">Tất cả chi nhánh ({attEmps.length} NV)</option>
+                {attBranchGroupsAll.map(([bid, list]) => (
+                  <option key={bid || '_unknown'} value={bid}>
+                    {getDisplayBranch(bid) || 'Chưa rõ chi nhánh'} ({list.length} NV)
+                  </option>
+                ))}
+              </select>
+            )}
             <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
               Tuần <strong>Thứ 2 {attDays[0] ? `${attDays[0].iso.slice(8, 10)}/${attDays[0].iso.slice(5, 7)}/${attDays[0].iso.slice(0, 4)}` : '…'} → CN {attDays[6] ? `${attDays[6].iso.slice(8, 10)}/${attDays[6].iso.slice(5, 7)}/${attDays[6].iso.slice(0, 4)}` : '…'}</strong> • 1 ô = các ca trong ngày kèm đúng trạng thái • Cùng tuần với tab Lịch Làm Việc{scheduleWeekOffset < 0 ? (archiveLoading ? ' • ⏳ Đang tải ngày công tuần cũ từ kho lưu trữ...' : ' • Tuần cũ đọc từ kho lưu trữ (đủ ngày công tính lương).') : ''}
             </span>
