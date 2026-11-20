@@ -71,6 +71,7 @@ Script deploy sẽ tự động:
 4. Cài systemd `harasocial-monitor.service` (cổng nội bộ `3010`).
 5. Thêm Nginx `location /harasocial/` (tắt proxy buffering để SSE realtime) và reload.
 6. Kiểm tra `http://127.0.0.1:3010/api/health`.
+7. Tự bật HR webhook và ghi `HR_SCHEDULE_WEBHOOK_URL/SECRET` vào `apps/backend/.env` rồi restart container backend — nhờ vậy mọi lần lưu ca trong UBM HR sẽ đẩy lịch sang HaraSocial ngay.
 
 Kết quả: `https://umbomilk-nhansu-diemdanh.duckdns.org/harasocial/`
 
