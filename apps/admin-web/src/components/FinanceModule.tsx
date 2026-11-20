@@ -29,6 +29,7 @@ import {
 import { SalaryConfigView } from './SalaryConfigView.js';
 import { OfficeApprovalsView } from './OfficeApprovalsView.js';
 import RateAdjustTab from './RateAdjustTab';
+import { FinFullscreenButton } from './FinFullscreen';
 import { FINANCE_COLUMN_DEFS as FIN_COL_DEFS, ColumnSettings, financeColHeaderCount as FIN_COL_HEADER_COUNT } from './finance-columns.js';
 import { formatVND } from '../utils/FinanceFormat';
 import './finance.css';
@@ -1372,6 +1373,7 @@ function DashboardTab({ month, finSheet, finSheetLoading, slips, workflow, forma
         {/* Khối */}
         <div className="fin-card">
           <CardHead title="Lương theo Khối" icon={<Users size={14} color="#E85D92" />} sub={`Kỳ ${periodLabel(month)}`}>
+            <FinFullscreenButton />
             <ColumnSettings tabKey="fin-dashboard-block" defs={FIN_COL_DEFS['fin-dashboard-block']} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-dashboard-block')} saving={colVisSaving} />
           </CardHead>
           <div className="fin-table-wrap" style={{ maxHeight: 'none' }}>
@@ -1398,6 +1400,7 @@ function DashboardTab({ month, finSheet, finSheetLoading, slips, workflow, forma
         {/* Chi nhánh */}
         <div className="fin-card">
           <CardHead title="Lương theo Chi nhánh" icon={<Building2 size={14} color="#E85D92" />} sub="Gộp từ bảng chấm công kỳ này">
+            <FinFullscreenButton />
             <ColumnSettings tabKey="fin-dashboard-branch" defs={FIN_COL_DEFS['fin-dashboard-branch']} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-dashboard-branch')} saving={colVisSaving} />
           </CardHead>
           <div className="fin-table-wrap" style={{ maxHeight: 'none' }}>
@@ -1472,6 +1475,7 @@ function TimesheetTab({ month, finSheet, finSheetLoading, loadFinSheet, formatVN
         <CardHead title={`Kỳ ${periodLabel(month)} — ${fs?.fromDate || ''} → ${fs?.toDate || ''}`} icon={<FileSpreadsheet size={14} color="#E85D92" />} sub={fs ? `${fs?.totals?.employees ?? 0} NV • ${fs?.totals?.totalShifts ?? 0} ca • ${Number(fs?.totals?.hours ?? 0).toFixed(1)} giờ` : 'Chưa có dữ liệu'}>
           <SearchBox value={q} onChange={setQ} />
           {q && <span className="fin-chip-stat">{filteredCount} kết quả</span>}
+          <FinFullscreenButton />
           <ColumnSettings tabKey="fin-timesheet" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-timesheet')} saving={colVisSaving} />
         </CardHead>
         {finSheetLoading ? (
@@ -1580,11 +1584,14 @@ function BccTab({ month, finSheet, finSheetLoading, formatVND, cols, onToggleCol
           <div key={g.id} className="fin-card fin-bcc-branch">
             <div className="fin-bcc-branch-head">
               <span><Building2 size={13} style={{ verticalAlign: -2, marginRight: 6 }} />{branchLabelOf(g.id)}</span>
-              <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'none', letterSpacing: 0 }}>
-                {g.rows.length} NV • {r1(sumBy(g.rows, 'hours')).toFixed(1)} giờ • {formatVND(sumBy(g.rows, 'netPay'))}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'none', letterSpacing: 0 }}>
+                  {g.rows.length} NV • {r1(sumBy(g.rows, 'hours')).toFixed(1)} giờ • {formatVND(sumBy(g.rows, 'netPay'))}
+                </span>
+                <FinFullscreenButton label="Toàn màn hình" />
               </span>
             </div>
-            <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="fin-bcc-branch-body" style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
               {g.rows.map((r: any) => (
                 <details key={r.employeeId} className="fin-details">
                   <summary>
@@ -2029,6 +2036,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
       {/* B4 xem trước realtime: công thức kỳ × chấm công thật × nhập tay — bấm dòng để xem từng bước */}
       <div className="fin-card" style={{ border: '1.5px solid #a7f3d0' }}>
         <CardHead title="B4 — Các bước tính lương xem trước (realtime)" icon={<Calculator size={14} color="#059669" />} sub={`Kỳ ${periodLabel(month)} • B1 giờ công/LCB • B2 Tổng cộng • B3 Tổng lương • B4 Thực lãnh. Bấm ▶ để xem từng bước.`}>
+          <FinFullscreenButton />
           <ColumnSettings tabKey="fin-calculate" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-calculate')} saving={colVisSaving} />
         </CardHead>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 16px', borderBottom: '1px solid #f1f5f9', alignItems: 'center' }}>
@@ -2115,6 +2123,7 @@ function PayrollSheetTab({ month, slips, allEmployees, formatVND, stageBadge, co
       <div className="fin-card">
         <CardHead title={`Kỳ ${periodLabel(month)} — Bảng lương theo chi nhánh (${slips.length} phiếu)`} icon={<FileText size={14} color="#E85D92" />} sub="Nhóm theo chi nhánh · mỗi chi nhánh 1 dòng CỘNG tổng tiền">
           <span className="fin-chip-stat">Tổng thực lãnh: {formatVND(grand.thuc)}</span>
+          <FinFullscreenButton />
         </CardHead>
         <div className="fin-table-wrap">
           <table className="fin-table" style={{ minWidth: 1980 }}>
@@ -2496,6 +2505,7 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
       <div className="fin-card">
         <CardHead title={`Danh sách phiếu lương — ${periodLabel(month)} (${filteredSlips.length}/${allSlips.length} phiếu)`} icon={<Receipt size={14} color="#E85D92" />} sub="Nhóm theo chi nhánh · mỗi NV 1 dòng với ĐỦ cột · mỗi chi nhánh 1 dòng CỘNG tổng tiền · bấm ✏️ để sửa trực tiếp (LCB/OT/Bonus/Ứng/KPI/ĐP) · bấm “Cột hiển thị” để ẩn/hiện cột (lưu theo tài khoản, đồng bộ realtime)">
           <SearchBox value={q} onChange={setQ} />
+          <FinFullscreenButton />
           <ColumnSettings tabKey="fin-payroll-periods" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-payroll-periods')} saving={colVisSaving} />
           <span className="fin-chip-stat">{r1(grand.gio).toFixed(1)} giờ</span>
           <span className="fin-chip-stat">THỰC LÃNH {formatVND(grand.thuc)}</span>
@@ -2638,7 +2648,9 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
 
       {/* Các kỳ trong tháng (metadata) */}
       <div className="fin-card">
-        <CardHead title="Các kỳ lương trong tháng" icon={<Building2 size={14} color="#E85D92" />} sub="Mỗi lần TÍNH LƯƠNG 1 ĐỢT tạo một kỳ mới cho đợt đó — kỳ cũ vẫn giữ nguyên để đối chiếu" />
+        <CardHead title="Các kỳ lương trong tháng" icon={<Building2 size={14} color="#E85D92" />} sub="Mỗi lần TÍNH LƯƠNG 1 ĐỢT tạo một kỳ mới cho đợt đó — kỳ cũ vẫn giữ nguyên để đối chiếu">
+          <FinFullscreenButton />
+        </CardHead>
         <div className="fin-table-wrap" style={{ maxHeight: 'none' }}>
           <table className="fin-table">
             <thead>
@@ -2728,6 +2740,7 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
           <SearchBox value={q} onChange={setQ} />
           <ColumnSettings tabKey="fin-payslips" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-payslips')} saving={colVisSaving} />
           <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={loadSlips} disabled={slipsLoading}>{slipsLoading ? <Loader2 size={13} className="fin-spin" /> : <RefreshCw size={13} />} Tải lại</button>
+          <FinFullscreenButton />
         </CardHead>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 16px', borderBottom: '1px solid #f1f5f9' }}>
           {STAGE_FILTERS.map(f => (
@@ -2955,7 +2968,9 @@ function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUr
       </div>
 
       <div className="fin-card">
-        <CardHead title={`Chờ chuyển khoản — ${periodLabel(month)} (${ready.length})`} icon={<CreditCard size={14} color="#E85D92" />} sub="Sau khi chuyển, bấm ĐÃ CHUYỂN KHOẢN để khóa phiếu + đẩy PDF lên Drive" />
+        <CardHead title={`Chờ chuyển khoản — ${periodLabel(month)} (${ready.length})`} icon={<CreditCard size={14} color="#E85D92" />} sub="Sau khi chuyển, bấm ĐÃ CHUYỂN KHOẢN để khóa phiếu + đẩy PDF lên Drive">
+          <FinFullscreenButton />
+        </CardHead>
         <div className="fin-table-wrap">
           <table className="fin-table" style={{ minWidth: 2250 }}>
             <thead>
@@ -3139,7 +3154,13 @@ function BankQrTab({ allEmployees, month, cols, onToggleCol, onShowAllCols, colV
       </TabHead>
       {groups.map(g => (
         <div key={g.id} className="fin-card">
-          <div className="fin-bcc-branch-head"><span><Building2 size={13} style={{ verticalAlign: -2, marginRight: 6 }} />{branchLabelOf(g.id)}</span><span style={{ fontSize: 10 }}>{g.rows.length} NV</span></div>
+          <div className="fin-bcc-branch-head">
+            <span><Building2 size={13} style={{ verticalAlign: -2, marginRight: 6 }} />{branchLabelOf(g.id)}</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 10 }}>{g.rows.length} NV</span>
+              <FinFullscreenButton />
+            </span>
+          </div>
           <div className="fin-qr-grid">
             {g.rows.map((e: any) => {
               const acct = String(e.bank_account || '').trim();
@@ -3197,7 +3218,9 @@ function BankChangesTab({ currentUser, showToast }: any) {
         <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={load} disabled={loading}>{loading ? <Loader2 size={13} className="fin-spin" /> : <RefreshCw size={13} />} Tải lại</button>
       </TabHead>
       <div className="fin-card">
-        <CardHead title={`⏳ Chờ duyệt (${pending.length})`} icon={<AlertCircle size={14} color="#d97706" />} />
+        <CardHead title={`⏳ Chờ duyệt (${pending.length})`} icon={<AlertCircle size={14} color="#d97706" />}>
+          <FinFullscreenButton />
+        </CardHead>
         {pending.map((r: any) => (
           <div key={r.employee_id || r.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: '1px solid #f1f5f9', flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: 240 }}>

@@ -16,6 +16,7 @@ import { apiRequest } from '../services/api.js';
 import { periodLabel } from '@ubm/shared';
 import { formatVND } from '../utils/FinanceFormat';
 import { ColumnSettings } from './finance-columns.js';
+import { FinFullscreenButton } from './FinFullscreen';
 import './finance.css';
 
 const BRANCH_LABEL: Record<string, string> = {
@@ -242,6 +243,7 @@ export default function RateAdjustTab({ month, currentUser, showToast, cols, onT
             <div className="fin-card-sub">Chỉ nhập đơn giá MỚI ở những NV cần điều chỉnh — bỏ trống = giữ nguyên. Đơn giá cũ được giữ nguyên trong lịch sử, không ghi đè.</div>
           </div>
           <div className="fin-chips">
+            <FinFullscreenButton />
             <ColumnSettings tabKey="fin-rate-adjust" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols?.('fin-rate-adjust')} saving={colVisSaving} />
             <button type="button" className="fin-pill" onClick={() => toggleAll(true)}>Chọn hết dòng có giá mới</button>
             <button type="button" className="fin-pill" onClick={() => toggleAll(false)}>Bỏ chọn hết</button>

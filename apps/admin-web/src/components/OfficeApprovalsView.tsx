@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Building2, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 import { apiRequest } from '../services/api';
 import { ColumnSettings } from './finance-columns.js';
+import { FinFullscreenButton } from './FinFullscreen';
 
 /**
  * Duyệt Văn Phòng — 2 hàng đợi cho nhân viên khối VĂN PHÒNG (group = VAN_PHONG):
@@ -132,7 +133,7 @@ export const OfficeApprovalsView: React.FC<{ currentUser: any; cols?: any; onTog
   const pendingAdjust = adjustments.filter(a => a.status === 'PENDING');
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+    <div data-fs-card="1" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
         <div>
           <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -143,6 +144,7 @@ export const OfficeApprovalsView: React.FC<{ currentUser: any; cols?: any; onTog
           </p>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <FinFullscreenButton />
           <ColumnSettings tabKey="office-approvals" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols?.('office-approvals')} saving={colVisSaving} />
           <button onClick={load} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', backgroundColor: 'var(--surface)', color: 'var(--text)', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
             <RefreshCw size={14} /> Tải lại

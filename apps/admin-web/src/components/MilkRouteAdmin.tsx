@@ -35,6 +35,8 @@ import {
   ClipboardList,
   Image as ImageIcon,
 } from 'lucide-react';
+import { FinFullscreenButton } from './FinFullscreen';
+import './finance.css';
 
 /** Leaflet là UMD/CJS: namespace import có thể là default hoặc named tùy bundler. */
 const L = ((LeafletModule as any).default ?? LeafletModule) as typeof LeafletModule;
@@ -219,8 +221,8 @@ const pill = (fg: string, bg: string, text: string) => (
 );
 
 /** Thẻ bọc nội dung thống nhất với phong cách admin. */
-const Card: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({ children, style }) => (
-  <div style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '16px', ...style }}>
+const Card: React.FC<{ children: React.ReactNode; style?: React.CSSProperties; dataFs?: boolean }> = ({ children, style, dataFs }) => (
+  <div {...(dataFs ? { 'data-fs-card': '1' } : {})} style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '16px', ...style }}>
     {children}
   </div>
 );
@@ -1031,10 +1033,11 @@ const FleetView: React.FC<{
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       {/* DANH SÁCH XE */}
-      <Card>
+      <Card dataFs>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
           <Truck size={17} color={BRAND} />
           <span style={{ fontSize: '14px', fontWeight: 900, color: 'var(--text)' }}>Xe điện ({vehicles.length})</span>
+          <FinFullscreenButton />
           {canManage && (
             <button className="btn-secondary" style={{ marginLeft: 'auto', padding: '6px 12px', fontSize: '12px', fontWeight: 700 }} onClick={() => setShowForm((s) => !s)}>
               {showForm ? <><ChevronUp size={14} /> Đóng</> : <><Plus size={14} /> Thêm xe</>}
@@ -2293,10 +2296,11 @@ const PayrollView: React.FC<{ allEmployees: any[]; showToast: (m: string) => voi
   const nameOf = (id: string) => allEmployees.find((e: any) => e.employee_id === id)?.full_name || id;
 
   return (
-    <Card>
+    <Card dataFs>
       <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap', marginBottom: '14px' }}>
         <Wallet size={17} color={BRAND} />
         <span style={{ fontSize: '14px', fontWeight: 900, color: 'var(--text)' }}>Bảng lương tài xế</span>
+        <FinFullscreenButton />
         <input type="month" value={period} onChange={(e) => setPeriod(e.target.value)}
           style={{ padding: '6px 9px', fontSize: '12.5px', fontWeight: 700, borderRadius: '8px', border: `1px solid ${BORDER}` }} />
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '7px' }}>

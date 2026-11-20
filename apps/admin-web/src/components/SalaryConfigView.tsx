@@ -10,6 +10,7 @@ import {
   type FinanceBlock,
 } from '../utils/financeBlocks';
 import { ColumnSettings } from './finance-columns.js';
+import { FinFullscreenButton } from './FinFullscreen';
 
 /**
  * Cấu hình Lương cơ bản + Phụ cấp — Kế toán (FINANCE) / Admin.
@@ -250,7 +251,7 @@ export const SalaryConfigView: React.FC<{ currentUser: any; cols?: any; onToggle
   const totalConfigured = summary.reduce((s, x) => s + x.configured, 0);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+    <div data-fs-card="1" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
         <div>
@@ -265,6 +266,7 @@ export const SalaryConfigView: React.FC<{ currentUser: any; cols?: any; onToggle
           </p>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <FinFullscreenButton />
           <button
             onClick={load}
             disabled={loading}
