@@ -120,6 +120,116 @@ test('tài xế chỉ có ca xếp lịch mà không hoạt động → lương 
   assert.deepEqual(result.absent_dates, ['2026-11-10', '2026-11-11', '2026-11-12']);
 });
 
+// ============================================================================
+// ĐỒNG BỘ REALTIME TỪ APP TÀI XẾ → KẾ TOÁN
+// Mỗi thao tác của tài xế phải làm bảng lương của Kế toán đổi ngay, nhưng:
+//  - không sinh dòng 0đ cho tài xế chỉ được xếp lịch;
+//  - không sửa bảng lương đã duyệt/đã trả (snapshot chốt sổ);
+//  - bỏ qua ca TEST.
+// ============================================================================
+
+test('đồng bộ realtime: tài xế bắt đầu ca → tự tạo bảng lương DRAFT cho Kế toán', async () => {
+  const { payroll, addShift } = await setup('EMP_DRIVER_SYNC1');
+
+  const shift = await addShift('2026-11-06', {
+    status: 'IN_PROGRESS',
+    actual_start_at: '2026-11-06T01:00:00.000Z',
+  });
+
+  assert.equal((await payroll.listPayrollByPeriod(PERIOD)).length, 0, 'chưa đồng bộ thì Kế toán chưa thấy dòng nào');
+
+  const first = await payroll.syncFromShift(shift.shift_id, { createIfMissing: true, source: 'driver-start' });
+
+  assert.equal(first.skipped, '');
+  assert.equal(first.changed, true);
+  assert.equal(first.payroll?.status, 'DRAFT');
+  assert.equal(first.payroll?.total_work_days, 1);
+  assert.equal(first.payroll?.net_pay, DAILY);
+
+  const rows = await payroll.listPayrollByPeriod(PERIOD);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].driver_id, 'EMP_DRIVER_SYNC1');
+
+  // Đồng bộ lại khi số liệu không đổi → changed=false, không bắn realtime rác.
+  const again = await payroll.syncFromShift(shift.shift_id, { createIfMissing: true });
+  assert.equal(again.changed, false);
+});
+
+test('không sinh bảng lương 0đ khi tài xế chỉ được xếp lịch mà chưa hoạt động', async () => {
+  const { payroll, addShift } = await setup('EMP_DRIVER_SYNC2');
+
+  const shift = await addShift('2026-11-07');
+
+  const res = await payroll.syncFromShift(shift.shift_id, { createIfMissing: true });
+  assert.equal(res.payroll, null);
+  assert.equal(res.skipped, 'NOT_CREATED');
+
+  // Mở tab Kế toán cũng không tự sinh dòng 0đ.
+  const rows = await payroll.ensurePayrollRowsForPeriod(PERIOD);
+  assert.equal(rows.length, 0);
+});
+
+test('điểm bỏ lọt xuất hiện sau đó → cập nhật lại bảng lương DRAFT ngay trong kỳ', async () => {
+  const { stops, payroll, addShift, addCheckin } = await setup('EMP_DRIVER_SYNC3');
+
+  const shift = await addShift('2026-11-12', {
+    status: 'COMPLETED',
+    actual_start_at: '2026-11-12T01:00:00.000Z',
+  });
+
+  const first = await payroll.syncFromShift(shift.shift_id, { createIfMissing: true });
+  assert.equal(first.payroll?.total_penalty_amount, 0);
+
+  await addCheckin(shift.shift_id, stops[0].stop_id, { is_missed: true });
+  const second = await payroll.syncFromShift(shift.shift_id);
+
+  const expectedPenalty = Math.round(DAILY * DEFAULT_EV_PAYROLL_CONFIG.penalty_per_missed_checkin.standard);
+  assert.equal(second.changed, true);
+  assert.equal(second.payroll?.total_penalty_amount, expectedPenalty);
+  assert.equal(second.payroll?.net_pay, DAILY - expectedPenalty);
+});
+
+test('bảng lương đã duyệt là snapshot — đồng bộ realtime không sửa số tiền', async () => {
+  const { stops, payroll, addShift, addCheckin } = await setup('EMP_DRIVER_SYNC4');
+
+  const s1 = await addShift('2026-11-08', {
+    status: 'IN_PROGRESS',
+    actual_start_at: '2026-11-08T01:00:00.000Z',
+  });
+  const first = await payroll.syncFromShift(s1.shift_id, { createIfMissing: true });
+  const approved = await payroll.approvePayroll(first.payroll!.payroll_id, 'FIN_TEST');
+  assert.equal(approved?.status, 'APPROVED');
+  const approvedNet = approved!.net_pay;
+
+  // Tài xế chạy thêm ngày mới sau khi Kế toán đã chốt.
+  const s2 = await addShift('2026-11-09', {
+    status: 'COMPLETED',
+    actual_start_at: '2026-11-09T01:00:00.000Z',
+  });
+  await addCheckin(s2.shift_id, stops[1].stop_id);
+
+  const after = await payroll.syncFromShift(s2.shift_id, { createIfMissing: true });
+  assert.equal(after.skipped, 'LOCKED');
+  assert.equal(after.changed, false);
+  assert.equal(after.payroll?.status, 'APPROVED');
+  assert.equal(after.payroll?.net_pay, approvedNet, 'không được đổi số tiền đã duyệt');
+});
+
+test('ca TEST không đồng bộ lương', async () => {
+  const { payroll, addShift } = await setup('EMP_DRIVER_SYNC5');
+
+  const shift = await addShift('2026-11-13', {
+    status: 'IN_PROGRESS',
+    actual_start_at: '2026-11-13T01:00:00.000Z',
+    notes: '[TEST_MODE]',
+  });
+
+  const res = await payroll.syncFromShift(shift.shift_id, { createIfMissing: true });
+  assert.equal(res.skipped, 'TEST_SHIFT');
+  assert.equal(res.payroll, null);
+  assert.equal((await payroll.listPayrollByPeriod(PERIOD)).length, 0);
+});
+
 test('ngày có hoạt động vẫn bị trừ phạt điểm bỏ lọt / trễ SLA', async () => {
   const { stops, payroll, addShift, addCheckin } = await setup('EMP_DRIVER_P3');
 

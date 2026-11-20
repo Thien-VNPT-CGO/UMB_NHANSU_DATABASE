@@ -2253,30 +2253,72 @@ const PayrollView: React.FC<{ allEmployees: any[]; showToast: (m: string) => voi
   const [period, setPeriod] = useState(() => new Date().toISOString().slice(0, 7));
   const [items, setItems] = useState<any[]>([]);
   const [busy, setBusy] = useState('');
+  /** Lần cuối nhận số mới từ App Tài Xế (để Kế toán biết dữ liệu đang sống). */
+  const [syncedAt, setSyncedAt] = useState('');
+  const [liveOk, setLiveOk] = useState(true);
+  const inflightRef = useRef(false);
+  const debounceRef = useRef<any>(null);
 
-  const load = useCallback(async () => {
-    setBusy('load');
+  const load = useCallback(async (silent = false) => {
+    // Chặn gọi chồng khi tài xế check-in liên tiếp / realtime dội nhiều sự kiện.
+    if (inflightRef.current) return;
+    inflightRef.current = true;
+    if (!silent) setBusy('load');
     try {
       const d: any = await apiRequest(`/ev/admin/payroll?period=${encodeURIComponent(period)}`);
       setItems(Array.isArray(d) ? d : (d?.items || []));
+      setSyncedAt(new Date().toISOString());
+      setLiveOk(true);
     } catch (e: any) {
-      showToast(`⚠️ ${e?.message || 'Không tải được bảng lương.'}`);
-    } finally { setBusy(''); }
+      setLiveOk(false);
+      if (!silent) showToast(`⚠️ ${e?.message || 'Không tải được bảng lương.'}`);
+    } finally {
+      inflightRef.current = false;
+      if (!silent) setBusy('');
+    }
   }, [period, showToast]);
 
   useEffect(() => { void load(); }, [load]);
 
+  // ------------------------------------------------------------------
+  // REALTIME 100%: backend bắn `evPayroll` sau mỗi thao tác của tài xế
+  // (bắt đầu ca / bấm điểm / kết thúc ca) và sau khi duyệt phiếu giải trình.
+  // Tab Kế toán đang mở tự cập nhật số, không cần bấm "Tải lại".
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    const schedule = (detail: any) => {
+      if (detail?.period && String(detail.period) !== period) return;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        debounceRef.current = null;
+        void load(true);
+      }, 350);
+    };
+    const onPayroll = (e: Event) => schedule((e as CustomEvent)?.detail);
+    const onLive = (e: Event) => schedule((e as CustomEvent)?.detail);
+    window.addEventListener('ubm:ev-payroll-reload', onPayroll);
+    window.addEventListener('ubm:ev-live-reload', onLive);
+    // Lưới an toàn khi mất sóng/socket chết: vẫn tự đồng bộ lại mỗi 60 giây.
+    const tick = setInterval(() => { void load(true); }, 60_000);
+    return () => {
+      window.removeEventListener('ubm:ev-payroll-reload', onPayroll);
+      window.removeEventListener('ubm:ev-live-reload', onLive);
+      clearInterval(tick);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [load, period]);
+
   const generate = async () => {
-    if (!window.confirm(`Sinh bảng lương tài xế kỳ ${period}? Hệ thống tính lại từ ca + điểm phạt.`)) return;
+    if (!window.confirm(`Đồng bộ lại toàn bộ bảng lương tài xế kỳ ${period}? Hệ thống tính lại từ ca + điểm phạt.`)) return;
     setBusy('gen');
     try {
       const r: any = await apiRequest('/ev/admin/payroll/generate', {
         method: 'POST', body: JSON.stringify({ period }),
       });
-      showToast(`✅ Đã tính lương ${r?.count ?? 0} tài xế kỳ ${period}.`);
+      showToast(`✅ Đã đồng bộ lương ${r?.count ?? 0} tài xế kỳ ${period}.`);
       await load();
     } catch (e: any) {
-      showToast(`⚠️ ${e?.message || 'Sinh bảng lương thất bại.'}`);
+      showToast(`⚠️ ${e?.message || 'Đồng bộ bảng lương thất bại.'}`);
     } finally { setBusy(''); }
   };
 
@@ -2295,15 +2337,40 @@ const PayrollView: React.FC<{ allEmployees: any[]; showToast: (m: string) => voi
 
   const nameOf = (id: string) => allEmployees.find((e: any) => e.employee_id === id)?.full_name || id;
 
+  const totals = useMemo(() => items.reduce((acc: any, p: any) => {
+    acc.net += Number(p.net_pay || 0);
+    acc.gross += Number(p.gross_pay || 0);
+    acc.penalty += Number(p.total_penalty_amount || 0);
+    acc.days += Number(p.total_work_days || 0);
+    if (p.status === 'DRAFT') acc.draft += 1;
+    return acc;
+  }, { net: 0, gross: 0, penalty: 0, days: 0, draft: 0 }), [items]);
+
   return (
     <Card dataFs>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap', marginBottom: '14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap', marginBottom: '12px' }}>
         <Wallet size={17} color={BRAND} />
         <span style={{ fontSize: '14px', fontWeight: 900, color: 'var(--text)' }}>Bảng lương tài xế</span>
+        <span
+          title="Số liệu tự đồng bộ từ App Tài Xế ngay khi tài xế bắt đầu ca, bấm điểm hoặc kết thúc ca."
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px',
+            borderRadius: 999, fontSize: 10.5, fontWeight: 900,
+            color: liveOk ? '#047857' : '#B91C1C',
+            backgroundColor: liveOk ? '#ECFDF5' : '#FEF2F2',
+            border: `1px solid ${liveOk ? '#A7F3D0' : '#FECACA'}`,
+          }}
+        >
+          <span style={{ width: 7, height: 7, borderRadius: 999, backgroundColor: liveOk ? '#10B981' : '#EF4444', boxShadow: liveOk ? '0 0 0 3px #10B98122' : 'none' }} />
+          {liveOk ? 'REALTIME' : 'MẤT KẾT NỐI'}
+        </span>
         <FinFullscreenButton />
         <input type="month" value={period} onChange={(e) => setPeriod(e.target.value)}
           style={{ padding: '6px 9px', fontSize: '12.5px', fontWeight: 700, borderRadius: '8px', border: `1px solid ${BORDER}` }} />
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '7px' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '7px' }}>
+          <span style={{ fontSize: '10.5px', color: MUTED, fontWeight: 700, whiteSpace: 'nowrap' }}>
+            Đồng bộ {syncedAt ? fmtTime(syncedAt) : '—'}
+          </span>
           <button className="btn-secondary" disabled={busy === 'load'} onClick={() => void load()}
             style={{ padding: '7px 12px', fontSize: '12px', fontWeight: 700 }}>
             <RefreshCw size={13} /> Tải lại
@@ -2311,9 +2378,29 @@ const PayrollView: React.FC<{ allEmployees: any[]; showToast: (m: string) => voi
           {canManage && (
             <button className="btn-primary" disabled={busy === 'gen'} onClick={generate}
               style={{ padding: '7px 14px', fontSize: '12px', fontWeight: 800 }}>
-              <Navigation size={14} /> Tính lương kỳ {period}
+              <Navigation size={14} /> Đồng bộ lại kỳ {period}
             </button>
           )}
+        </div>
+      </div>
+
+      {/* Tóm tắt nhanh cho Kế toán */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 8, marginBottom: 12 }}>
+        <div style={{ padding: '9px 11px', borderRadius: 10, backgroundColor: '#F0FDFA', border: '1px solid #99F6E4' }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: '#0F766E', letterSpacing: 0.3 }}>TỔNG THỰC NHẬN</div>
+          <div style={{ fontSize: 16, fontWeight: 900, color: '#115E59', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(totals.net)}</div>
+        </div>
+        <div style={{ padding: '9px 11px', borderRadius: 10, backgroundColor: '#F8FAFC', border: `1px solid ${BORDER}` }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: MUTED, letterSpacing: 0.3 }}>NGÀY CÔNG</div>
+          <div style={{ fontSize: 16, fontWeight: 900, color: 'var(--text)' }}>{totals.days} ngày • {items.length} tài xế</div>
+        </div>
+        <div style={{ padding: '9px 11px', borderRadius: 10, backgroundColor: totals.penalty > 0 ? '#FEF2F2' : '#F8FAFC', border: `1px solid ${totals.penalty > 0 ? '#FECACA' : BORDER}` }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: totals.penalty > 0 ? '#B91C1C' : MUTED, letterSpacing: 0.3 }}>TỔNG PHẠT</div>
+          <div style={{ fontSize: 16, fontWeight: 900, color: totals.penalty > 0 ? '#B91C1C' : 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(totals.penalty)}</div>
+        </div>
+        <div style={{ padding: '9px 11px', borderRadius: 10, backgroundColor: '#FFFBEB', border: '1px solid #FDE68A' }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: '#92400E', letterSpacing: 0.3 }}>CHỜ DUYỆT</div>
+          <div style={{ fontSize: 16, fontWeight: 900, color: '#92400E' }}>{totals.draft} tài xế</div>
         </div>
       </div>
 
@@ -2362,7 +2449,12 @@ const PayrollView: React.FC<{ allEmployees: any[]; showToast: (m: string) => voi
                     {fmtMoney(p.net_pay)}
                     <div style={{ fontSize: '10.5px', color: MUTED, fontWeight: 600 }}>gross {fmtMoney(p.gross_pay)}</div>
                   </td>
-                  <td style={{ padding: '10px' }}>{pill(st.fg, st.bg, st.text)}</td>
+                  <td style={{ padding: '10px' }}>
+                    {pill(st.fg, st.bg, st.text)}
+                    <div style={{ fontSize: '10px', color: MUTED, fontWeight: 700, marginTop: 3 }}>
+                      cập nhật {fmtTime(p.updated_at)}
+                    </div>
+                  </td>
                   <td style={{ padding: '10px', textAlign: 'right' }}>
                     {canManage && p.status === 'DRAFT' && (
                       <button className="btn-primary" disabled={busy === p.payroll_id} onClick={() => approve(p)}
@@ -2373,6 +2465,7 @@ const PayrollView: React.FC<{ allEmployees: any[]; showToast: (m: string) => voi
                     {p.status !== 'DRAFT' && (
                       <span style={{ fontSize: '11px', color: MUTED, fontWeight: 700 }}>
                         {p.approved_at ? `duyệt ${fmtDay(p.approved_at)}` : '—'}
+                        <div style={{ fontSize: '10px', color: '#047857', marginTop: 2 }}>đã chốt — không tự sửa</div>
                       </span>
                     )}
                   </td>
@@ -2381,7 +2474,8 @@ const PayrollView: React.FC<{ allEmployees: any[]; showToast: (m: string) => voi
             })}
             {!items.length && !busy && (
               <tr><td colSpan={6} style={{ padding: '24px', textAlign: 'center', color: MUTED, fontWeight: 600, lineHeight: 1.7 }}>
-                Chưa có bảng lương kỳ {period}. Bấm <b>“Tính lương kỳ {period}”</b> để hệ thống tự dựng từ ca vận chuyển + điểm phạt SLA/điểm bỏ lọt.
+                Chưa có ngày công trong kỳ {period}. Bảng lương <b>tự xuất hiện ngay khi tài xế bắt đầu ca</b> —
+                dữ liệu từ App Tài Xế được đồng bộ realtime sang Kế toán, không cần thao tác tay.
               </td></tr>
             )}
           </tbody>
@@ -2389,6 +2483,9 @@ const PayrollView: React.FC<{ allEmployees: any[]; showToast: (m: string) => voi
       </div>
 
       <div style={{ marginTop: '14px', padding: '10px 12px', backgroundColor: '#F0FDFA', border: '1px solid #99F6E4', borderRadius: '9px', fontSize: '11.5px', fontWeight: 600, color: '#115E59', lineHeight: 1.7 }}>
+        <b>Đồng bộ realtime 100%:</b> mỗi lần tài xế bắt đầu ca, bấm xác nhận điểm hoặc kết thúc ca,
+        hệ thống tính lại ngày công + phạt và đẩy ngay sang Kế toán (và tab Thu nhập của tài xế).
+        <br />
         <b>Công thức:</b> lương = lương ngày chuẩn × ngày công 1–28 + lương ngày cuối × ngày 29–30 − phạt
         (25% ngày công/điểm bỏ lọt + phạt trễ SLA). Kỳ lương VPS chạy ngày 25–26 hàng tháng.
       </div>

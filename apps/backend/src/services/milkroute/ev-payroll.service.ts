@@ -4,6 +4,37 @@ import { EVRouteService } from './ev-route.service.js';
 import { isShiftWorked } from './ev-shift-activity.js';
 import { isEvTestShift } from './ev-test-mode.js';
 
+/**
+ * Kết quả 1 lượt đồng bộ lương tài xế từ dữ liệu App Tài Xế.
+ * `changed` = có thay đổi số tiền/ngày công → caller nên broadcast realtime.
+ */
+export interface EVPayrollSyncResult {
+  payroll: EVDriverPayroll | null;
+  changed: boolean;
+  skipped:
+    | ''
+    | 'SHIFT_NOT_FOUND'
+    | 'TEST_SHIFT'
+    | 'INVALID_PERIOD'
+    | 'NOT_CREATED'
+    | 'LOCKED';
+}
+
+export interface EVPayrollSyncOptions {
+  /**
+   * Tạo bảng lương nếu kỳ này chưa có bản ghi. Chỉ nên bật khi tài xế
+   * THỰC SỰ hoạt động (bắt đầu ca / check-in / kết thúc ca) — tránh sinh
+   * hàng loạt dòng 0đ ngay khi Admin vừa xếp lịch.
+   */
+  createIfMissing?: boolean;
+  /** Nguồn phát sinh, dùng cho log: driver-app | admin-shift | explanation | ... */
+  source?: string;
+  /** Người thao tác (employee_id / tài khoản). */
+  actorId?: string;
+}
+
+const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
 export class EVPayrollService {
   constructor(
     private readonly repo: MockSheetsAdapter,
@@ -169,10 +200,160 @@ export class EVPayrollService {
     const existing = this.repo.evDriverPayroll.find(p => p.payroll_id === payroll.payroll_id)
       || this.repo.evDriverPayroll.find(p => p.driver_id === payroll.driver_id && p.period === payroll.period);
     if (existing) {
-      return this.repo.updateEVDriverPayroll(existing.payroll_id, payroll);
+      // Bảng lương đã duyệt/đã trả là SNAPSHOT chốt sổ — không được để một lượt
+      // tính lại tự ý đổi số tiền. Kế toán muốn tính lại phải mở kỳ trước.
+      if (existing.status === 'APPROVED' || existing.status === 'PAID') return { ...existing };
+      return this.repo.updateEVDriverPayroll(existing.payroll_id, this.financialPatch(payroll));
     }
     // Ghi qua repo để persist xuống ev_driver_payroll.
     return this.repo.createEVDriverPayroll(payroll as Partial<EVDriverPayroll>);
+  }
+
+  // ============================================================
+  // ĐỒNG BỘ REALTIME TỪ APP TÀI XẾ → KẾ TOÁN
+  // ============================================================
+
+  /**
+   * Tính lại bảng lương của 1 tài xế theo kỳ từ dữ liệu MỚI NHẤT của App Tài Xế
+   * (ca, check-in, điểm bỏ lọt, trễ SLA, phiếu giải trình đã duyệt).
+   *
+   * - Chưa có bản ghi + `createIfMissing` → tạo ngay (DRAFT) khi tài xế đã có
+   *   ít nhất 1 ngày công thực tế.
+   * - Có bản ghi DRAFT → cập nhật số liệu, giữ nguyên payroll_id/trạng thái.
+   * - Có bản ghi APPROVED/PAID → KHÔNG sửa (đã chốt), trả `skipped: LOCKED`.
+   */
+  async syncDriverPeriod(
+    driverId: string,
+    period: string,
+    opts: EVPayrollSyncOptions = {},
+  ): Promise<EVPayrollSyncResult> {
+    const id = String(driverId || '').trim();
+    const p = String(period || '').trim();
+    if (!id || !PERIOD_RE.test(p)) {
+      return { payroll: null, changed: false, skipped: 'INVALID_PERIOD' };
+    }
+
+    const existing = this.repo.evDriverPayroll.find(
+      x => x.driver_id === id && x.period === p,
+    ) || null;
+    if (existing && (existing.status === 'APPROVED' || existing.status === 'PAID')) {
+      return { payroll: { ...existing }, changed: false, skipped: 'LOCKED' };
+    }
+    if (!existing && !opts.createIfMissing) {
+      return { payroll: null, changed: false, skipped: 'NOT_CREATED' };
+    }
+
+    const calculated = await this.calculateDriverPayroll(id, p);
+    // Không sinh dòng 0đ cho tài xế chỉ được xếp lịch mà chưa từng hoạt động.
+    if (!existing && Number(calculated.total_work_days || 0) === 0) {
+      return { payroll: null, changed: false, skipped: 'NOT_CREATED' };
+    }
+
+    if (!existing) {
+      try {
+        const created = await this.repo.createEVDriverPayroll(calculated as Partial<EVDriverPayroll>);
+        return { payroll: created, changed: true, skipped: '' };
+      } catch (err: any) {
+        // 2 request đồng thời cùng tạo (check-in + end shift) → đọc lại và cập nhật.
+        if (!String(err?.message || '').startsWith('PAYROLL_EXISTS')) throw err;
+        const raced = this.repo.evDriverPayroll.find(x => x.driver_id === id && x.period === p);
+        if (!raced) throw err;
+        if (raced.status === 'APPROVED' || raced.status === 'PAID') {
+          return { payroll: { ...raced }, changed: false, skipped: 'LOCKED' };
+        }
+        const merged = await this.repo.updateEVDriverPayroll(raced.payroll_id, this.financialPatch(calculated));
+        return { payroll: merged, changed: true, skipped: '' };
+      }
+    }
+
+    if (!this.payrollChanged(existing, calculated)) {
+      return { payroll: { ...existing }, changed: false, skipped: '' };
+    }
+    const updated = await this.repo.updateEVDriverPayroll(
+      existing.payroll_id,
+      this.financialPatch(calculated),
+    );
+    return { payroll: updated, changed: true, skipped: '' };
+  }
+
+  /** Đồng bộ theo 1 ca (tự bỏ qua ca TEST, tự lấy đúng kỳ của ngày ca). */
+  async syncFromShift(
+    shiftId: string,
+    opts: EVPayrollSyncOptions = {},
+  ): Promise<EVPayrollSyncResult> {
+    const shift = this.repo.evShifts.find(s => String(s.shift_id) === String(shiftId));
+    if (!shift) return { payroll: null, changed: false, skipped: 'SHIFT_NOT_FOUND' };
+    // Ca chạy ở chế độ TEST không tính công/phạt → không có gì để đồng bộ.
+    if (isEvTestShift(shift)) return { payroll: null, changed: false, skipped: 'TEST_SHIFT' };
+    const period = String(shift.shift_date || '').slice(0, 7);
+    return this.syncDriverPeriod(shift.driver_id, period, opts);
+  }
+
+  /** Đồng bộ nhiều ca (dedupe theo tài xế + kỳ) — dùng khi duyệt phiếu giải trình. */
+  async syncFromShifts(
+    shiftIds: string[],
+    opts: EVPayrollSyncOptions = {},
+  ): Promise<EVPayrollSyncResult[]> {
+    const keys = new Set<string>();
+    const results: EVPayrollSyncResult[] = [];
+    for (const shiftId of shiftIds || []) {
+      const shift = this.repo.evShifts.find(s => String(s.shift_id) === String(shiftId));
+      if (!shift) continue;
+      if (isEvTestShift(shift)) continue;
+      const period = String(shift.shift_date || '').slice(0, 7);
+      const key = `${shift.driver_id}|${period}`;
+      if (keys.has(key)) continue;
+      keys.add(key);
+      results.push(await this.syncDriverPeriod(shift.driver_id, period, opts));
+    }
+    return results;
+  }
+
+  /**
+   * Bảo đảm mọi tài xế có ca thực tế trong kỳ đều có bảng lương mới nhất.
+   * Dùng cho màn Kế toán: mở tab là thấy số realtime, không cần bấm "Tính lương".
+   */
+  async ensurePayrollRowsForPeriod(period: string): Promise<EVDriverPayroll[]> {
+    const p = String(period || '').trim();
+    if (!PERIOD_RE.test(p)) return this.listPayrollByPeriod(p);
+    const driverIds = new Set<string>();
+    for (const s of this.repo.evShifts) {
+      if (String(s.shift_date || '').slice(0, 7) !== p) continue;
+      if (s.status === 'CANCELLED' || isEvTestShift(s)) continue;
+      driverIds.add(String(s.driver_id));
+    }
+    for (const id of driverIds) {
+      try { await this.syncDriverPeriod(id, p, { createIfMissing: true, source: 'ensure-period' }); }
+      catch (err: any) { console.warn(`[ev-payroll] ensure ${id}/${p}:`, err?.message || err); }
+    }
+    return this.listPayrollByPeriod(p);
+  }
+
+  /** Các trường số liệu được phép ghi đè khi đồng bộ (không đụng trạng thái/duyệt). */
+  private financialPatch(payroll: EVDriverPayroll): Partial<EVDriverPayroll> {
+    return {
+      total_shifts: payroll.total_shifts,
+      worked_shifts: payroll.worked_shifts,
+      total_work_days: payroll.total_work_days,
+      absent_days: payroll.absent_days,
+      absent_dates: payroll.absent_dates,
+      standard_days: payroll.standard_days,
+      extra_days: payroll.extra_days,
+      standard_pay: payroll.standard_pay,
+      extra_pay: payroll.extra_pay,
+      total_penalty_points: payroll.total_penalty_points,
+      total_penalty_amount: payroll.total_penalty_amount,
+      penalty_breakdown: payroll.penalty_breakdown,
+      gross_pay: payroll.gross_pay,
+      net_pay: payroll.net_pay,
+    };
+  }
+
+  /** So sánh số liệu tài chính để tránh broadcast khi không có gì đổi. */
+  private payrollChanged(current: EVDriverPayroll, next: EVDriverPayroll): boolean {
+    const a = this.financialPatch(current);
+    const b = this.financialPatch(next);
+    return JSON.stringify(a) !== JSON.stringify(b);
   }
 
   /** Lấy bảng lương đã lưu */

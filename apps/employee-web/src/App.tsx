@@ -2430,6 +2430,15 @@ export function App() {
         const actor = payload?.data?.employeeId || payload?.data?.employee_id;
         if (actor && empIdRef.current && String(actor) !== String(empIdRef.current)) return;
       }
+      // Lương tài xế đồng bộ realtime: chỉ máy của ĐÚNG tài xế vừa có thao tác
+      // tải lại (tránh mọi nhân viên reload mỗi lần tài xế check-in).
+      if (entity === 'evPayroll') {
+        const target = payload?.data?.driverId || payload?.data?.employeeId || payload?.data?.driver_id;
+        if (target && empIdRef.current && String(target) !== String(empIdRef.current)) return;
+        // Tài xế đang mở app: nạp lại hồ sơ + tab Thu nhập ngay (DriverPortal
+        // nhận refreshKey), không chờ vòng poll 30–90 giây.
+        setSchedRefresh(k => k + 1);
+      }
       // Dữ liệu vừa đổi: bỏ cache đọc ngắn hạn để chắc chắn thấy bản mới.
       clearApiCache();
       pending = true;

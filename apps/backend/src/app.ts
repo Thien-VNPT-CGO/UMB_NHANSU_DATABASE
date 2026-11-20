@@ -684,6 +684,80 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   };
 
   // ---------------------------------------------------------------
+  // ĐỒNG BỘ LƯƠNG TÀI XẾ TỪ APP → KẾ TOÁN (REALTIME)
+  // Mỗi thao tác của tài xế (bắt đầu ca / bấm điểm / kết thúc ca) hoặc duyệt
+  // phiếu giải trình đều tính lại bảng lương ngay, lưu xuống ev_driver_payroll
+  // rồi phát realtime cho Kế toán + chính tài xế. Không cần bấm "Tính lương".
+  // ---------------------------------------------------------------
+  const evSyncPayroll = async (
+    target: {
+      shiftId?: string;
+      shiftIds?: string[];
+      driverId?: string;
+      period?: string;
+    },
+    opts: {
+      createIfMissing?: boolean;
+      source?: string;
+      actorId?: string;
+      action?: string;
+    } = {},
+  ): Promise<any | null> => {
+    try {
+      const results: any[] = [];
+      if (target.shiftId) {
+        results.push(await ev.payroll.syncFromShift(target.shiftId, opts));
+      }
+      if (Array.isArray(target.shiftIds) && target.shiftIds.length) {
+        results.push(...await ev.payroll.syncFromShifts(target.shiftIds, opts));
+      }
+      if (target.driverId && target.period) {
+        results.push(await ev.payroll.syncDriverPeriod(target.driverId, target.period, opts));
+      }
+      let last: any = null;
+      for (const r of results) {
+        const p = r?.payroll;
+        if (!p) continue;
+        last = p;
+        if (!r.changed) continue;
+        // Kênh chuyên biệt cho tab Kế toán/tài xế đang mở + kênh data:updated
+        // chung để mọi màn hình còn lại tự tải lại.
+        ev.realtime.broadcastPayrollUpdated(p.driver_id, p);
+        broadcastUpdate('evPayroll', {
+          action: opts.action || 'sync',
+          driverId: p.driver_id,
+          employeeId: p.driver_id,
+          period: p.period,
+          payroll_id: p.payroll_id,
+          status: p.status,
+          gross_pay: p.gross_pay,
+          net_pay: p.net_pay,
+          total_work_days: p.total_work_days,
+          total_penalty_amount: p.total_penalty_amount,
+          updated_at: p.updated_at,
+          source: opts.source || '',
+        });
+      }
+      return last;
+    } catch (err: any) {
+      // Đồng bộ lương lỗi KHÔNG được làm hỏng thao tác nghiệp vụ của tài xế.
+      console.warn('[ev-payroll] sync failed:', err?.message || err);
+      return null;
+    }
+  };
+
+  /** Đồng bộ lại 1 bản ghi lương đã có (dùng khi ca cũ bị sửa/xóa/đổi tài xế). */
+  const evRefreshExistingPayroll = async (
+    driverId?: string,
+    shiftDate?: string,
+    source = 'admin-shift',
+  ) => {
+    const period = String(shiftDate || '').slice(0, 7);
+    if (!driverId || !period) return;
+    await evSyncPayroll({ driverId, period }, { createIfMissing: false, source, action: 'sync-existing' });
+  };
+
+  // ---------------------------------------------------------------
   // ADMIN — Xe điện
   // ---------------------------------------------------------------
   app.get('/ev/admin/vehicles', authMiddleware, requireRole(EV_ADMIN_ROLES), async (req: AuthenticatedRequest, res) => {
@@ -1002,6 +1076,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         createdBy: req.user!.id,
       });
       broadcastUpdate('evShift', { action: 'create', id: s.shift_id });
+      // Ca mới được xếp: nếu kỳ đã có bảng lương DRAFT thì cập nhật số ngày
+      // không hoạt động ngay (không tự sinh dòng 0đ khi chưa ai chạy).
+      await evRefreshExistingPayroll(s.driver_id, s.shift_date, 'admin-shift-create');
       res.status(201).json(s);
     } catch (err: any) { evErr(res, err); }
   });
@@ -1023,6 +1100,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
       if (result.created.length) {
         broadcastUpdate('evShift', { action: 'create', id: result.created[0].shift_id });
+        const seen = new Set<string>();
+        for (const s of result.created) {
+          const key = `${s.driver_id}|${String(s.shift_date || '').slice(0, 7)}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          await evRefreshExistingPayroll(s.driver_id, s.shift_date, 'admin-shift-create-bulk');
+        }
       }
       res.status(result.created.length ? 201 : 200).json(result);
     } catch (err: any) { evErr(res, err); }
@@ -1048,6 +1132,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         shift_date: s.shift_date,
         old_shift_date: before?.shift_date,
       });
+      // Đổi ngày / tài xế / trạng thái ca → bảng lương Kế toán cập nhật ngay.
+      // Kỳ cũ được tính lại nếu đã có bản ghi, ca mới cập nhật tại chỗ.
+      if (before && (before.driver_id !== s.driver_id
+        || String(before.shift_date || '').slice(0, 7) !== String(s.shift_date || '').slice(0, 7))) {
+        await evRefreshExistingPayroll(before.driver_id, before.shift_date, 'admin-shift-update-old');
+      }
+      await evSyncPayroll(
+        { shiftId: s.shift_id },
+        { createIfMissing: false, source: 'admin-shift-update', actorId: req.user!.id, action: 'shift-update' },
+      );
       res.json(s);
     } catch (err: any) { evErr(res, err); }
   });
@@ -1063,6 +1157,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         id: req.params.id,
         shift_date: before?.shift_date,
       });
+      // Ca bị xóa → tính lại bảng lương kỳ đó (nếu Kế toán đã có bản ghi).
+      await evRefreshExistingPayroll(before?.driver_id, before?.shift_date, 'admin-shift-delete');
       res.json({ success: true });
     } catch (err: any) { evErr(res, err); }
   });
@@ -1165,6 +1261,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         broadcastUpdate('evShift', { action: 'explanation-approved', id: shiftId });
       }
       broadcastUpdate('evShiftCheckin', { action: 'explanation-approved', id: t.ticket_id });
+      // Điểm bỏ lọt/trễ vừa được miễn phạt → tính lại lương của đúng tài xế/kỳ
+      // và đẩy ngay sang Kế toán (không chờ Kế toán bấm tính lại).
+      await evSyncPayroll(
+        { shiftIds: Array.from(new Set((t.items || []).map(i => i.shift_id))) },
+        { createIfMissing: true, source: 'explanation-approved', actorId: req.user!.id, action: 'explanation-approved' },
+      );
       res.json(t);
     } catch (err: any) { evErr(res, err); }
   });
@@ -1196,7 +1298,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const q = req.query as any;
       if (q.period) {
-        let items = await ev.payroll.listPayrollByPeriod(q.period);
+        // Mở màn Kế toán là tự đồng bộ số mới nhất từ ca/check-in của App Tài Xế
+        // (chỉ tạo dòng khi tài xế đã thực sự có ngày công, không sinh dòng 0đ).
+        let items = await ev.payroll.ensurePayrollRowsForPeriod(String(q.period));
         if (q.driver_id) items = items.filter(p => p.driver_id === q.driver_id);
         if (q.status) items = items.filter(p => p.status === q.status);
         return res.json({ total: items.length, items });
@@ -1366,6 +1470,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const updated = await ev.shifts.startShift(shift.shift_id, loc);
       ev.realtime.broadcastShiftStarted(await evLiveSummary(updated));
       broadcastUpdate('evShift', { action: 'start', id: shift.shift_id });
+      // Bắt đầu ca = ngày công đầu tiên → Kế toán thấy lương tạm tính ngay.
+      await evSyncPayroll(
+        { shiftId: updated.shift_id },
+        { createIfMissing: true, source: 'driver-start', actorId: evDriverId(req), action: 'shift-start' },
+      );
       res.json(updated);
     } catch (err: any) { evErr(res, err); }
   });
@@ -1389,6 +1498,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         netPay: Number(updated.net_pay || 0),
       });
       broadcastUpdate('evShift', { action: 'end', id: shift.shift_id });
+      // Kết thúc ca: chốt lại ngày công + phạt bỏ lọt/trễ cho bảng lương Kế toán.
+      await evSyncPayroll(
+        { shiftId: updated.shift_id },
+        { createIfMissing: true, source: 'driver-end', actorId: evDriverId(req), action: 'shift-end' },
+      );
       res.json(updated);
     } catch (err: any) { evErr(res, err); }
   });
@@ -1421,6 +1535,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           penaltyAmount: Number(checkin.penalty_amount || 0),
         });
         broadcastUpdate('evShiftCheckin', { action: 'create', shiftId: shift.shift_id });
+        // Mỗi điểm check-in có thể làm thay đổi phạt/ngày công → đồng bộ lương ngay
+        // cho Kế toán và app tài xế (tab Thu nhập cập nhật tức thì).
+        await evSyncPayroll(
+          { shiftId: shift.shift_id },
+          { createIfMissing: true, source: 'driver-checkin', actorId: evDriverId(req), action: 'checkin' },
+        );
       }
       // Đủ 3 lần GPS trùng toạ độ → trạm sạc được ghi nhớ, đẩy ngay lên Live Map.
       if (checkin.charging_confirmed) {
