@@ -155,6 +155,9 @@ if [ "$READY" -eq 1 ] && [ -f apps/backend/.env ]; then
     -H 'Content-Type: application/json' -d "{\"code\":\"$ACCESS_CODE\"}" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' 2>/dev/null || true)
   if [ -n "$TOKEN" ]; then
+    # bootstrap trước để tạo user + workspace (PATCH sẽ trả 404 nếu workspace chưa tồn tại).
+    curl -fsS "http://127.0.0.1:$SERVICE_PORT/api/bootstrap" \
+      -H "Authorization: Bearer $TOKEN" >/dev/null 2>&1 || true
     curl -fsS -X PATCH "http://127.0.0.1:$SERVICE_PORT/api/workspace" \
       -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
       -d '{"hr":{"enabled":true}}' >/dev/null 2>&1 || true
