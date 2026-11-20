@@ -276,7 +276,7 @@ import {
   requireRole,
   enforceBranchScope,
 } from './middlewares/rbac.middleware.js';
-import { BRANCHES, ERROR_CODES, shiftCodesForGroup, shiftHoursOf, isBranchScheduleHidden, isSaleGroup, toVietnameseErrorMessage } from '@ubm/shared';
+import { BRANCHES, ERROR_CODES, shiftCodesForGroup, shiftHoursOf, isBranchScheduleHidden, isSaleGroup, normalizePayrollBatch, toVietnameseErrorMessage } from '@ubm/shared';
 import { SHEETS_DEFINITIONS } from './services/google-sheets-sync.service.js';
 import {
   addDaysIso,
@@ -8719,14 +8719,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // --- XUẤT FILE PAYMENT (đủ cột, theo chi nhánh) lên Drive root riêng 1hbE... ---
+  // Kế toán chọn `batch`: STORE = Khối Cửa hàng, TONG_HOP = Khối Tổng hợp, ALL = toàn công ty.
   app.post('/payroll/payment-export', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
       const period = String((req.body as any)?.period || '');
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
         return res.status(400).json({ error: 'Kỳ xuất file phải đúng định dạng YYYY-MM (VD: 2026-10)!' });
       }
-      const result = await payslipDriveService.exportPaymentToDrive(period, req.user!.id);
-      broadcastUpdate('payroll', { action: 'payment-export', period, ok: result.ok });
+      const batch = normalizePayrollBatch((req.body as any)?.batch) || 'ALL';
+      const result = await payslipDriveService.exportPaymentToDrive(period, req.user!.id, batch);
+      broadcastUpdate('payroll', { action: 'payment-export', period, batch, ok: result.ok });
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message });

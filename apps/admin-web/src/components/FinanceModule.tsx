@@ -645,18 +645,20 @@ export default function FinanceModule(props: FinanceModuleProps) {
     } catch (e: any) { setLastSync(null); showToast('Lỗi Drive: ' + (e?.message || '')); }
   }, [post, driveConfigured, month, showToast, loadDriveStatus, refreshCurrentTab, calendarLabel]);
   const syncSlipDrive = useCallback(async (itemId: string) => { try { const r = await post(`/payroll/slips/${encodeURIComponent(itemId)}/drive-sync`, {}); showToast(r?.ok ? 'Đã đồng bộ PDF phiếu lên Drive' : 'Lỗi: ' + (r?.error || '')); refreshCurrentTab(); } catch (e: any) { showToast('Lỗi: ' + (e?.message || '')); } }, [post, showToast, refreshCurrentTab]);
-  const exportPaymentFile = useCallback(async () => {
-    if (!window.confirm('Xuat 2 file PAYMENT ' + periodLabel(month) + ' len Drive? (1 file CHUA CHUYEN KHOAN + 1 file DA THANH TOAN)')) return;
+  /** Xuất 2 file PAYMENT lên Drive theo khối kế toán chọn (Cửa hàng / Tổng hợp / toàn công ty). */
+  const exportPaymentFile = useCallback(async (batch: string = 'ALL') => {
+    const batchLabel = batch === 'STORE' ? 'Khối Cửa hàng' : batch === 'TONG_HOP' ? 'Khối Tổng hợp' : 'toàn công ty';
+    if (!window.confirm(`Xuất 2 file PAYMENT ${batchLabel} ${periodLabel(month)} lên Drive? (1 file CHƯA CHUYỂN KHOẢN + 1 file ĐÃ THANH TOÁN)`)) return;
     try {
-      const r: any = await post('/payroll/payment-export', { period: month });
+      const r: any = await post('/payroll/payment-export', { period: month, batch });
       if (r?.ok) {
-        showToast('Da xuat PAYMENT: ' + (r?.count || 0) + ' phieu (2 file) len Drive');
+        showToast(`Đã xuất PAYMENT ${batchLabel}: ${r?.count || 0} phiếu (2 file) lên Drive`);
         if (Array.isArray(r?.files)) r.files.forEach((f: any, i: number) => { if (f?.link && i < 2) window.open(f.link, '_blank'); });
         else if (r?.link) window.open(r.link, '_blank');
       } else {
-        showToast('Xuat file loi: ' + (r?.error || 'khong ro'));
+        showToast('Xuất file lỗi: ' + (r?.error || 'không rõ'));
       }
-    } catch (e: any) { showToast('Xuat file loi: ' + (e?.message || '')); }
+    } catch (e: any) { showToast('Xuất file lỗi: ' + (e?.message || '')); }
   }, [post, month, showToast]);
   const downloadSlipPdf = useCallback(async (itemId: string, employeeCode?: string) => {
     try {
@@ -2946,8 +2948,24 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
    ============================================================================ */
 function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUrl, markPaidSlip, downloadSlipPdf, exportPaymentFile, readOnly = false, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const [q, setQ] = useState('');
+  const [exportBatch, setExportBatch] = useState<'ALL' | 'STORE' | 'TONG_HOP'>('ALL');
   const show = cols?.show || (() => true);
   const ready = useMemo(() => (slips || []).filter((s: any) => String(s?.status) === 'CONFIRMED').filter(matchesFilter(q.trim())), [slips, q]);
+  /** Số phiếu xuất được (CONFIRMED + PAID) theo từng khối — hiện trên nút chọn khối. */
+  const batchCounts = useMemo(() => {
+    const count: Record<'ALL' | 'STORE' | 'TONG_HOP', number> = { ALL: 0, STORE: 0, TONG_HOP: 0 };
+    const groupOf = new Map<string, any>();
+    for (const e of allEmployees || []) groupOf.set(String(e?.employee_id), e?.group);
+    for (const s of slips || []) {
+      const st = String(s?.status || '').toUpperCase();
+      if (st !== 'CONFIRMED' && st !== 'PAID') continue;
+      count.ALL += 1;
+      const g = s?.group ?? groupOf.get(String(s?.employee_id));
+      for (const b of PAYROLL_BATCHES) if (employeeInBatch(g, b.id)) count[b.id] += 1;
+    }
+    return count;
+  }, [slips, allEmployees]);
+  const exportBatchLabel = exportBatch === 'STORE' ? 'Khối Cửa hàng' : exportBatch === 'TONG_HOP' ? 'Khối Tổng hợp' : 'Toàn công ty';
   const groups = useMemo(() => branchGroups(ready, (s: any) => slipBranchId(s, allEmployees)), [ready, allEmployees]);
   const grand = sumCalc(ready);
   const COLS = FIN_COL_HEADER_COUNT('fin-payment', colDefs, cols);
@@ -2957,8 +2975,23 @@ function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUr
         <SearchBox value={q} onChange={setQ} />
         <ColumnSettings tabKey="fin-payment" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-payment')} saving={colVisSaving} />
         <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={loadSlips}><RefreshCw size={13} /> Tải lại</button>
-        <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={exportPaymentFile} title="Xuất file PAYMENT Excel đủ cột, phân theo từng chi nhánh (tổng hợp + 1 sheet/CN) và tự đẩy lên Drive">
-          <FileDown size={13} /> Xuất file Payment → Drive
+        <span className="fin-export-block-label">Khối xuất:</span>
+        {([
+          { id: 'ALL', label: 'Tất cả' },
+          ...PAYROLL_BATCHES.map(b => ({ id: b.id, label: b.shortLabel })),
+        ] as Array<{ id: 'ALL' | 'STORE' | 'TONG_HOP'; label: string }>).map(opt => (
+          <button
+            key={opt.id}
+            type="button"
+            className={`fin-pill${exportBatch === opt.id ? ' is-active' : ''}`}
+            onClick={() => setExportBatch(opt.id)}
+            title={`Xuất file PAYMENT cho ${opt.id === 'ALL' ? 'toàn công ty' : payrollBatchLabel(opt.id)} (${batchCounts[opt.id]} phiếu CONFIRMED + PAID)`}
+          >
+            {opt.label} <span style={{ opacity: .7 }}>({batchCounts[opt.id]})</span>
+          </button>
+        ))}
+        <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => exportPaymentFile(exportBatch)} title={`Xuất file PAYMENT Excel đủ cột cho ${exportBatchLabel}, phân theo từng chi nhánh (tổng hợp + 1 sheet/CN) và tự đẩy lên Drive`}>
+          <FileDown size={13} /> Xuất Payment {exportBatch === 'ALL' ? '' : `(${exportBatchLabel})`} → Drive
         </button>
       </TabHead>
 

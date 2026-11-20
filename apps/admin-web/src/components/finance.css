@@ -223,6 +223,7 @@
 .fin-card-title { font-size: 12.5px; font-weight: 800; color: var(--fin-ink); display: flex; align-items: center; gap: 8px; }
 .fin-card-sub { font-size: 10.5px; color: var(--fin-muted); }
 .fin-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.fin-export-block-label { font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--fin-muted); }
 .fin-chip-stat { font-size: 10px; font-weight: 800; color: var(--fin-ink); background: #f1f5f9; border-radius: 999px; padding: 3px 10px; border: 1px solid #e2e8f0; font-variant-numeric: tabular-nums; }
 .fin-search { display: flex; align-items: center; gap: 6px; background: #fff; border: 1.5px solid #e2e8f0; border-radius: 9px; padding: 6px 10px; min-width: 220px; }
 .fin-search input { border: none; outline: none; font-size: 12px; width: 100%; background: transparent; color: var(--fin-ink); }

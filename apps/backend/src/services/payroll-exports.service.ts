@@ -569,7 +569,7 @@ export async function buildKyLuongXlsx(period: string, runs: any[]): Promise<Buf
    PAYMENT EXPORT — đủ cột, phân theo từng chi nhánh.
    Xuât 2 file: CHƯA CHUYỂN KHOẢN (CONFIRMED) + ĐÃ THÀNH TOÁN (PAID).
    ============================================================ */
-export async function buildPaymentExportXlsx(period: string, slips: any[], empMap: Map<string, any>, statusFilter?: 'CONFIRMED' | 'PAID'): Promise<Buffer> {
+export async function buildPaymentExportXlsx(period: string, slips: any[], empMap: Map<string, any>, statusFilter?: 'CONFIRMED' | 'PAID', blockLabel?: string): Promise<Buffer> {
   const all = (slips || []).filter(s => statusFilter
     ? String(s?.status || '').toUpperCase() === statusFilter
     : ['CONFIRMED', 'PAID'].includes(String(s?.status || '').toUpperCase()));
@@ -578,11 +578,14 @@ export async function buildPaymentExportXlsx(period: string, slips: any[], empMa
   const COLS = ['STT', 'MÃ NV', 'HỌ TÊN', 'CHI NHÁNH', 'GIỜ CÔNG', 'LƯƠNG CA', 'LCB (THÁNG)', 'OT THÊM', 'BONUS', 'TỔNG CỘNG', 'TRỪ KPI/PHẠT', 'ỨNG LƯƠNG', 'TRỪ ĐỒNG PHỤC', 'TỔNG LƯƠNG', 'THỰC LÃNH', 'NGÂN HÀNG', 'SỐ TÀI KHOẢN', 'CHỦ TÀI KHOẢN', 'TRẠNG THÁI'];
   const totalAmt = all.reduce((acc, x) => acc + (Number(x?.thuc_lanh ?? x?.net_pay) || 0), 0);
   const nameTag = statusFilter === 'PAID' ? 'DA THANH TOAN' : statusFilter === 'CONFIRMED' ? 'CHUA CHUYEN KHOAN' : 'DA KY';
+  const blockTag = String(blockLabel || '').trim() && String(blockLabel).trim().toUpperCase() !== 'TOÀN CÔNG TY'
+    ? ' — ' + String(blockLabel).trim().toUpperCase()
+    : '';
   // Sheet TỔNG HỢP (tổng từng chi nhánh)
   const wsSum = wb.addWorksheet('TONGHOP', { views: [{ state: 'frozen', ySplit: 5 }] });
   addTitleBlock(wsSum, 'F', [
     { text: 'CÔNG TY TNHH UNIQUE&NICHE GROUP', size: 10, color: BRAND_DARK },
-    { text: 'FILE PAYMENT (' + nameTag + ') — TONG HOP THEO CHI NHANH', size: 14, color: DARK },
+    { text: 'FILE PAYMENT (' + nameTag + ') — TONG HOP THEO CHI NHANH' + blockTag, size: 14, color: DARK },
     { text: monthLabel(period).toUpperCase() + '  •  ' + all.length + ' phieu  •  Tong ' + totalAmt.toLocaleString('vi-VN') + ' d', size: 10, color: BRAND },
   ]);
   wsSum.getRow(4).height = 6;
@@ -612,7 +615,7 @@ export async function buildPaymentExportXlsx(period: string, slips: any[], empMa
     const ws = wb.addWorksheet(sheetName, { views: [{ state: 'frozen', ySplit: 5 }] });
     addTitleBlock(ws, 'S', [
       { text: 'CÔNG TY TNHH UNIQUE&NICHE GROUP', size: 10, color: BRAND_DARK },
-      { text: `PAYMENT — ${branchLabelOf(g.key).toUpperCase()}`, size: 14, color: DARK },
+      { text: `PAYMENT — ${branchLabelOf(g.key).toUpperCase()}${blockTag}`, size: 14, color: DARK },
       { text: `${monthLabel(period).toUpperCase()}  •  ${g.rows.length} phiếu`, size: 10, color: BRAND },
     ]);
     ws.getRow(4).height = 6;

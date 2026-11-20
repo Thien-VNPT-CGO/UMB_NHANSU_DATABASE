@@ -26,6 +26,9 @@ import {
   payslipDriveSegments04,
   normalizePeriodValue,
   payrollRunTimestamp,
+  employeeInBatch,
+  normalizePayrollBatch,
+  type PayrollBatchId,
 } from '@ubm/shared';
 import { getPayslip04DriveRootId, getPayslipDriveRootId, getPaymentExportDriveRootId } from '../config/drive-folders.js';
 import { getDriveStorage } from './drive-storage.service.js';
@@ -60,6 +63,12 @@ const blockLabelOf = (group?: string | null, branchId?: string | null): string =
   return 'Cửa Hàng';
 };
 const branchLabelOf = (id?: string | null) => BRANCH_LABEL[String(id || '').trim()] || String(id || '—');
+
+/** Khối xuất file PAYMENT: Cửa hàng (STORE) / Tổng hợp (VP + Xưởng + Sales). */
+const PAYMENT_BATCH_META: Record<PayrollBatchId, { label: string; fileTag: string }> = {
+  STORE: { label: 'Khối Cửa hàng', fileTag: 'CUA_HANG' },
+  TONG_HOP: { label: 'Khối Tổng hợp', fileTag: 'TONG_HOP' },
+};
 
 export interface DriveMonthSyncResult {
   ok: boolean;
@@ -409,28 +418,42 @@ export class PayslipDriveService {
   /** Xuất 2 FILE PAYMENT (đủ cột, theo chi nhánh) lên Drive root riêng (1hbE...).
    * - PAYMENT_CHUA_CHUYEN_KHOAN_TMM.YYYY.xlsx: phiếu CONFIRMED (NV đã ký, chờ CK)
    * - PAYMENT_DA_THANH_TOAN_TMM.YYYY.xlsx: phiếu PAID (đã chuyển khoản)
+   * Kế toán chọn khối cần xuất (`batch`):
+   * - STORE (Khối Cửa hàng)      → thêm hậu tố `_CUA_HANG` vào tên file.
+   * - TONG_HOP (Khối Tổng hợp)  → thêm hậu tố `_TONG_HOP` vào tên file.
+   * - ALL / rỗng (toàn công ty) → giữ tên file cũ.
    * Mỗi file: sheet TONGHOP + 1 sheet/chi nhánh trong <ROOT>/THANG_MM_YYYY/. */
-  async exportPaymentToDrive(period: string, actorId?: string): Promise<{ ok: boolean; period: string; rootId: string; folder: string; files?: Array<{ fileName: string; link?: string; count?: number }>; fileName: string; link?: string; fileId?: string; count?: number; total?: number; error?: string; at: string }> {
+  async exportPaymentToDrive(period: string, actorId?: string, batch?: string): Promise<{ ok: boolean; period: string; batch: string; rootId: string; folder: string; files?: Array<{ fileName: string; link?: string; count?: number }>; fileName: string; link?: string; fileId?: string; count?: number; total?: number; error?: string; at: string }> {
     const at = new Date().toISOString();
     const rootId = getPaymentExportDriveRootId();
     const month = monthFolderName(period);
     const _p = parsePeriod(period);
     const mm = _p ? String(_p.month).padStart(2, '0') : '??';
     const yyyy = _p ? String(_p.year) : '????';
+    const batchId = normalizePayrollBatch(batch);
+    const batchKey = batchId || 'ALL';
+    const batchLabel = batchId ? PAYMENT_BATCH_META[batchId].label : 'Toàn công ty';
+    const fileTag = batchId ? `_${PAYMENT_BATCH_META[batchId].fileTag}` : '';
     const filesDef = [
-      { status: 'CONFIRMED' as const, fileName: `PAYMENT_CHUA_CHUYEN_KHOAN_T${mm}.${yyyy}.xlsx` },
-      { status: 'PAID' as const, fileName: `PAYMENT_DA_THANH_TOAN_T${mm}.${yyyy}.xlsx` },
+      { status: 'CONFIRMED' as const, fileName: `PAYMENT_CHUA_CHUYEN_KHOAN${fileTag}_T${mm}.${yyyy}.xlsx` },
+      { status: 'PAID' as const, fileName: `PAYMENT_DA_THANH_TOAN${fileTag}_T${mm}.${yyyy}.xlsx` },
     ];
     try {
       const { slips, empMap } = await this.latestSlipsOfPeriod(period);
+      const scopedSlips = batchId
+        ? (slips || []).filter((s: any) => employeeInBatch(s?.group ?? empMap.get(String(s?.employee_id))?.group, batchId))
+        : (slips || []);
+      if (!scopedSlips.length) {
+        throw new Error(`Không có phiếu lương nào thuộc ${batchLabel} trong ${month} — chưa cần xuất file.`);
+      }
       const drive = getDriveStorage();
       if (!drive.isConfigured()) throw new Error('DRIVE_NOT_CONFIGURED: Google Drive chưa được cấu hình trên máy chủ!');
       const files: Array<{ fileName: string; link?: string; count?: number }> = [];
       let total = 0, count = 0, firstLink: string | undefined;
       for (const def of filesDef) {
-        const buf = await buildPaymentExportXlsx(period, slips, empMap, def.status);
-        const up = await drive.uploadBuffer(def.fileName, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buf, [month], rootId, { upsert: true, appProperties: { kind: 'payment-export', period, status: def.status } });
-        const target = (slips || []).filter(s => String(s?.status || '').toUpperCase() === def.status);
+        const buf = await buildPaymentExportXlsx(period, scopedSlips, empMap, def.status, batchLabel);
+        const up = await drive.uploadBuffer(def.fileName, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buf, [month], rootId, { upsert: true, appProperties: { kind: 'payment-export', period, batch: batchKey, status: def.status } });
+        const target = scopedSlips.filter(s => String(s?.status || '').toUpperCase() === def.status);
         const subTotal = target.reduce((acc, x) => acc + (Number(x?.thuc_lanh ?? x?.net_pay) || 0), 0);
         total += subTotal; count += target.length;
         if (!firstLink && up.viewUrl) firstLink = up.viewUrl;
@@ -438,11 +461,14 @@ export class PayslipDriveService {
       }
       try {
         const settings = (await this.repo.getSystemSettings().catch(() => ({}))) || {};
-        await this.repo.updateSystemSettings({ ...settings, [`paymentExportSync:${period}`]: { at, by: actorId || '', ok: true, rootId, files, count, total } });
+        const payload = { at, by: actorId || '', ok: true, batch: batchKey, batchLabel, rootId, files, count, total };
+        // Lưu cả bản ghi mới nhất theo kỳ (hiển thị nhanh) + bản ghi riêng từng khối
+        // để xuất Cửa hàng rồi xuất Tổng hợp không ghi đè trạng thái của nhau.
+        await this.repo.updateSystemSettings({ ...settings, [`paymentExportSync:${period}`]: payload, [`paymentExportSync:${period}:${batchKey}`]: payload });
       } catch { /* best-effort */ }
-      return { ok: true, period, rootId, folder: month, files, fileName: filesDef[0].fileName, link: firstLink, count, total, at };
+      return { ok: true, period, batch: batchKey, rootId, folder: month, files, fileName: filesDef[0].fileName, link: firstLink, count, total, at };
     } catch (err: any) {
-      return { ok: false, period, rootId, folder: month, fileName: filesDef[0].fileName, error: String(err?.message || err).slice(0, 400), at };
+      return { ok: false, period, batch: batchKey, rootId, folder: month, fileName: filesDef[0].fileName, error: String(err?.message || err).slice(0, 400), at };
     }
   }
 
