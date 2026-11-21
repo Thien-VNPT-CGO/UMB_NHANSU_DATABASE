@@ -375,9 +375,9 @@ export const leaveReviewBody = z.object({
 export const swapCreateBody = z
   .object({
     requesterId: optString(64),
-    requesterAssignmentId: optString(64),
+    requesterAssignmentId: optString(160),
     targetEmployeeId: optString(64),
-    targetAssignmentId: optString(64),
+    targetAssignmentId: optString(160),
     reason: optString(1000),
   })
   .passthrough();
@@ -431,7 +431,7 @@ export const probationSelfSwapBody = z.object({
 // HR tạo phiếu điều phối nhường ca (người nhận hưởng lương ca, không phụ cấp)
 export const swapDispatchBody = z.object({
   requesterId: optString(64),
-  requesterAssignmentId: optString(64),
+  requesterAssignmentId: optString(160),
   branchId: optString(32),
   reason: optString(1000),
 }).passthrough();
@@ -439,7 +439,7 @@ export const swapDispatchBody = z.object({
 // HR chuyển ca hỗ trợ chi nhánh: A nhường ca có sẵn cho B (B khác CN) làm thay.
 // B xác nhận trên cổng NV là ca chuyển sang B ngay (không cần duyệt thêm).
 export const supportCreateBody = z.object({
-  requesterAssignmentId: z.string().trim().min(1).max(64),
+  requesterAssignmentId: z.string().trim().min(1).max(160),
   targetEmployeeId: z.string().trim().min(1).max(64),
   reason: optString(1000),
 }).passthrough();
@@ -448,8 +448,10 @@ export const supportCreateBody = z.object({
 const checkBody = z.object({
   employee_id: optString(64),
   employeeId: optString(64),
-  assignment_id: optString(64),
-  assignmentId: optString(64),
+  // Ca Sale cố định do máy sinh có ID dạng SHIFT_FIXED_<emp>_<date>_<ca>_<time>_<seq>
+  // nên dài hơn 64 ký tự — không được chặn ở 64.
+  assignment_id: optString(160),
+  assignmentId: optString(160),
   clientTime: optString(64),
   lat: latField,
   latitude: latField,
@@ -484,7 +486,7 @@ export const attendanceEventBody = z
   .object({
     employeeId: optString(64),
     requestId: optString(128),
-    assignmentId: optString(64),
+    assignmentId: optString(160),
     type: z.enum(['CHECK_IN', 'CHECK_OUT']).optional(),
     clientTime: optString(64),
     gps: gpsObject,
@@ -524,8 +526,8 @@ export const adjustmentApproveBody = z.object({
 // còn thiếu về đúng ca qua engine compensateShift — lương đồng bộ theo.
 export const completeShiftBody = z
   .object({
-    assignmentId: optString(64),
-    assignment_id: optString(64),
+    assignmentId: optString(160),
+    assignment_id: optString(160),
     checkInTime: optString(64),
     check_in_time: optString(64),
     checkOutTime: optString(64),

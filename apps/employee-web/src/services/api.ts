@@ -280,7 +280,9 @@ async function performRequest<T = any>(endpoint: string, options: RequestInit = 
         rawText,
         `Máy chủ trả về lỗi (HTTP ${res.status}). Vui lòng thử lại.`,
       );
-      const err: any = new Error(detailText ? `${mainText} — ${detailText}` : mainText);
+      // Backend đã ghép chi tiết lỗi vào `message`; chỉ nối thêm nếu chưa có
+      // để tránh hiện lặp "— Chỉ được tối đa ... — Chỉ được tối đa ...".
+      const err: any = new Error(detailText && !mainText.includes(detailText) ? `${mainText} — ${detailText}` : mainText);
       err.code = serverError || (data as any)?.code;
       err.details = details;
       throw err;
