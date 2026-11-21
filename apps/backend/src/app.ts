@@ -6112,7 +6112,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           message: 'Thiếu tọa độ GPS thật! Hãy bật định vị và thử lại — hệ thống không chấp nhận điểm danh không GPS.',
         });
       }
-      if (!req.body.photo_base64) {
+      // Khối SALE chỉ cần bấm VÀO CA — không bắt buộc chụp ảnh như cửa hàng.
+      const checkinGroup = String(((await employeesService.getEmployee(employeeId).catch(() => null)) as any)?.group || '');
+      if (!isSaleGroup(checkinGroup) && !req.body.photo_base64) {
         return res.status(400).json({
           error: ERROR_CODES.CAMERA_REQUIRED,
           message: 'Bắt buộc chụp ảnh xác nhận (áo hồng + bảng tên) khi check-in!',
@@ -6140,8 +6142,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           longitude: Number(lng),
           accuracy: req.body.accuracy || 15,
         } : undefined,
-        hasCameraImage: true,
-        imageMeta: 'UNIFORM_PINK_AND_BADGE',
+        hasCameraImage: !!req.body.photo_base64,
+        imageMeta: req.body.photo_base64 ? 'UNIFORM_PINK_AND_BADGE' : undefined,
         photoBase64: req.body.photo_base64,
         uniformPinkRatio: req.body.uniform_pink_ratio,
       });

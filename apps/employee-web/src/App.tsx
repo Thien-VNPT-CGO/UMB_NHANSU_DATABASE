@@ -3170,6 +3170,11 @@ export function App() {
     // Từ chối định vị / ngoài vùng phủ sóng -> dừng, KHÔNG ghi nhận.
     // Ngoại lệ: chi nhánh đã TẮT định vị (Admin cấu hình) -> bỏ qua bước GPS.
     if (!gpsEnabled) {
+      // Khối SALE: không chụp ảnh — gửi điểm danh ngay sau khi bấm nút.
+      if (isSaleGate) {
+        void handleSubmitAttendance({ action, gps: null });
+        return;
+      }
       setAttendanceStep('READY_CAMERA');
       return;
     }
@@ -3180,11 +3185,17 @@ export function App() {
     }
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setGpsCoords({
+        const coords = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           accuracy: Math.round(pos.coords.accuracy),
-        });
+        };
+        setGpsCoords(coords);
+        // Khối SALE: không qua bước chụp ảnh, gửi điểm danh luôn.
+        if (isSaleGate) {
+          void handleSubmitAttendance({ action, gps: coords });
+          return;
+        }
         setAttendanceStep('READY_CAMERA');
       },
       (err) => {
@@ -3401,20 +3412,26 @@ export function App() {
     }
   };
 
-  const handleSubmitAttendance = async () => {
-    // NV thử việc được miễn yêu cầu đồng phục (không cần tick 2 ô xác nhận).
-    if (!isProbation && (!uniformChecked || !badgeChecked)) {
+  const handleSubmitAttendance = async (opts?: {
+    action: 'CHECK_IN' | 'CHECK_OUT';
+    gps: { lat: number; lng: number; accuracy: number } | null;
+  }) => {
+    // Khối SALE gọi trực tiếp với action + GPS vừa đo (không qua bước chụp ảnh).
+    const actionType = opts?.action ?? attendanceActionType;
+    const effectiveGps = opts ? opts.gps : gpsCoords;
+    // NV thử việc + khối SALE được miễn xác nhận đồng phục.
+    if (!isProbation && !isSaleGate && (!uniformChecked || !badgeChecked)) {
       showToast('⚠️ VI PHẠM ĐỒNG PHỤC QUY CHUẨN: Vui lòng xác nhận đang mặc Áo Hồng Ụm Bò Milk và Đeo Bảng Tên hợp lệ!');
       return;
     }
-    // Bắt buộc: GPS thật + ảnh thật (check-in). Không có -> không gửi.
+    // Bắt buộc: GPS thật + ảnh thật (check-in). Khối SALE miễn ảnh.
     // Chi nhánh đã tắt định vị thì không bắt buộc GPS.
-    if (gpsEnabled && !gpsCoords) {
+    if (gpsEnabled && !effectiveGps) {
       showToast('🚫 Chưa có tọa độ GPS thật! Vui lòng bấm Bắt đầu lại để đo GPS.');
       setAttendanceStep('IDLE');
       return;
     }
-    if (attendanceActionType === 'CHECK_IN' && !photoData) {
+    if (actionType === 'CHECK_IN' && !isSaleGate && !photoData) {
       showToast('📸 Bắt buộc chụp ảnh xác nhận khi check-in! Vui lòng chụp ảnh thật.');
       return;
     }
@@ -3430,13 +3447,13 @@ export function App() {
     try {
       const todayShift = getAttendShift();
       if (!todayShift) throw new Error('Hôm nay bạn không có lịch ca làm việc được phân công!');
-      const targetEndpoint = attendanceActionType === 'CHECK_IN' ? '/attendance/checkin' : '/attendance/checkout';
+      const targetEndpoint = actionType === 'CHECK_IN' ? '/attendance/checkin' : '/attendance/checkout';
 
       const res = await apiRequest(targetEndpoint, {
         method: 'POST',
         body: JSON.stringify({
           assignment_id: todayShift?.assignment_id,
-          ...(gpsCoords ? { lat: gpsCoords.lat, lng: gpsCoords.lng, accuracy: gpsCoords.accuracy } : {}),
+          ...(effectiveGps ? { lat: effectiveGps.lat, lng: effectiveGps.lng, accuracy: effectiveGps.accuracy } : {}),
           device_id: getOrCreateDeviceId(),
           ...(photoData ? { photo_base64: photoData } : {}),
           ...(photoPinkRatio !== null ? { uniform_pink_ratio: photoPinkRatio } : {}),
@@ -3461,12 +3478,12 @@ export function App() {
       const gpsNote = gpsEnabled ? '' : ' (chi nhánh đã tắt định vị GPS)';
       const receipt: any = res?.receipt || {};
       const lateMinutes = Math.max(0, Math.round(Number(receipt?.minutes_deviation) || 0));
-      if (attendanceActionType === 'CHECK_IN' && (receipt?.is_late === true || lateMinutes > 0)) {
+      if (actionType === 'CHECK_IN' && (receipt?.is_late === true || lateMinutes > 0)) {
         // Vào ca trễ: cảnh báo rõ cho NV; server đã tự gửi thông báo cho HR/Store.
         showToast(`⚠️ BẠN ĐÃ VÀO CA TRỄ ${lateMinutes || 1} PHÚT — hệ thống đã gửi cảnh báo tới HR và ghi nhận mức phạt trễ theo quy chế!`);
       } else {
-        showToast(attendanceActionType === 'CHECK_IN'
-          ? `✓ Điểm danh Check-in thành công!${gpsEnabled ? ' GPS thật + ảnh thật đã ghi nhận.' : ''}${gpsNote}`
+        showToast(actionType === 'CHECK_IN'
+          ? `✓ Điểm danh Check-in thành công!${gpsEnabled ? (isSaleGate ? ' GPS thật đã ghi nhận.' : ' GPS thật + ảnh thật đã ghi nhận.') : ''}${gpsNote}`
           : `✓ Điểm danh Check-out thành công! Ca làm việc đã ghi nhận vào Google Sheets.${gpsNote}`
         );
       }
@@ -3475,7 +3492,8 @@ export function App() {
       // Không hiện mã lỗi thô (VD WEEKLY_OFF_REGISTRATION_REQUIRED): dịch sang
       // thông báo tiếng Việt thân thiện trước khi hiện toast.
       showToast(weeklyOffErrMsg(err, err?.message || 'Lỗi khi điểm danh!'));
-      setAttendanceStep('READY_CAMERA');
+      // Khối SALE không có bước chụp ảnh -> quay về màn hình nút bấm.
+      setAttendanceStep(isSaleGate ? 'IDLE' : 'READY_CAMERA');
     } finally {
       attendBusyRef.current = false;
     }
@@ -6283,7 +6301,7 @@ export function App() {
                         {todayShift.shift_code} • {todayShift.branch_id || employee?.default_branch_id} ({shiftStartStr} - {todayShift.end_at ? new Date(todayShift.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (shiftBounds(todayShift.shift_code)[1] || '')})
                       </div>
                     </div>
-                    <span className="badge badge-brand">GPS + Camera</span>
+                    <span className="badge badge-brand">{isSale ? 'GPS' : 'GPS + Camera'}</span>
                   </div>
 
                   {/* NGÀY 2 CA (do tráo đổi/nhận thay): chọn đúng ca để điểm danh */}
@@ -6677,7 +6695,7 @@ export function App() {
                           </button>
                           <button
                             className="btn-primary"
-                            onClick={handleSubmitAttendance}
+                            onClick={() => void handleSubmitAttendance()}
                             style={{ width: '100%', fontSize: '15px', fontWeight: 800 }}
                           >
                             ✅ GHI NHẬN {attendanceActionType === 'CHECK_IN' ? 'CHECK-IN' : 'CHECK-OUT'} {gpsEnabled ? '(GPS + ẢNH THẬT)' : '(ẢNH THẬT)'}
