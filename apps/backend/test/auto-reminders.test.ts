@@ -114,6 +114,27 @@ test('Cửa hàng: nhắc đúng 1 lần cho mỗi ca (2 ca = 2 thông báo) và
   assert.equal(after.length, 2);
 });
 
+test('Sale: chỉ nhắc ca làm, không nhắc áo hồng/bảng tên/GPS/check-in', async () => {
+  const repo = new MockSheetsAdapter();
+  const notifications = new NotificationsService(repo);
+  const zalo = new ZaloService(repo);
+  const now = Date.now();
+  const today = vnToday(now);
+
+  await makeEmployee(repo, { id: 'EMP_SALE_A', group: 'SALE', branch: 'VAN_PHONG' });
+  pushShift(repo, { id: 'SS1', employeeId: 'EMP_SALE_A', branch: 'VAN_PHONG', date: today, startMs: now + 10 * 60_000, shiftCode: 'CA_2' });
+
+  const result = await autoRemindersTick(repo, notifications, zalo, { forceCheckin: true });
+  assert.equal(result.checkinsSent, 1);
+
+  const reminders = (await repo.getInboxForRecipient('EMP_SALE_A'))
+    .filter((n: any) => n.type === 'CHECKIN_REMINDER');
+  assert.equal(reminders.length, 1);
+  assert.match(reminders[0].title, /Nhắc ca làm/);
+  assert.doesNotMatch(`${reminders[0].title} ${reminders[0].summary}`, /áo hồng|bảng tên|GPS|check-in/i);
+  assert.equal(reminders[0].target_path, '/attendance');
+});
+
 test('Văn Phòng: nhắc theo lịch hành chính, mỗi NV 1 lần (kể cả khi chưa sinh ca)', async () => {
   const repo = new MockSheetsAdapter();
   const notifications = new NotificationsService(repo);

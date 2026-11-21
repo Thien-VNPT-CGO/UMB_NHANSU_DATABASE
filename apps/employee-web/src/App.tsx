@@ -1022,9 +1022,9 @@ export function App() {
 
   // Attendance tracking state
   const [attendanceActionType, setAttendanceActionType] = useState<'CHECK_IN' | 'CHECK_OUT'>('CHECK_IN');
-  // Đồng hồ nhẹ cho tab Điểm danh: nút RA CA tự mở đúng giờ tan ca mà không
-  // cần F5 (chỉ tick khi đang mở tab, 5 giây/lần).
-  const [attNow, setAttNow] = useState(() => Date.now());
+  // Đồng hồ nhẹ cho tab Điểm danh: re-render 5 giây/lần để cổng VÀO CA
+  // tự mở đúng giờ mà không cần F5 (chỉ tick khi đang mở tab).
+  const [, setAttNow] = useState(() => Date.now());
   // GPS thật từ thiết bị (null = chưa đo được, KHÔNG dùng số giả lập)
   const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
   // Cấu hình chi nhánh của NV: Admin có thể TẮT định vị GPS cho chi nhánh.
@@ -1851,10 +1851,10 @@ export function App() {
     }
   }, [activeTab]);
 
-  // Tab Điểm danh: tick 5 giây để nút VÀO CA mở đúng cổng (trước ca 30 phút) và
-  // nút RA CA tự bấm được đúng giờ tan ca — không cần tải lại trang.
+  // Tab Điểm danh: tick 5 giây để nút VÀO CA mở đúng cổng (trước ca 30 phút)
+  // mà không cần tải lại trang. Khối Sale không dùng tick này (chỉ xem thông tin ca).
   useEffect(() => {
-    if (activeTab !== 'attendance') return;
+    if (activeTab !== 'attendance' || isSaleGroup((employee as any)?.group)) return;
     setAttNow(Date.now());
     const t = setInterval(() => setAttNow(Date.now()), 5000);
     return () => clearInterval(t);
@@ -4143,7 +4143,9 @@ export function App() {
     { id: 'home', label: '1. Trang chủ', icon: Home },
     { id: 'schedule', label: '2. Lịch thử việc', icon: Calendar },
     { id: 'leave', label: '3. Đăng ký OFF thử việc', icon: Clock },
-    { id: 'attendance', label: '4. Điểm danh', icon: Camera, highlight: true },
+    isSale
+      ? { id: 'attendance', label: '4. Ca của tôi', icon: Calendar }
+      : { id: 'attendance', label: '4. Điểm danh', icon: Camera, highlight: true },
     { id: 'timesheet', label: '5. Công của tôi', icon: CheckCircle2 },
     { id: 'swap_emergency', label: '6. Tự đổi ca / Nghỉ khẩn', icon: RefreshCw },
     { id: 'rereg', label: '7. Cập Nhật Ca Làm', icon: FileText, beta: true },
@@ -4160,7 +4162,10 @@ export function App() {
       { id: 'home', label: 'Trang chủ', icon: Home },
       { id: 'schedule', label: 'Lịch làm việc', icon: Calendar },
       ...(isSale ? [] : [{ id: 'leave', label: 'Đăng ký OFF tuần', icon: Clock }]),
-      { id: 'attendance', label: 'Điểm danh', icon: Camera, highlight: true },
+      // Khối SALE không điểm danh: tab chỉ hiển thị thông tin ca do Admin xếp cố định.
+      isSale
+        ? { id: 'attendance', label: 'Ca của tôi', icon: Calendar }
+        : { id: 'attendance', label: 'Điểm danh', icon: Camera, highlight: true },
       { id: 'timesheet', label: 'Công của tôi', icon: CheckCircle2 },
       { id: 'swap_shift', label: 'Đổi ca làm', icon: RefreshCw },
       { id: 'rereg', label: 'Cập Nhật Ca Làm', icon: FileText, beta: true },
@@ -4996,8 +5001,12 @@ export function App() {
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
                 {currentShift
                   ? currentShiftPhase === 'DRAFT'
-                    ? '⏳ Ca này đã được HR xếp nhưng CHƯA phát hành lịch — chưa tính công và chưa mở điểm danh. Nhờ HR bấm "Phát Hành Lịch" để chốt ca!'
-                    : '* Yêu cầu: Mặc áo màu hồng Ụm Bò Milk + đeo bảng tên, có mặt trước 15 phút.'
+                    ? isSale
+                      ? '⏳ Ca này đã được Admin xếp nhưng CHƯA phát hành lịch — chưa tính là lịch chính thức. Nhờ HR bấm "Phát Hành Lịch" để chốt ca!'
+                      : '⏳ Ca này đã được HR xếp nhưng CHƯA phát hành lịch — chưa tính công và chưa mở điểm danh. Nhờ HR bấm "Phát Hành Lịch" để chốt ca!'
+                    : isSale
+                      ? 'Ca làm khối Sale do Admin xếp cố định — bấm "Xem ca của tôi" để xem giờ vào/ra và chi nhánh.'
+                      : '* Yêu cầu: Mặc áo màu hồng Ụm Bò Milk + đeo bảng tên, có mặt trước 15 phút.'
                   : 'Hôm nay bạn không có lịch làm — nghỉ ngơi nhé! Muốn nhận ca thay, qua tab Đổi ca.'}
               </p>
 
@@ -5013,8 +5022,10 @@ export function App() {
                     boxShadow: '0 4px 14px rgba(232, 93, 146, 0.4)',
                   }}
                 >
-                  <Camera size={16} style={{ marginRight: '6px' }} />
-                  ĐIỂM DANH NGAY
+                  {isSale
+                    ? <Calendar size={16} style={{ marginRight: '6px' }} />
+                    : <Camera size={16} style={{ marginRight: '6px' }} />}
+                  {isSale ? 'XEM CA CỦA TÔI' : 'ĐIỂM DANH NGAY'}
                 </button>
                 <button
                   className="btn-secondary"
@@ -6178,7 +6189,111 @@ export function App() {
         {isOffice && activeTab === 'attendance' && (
           <OfficeAttendanceView employee={employee} showToast={showToast} refreshKey={schedRefresh} />
         )}
-        {!isOffice && activeTab === 'attendance' && (() => {
+        {/* KHỐI SALE: KHÔNG ĐIỂM DANH — chỉ hiển thị thông tin ca hôm nay.
+            Ca Sale do Admin xếp cố định (4 ca/ngày), không yêu cầu GPS, camera,
+            đồng phục, bảng tên, khung giờ check-in hay khóa ca. */}
+        {!isOffice && isSale && activeTab === 'attendance' && (() => {
+          const today = vnTodayStr();
+          const saleTodayShifts = getAllEmployeeShifts().filter((s: any) => toISODate(s.date) === today && isLiveShift(s));
+          const saleDraftShifts = getAllEmployeeShifts().filter((s: any) => toISODate(s.date) === today && isDraftShift(s));
+          const nowMs = vnNowMs();
+          const fmtTime = (s: any, which: 'start' | 'end') => {
+            const raw = which === 'start' ? s.start_at : s.end_at;
+            if (raw) return new Date(raw).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
+            return shiftBounds(s.shift_code)[which === 'start' ? 0 : 1] || '';
+          };
+          const branchNameOf = (bId?: string) => {
+            const id = String(bId || '').toUpperCase();
+            if (id === 'CN130' || id === 'CN1') return 'CN1: 130 Vạn Kiếp (Bình Thạnh)';
+            if (id === 'CN261' || id === 'CN2') return 'CN2: 261 Tô Hiến Thành (Q.10)';
+            if (id === 'CN120' || id === 'CN3') return 'CN3: 120 Hoàng Diệu 2 (Thủ Đức)';
+            if (id === 'CN111' || id === 'CN4') return 'CN4: 111 Tôn Đản (Q.4)';
+            if (id === 'VAN_PHONG') return 'Trụ sở chính (Văn phòng công ty)';
+            if (id === 'XUONG_SX' || id === 'XUONG') return 'Xưởng sản xuất';
+            return bId || '—';
+          };
+          const phaseOf = (s: any) => {
+            const startMs = s.start_at ? new Date(s.start_at).getTime() : NaN;
+            const endMs = s.end_at ? new Date(s.end_at).getTime() : NaN;
+            if (Number.isFinite(startMs) && nowMs < startMs) return { text: '⏳ Ca sắp tới', bg: '#FEF3C7', fg: '#92400E' };
+            if (Number.isFinite(endMs) && nowMs >= endMs) return { text: '✓ Ca đã kết thúc', bg: '#F3F4F6', fg: '#6B7280' };
+            if (Number.isFinite(startMs) && Number.isFinite(endMs) && nowMs >= startMs && nowMs < endMs) return { text: '● Đang trong ca', bg: '#DCFCE7', fg: '#166534' };
+            return { text: '✓ Đã xếp ca', bg: '#EFF6FF', fg: '#1E40AF' };
+          };
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div className="card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                  <h3 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text)' }}>
+                    Ca làm việc của tôi
+                  </h3>
+                  <span className="badge badge-brand">Khối Sale</span>
+                </div>
+                <div style={{
+                  backgroundColor: '#EFF6FF',
+                  border: '1px solid #BFDBFE',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '10px 12px',
+                  marginBottom: '14px',
+                  fontSize: '12px',
+                  color: '#1E40AF',
+                  lineHeight: 1.5,
+                }}>
+                  ℹ️ Khối Sale <strong>không yêu cầu điểm danh</strong> — tab này chỉ hiển thị thông tin ca làm.
+                  Ca làm bên dưới do Admin xếp cố định; nếu cần đổi ca, liên hệ HR/Quản lý.
+                </div>
+
+                {saleTodayShifts.length > 0 ? saleTodayShifts.map((s: any) => {
+                  const phase = phaseOf(s);
+                  return (
+                    <div key={s.assignment_id || `${s.shift_code}-${s.date}`} style={{
+                      border: '1px solid #F0D5DF',
+                      borderRadius: '12px',
+                      backgroundColor: '#FFF8F4',
+                      padding: '12px',
+                      marginBottom: '10px',
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <div style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text)' }}>{shiftLabelOf(s)}</div>
+                        <span className="badge" style={{ backgroundColor: phase.bg, color: phase.fg, fontWeight: 800 }}>{phase.text}</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginTop: '8px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                        <div>🕒 Giờ vào: <strong style={{ color: 'var(--text)' }}>{fmtTime(s, 'start')}</strong></div>
+                        <div>🕒 Giờ ra: <strong style={{ color: 'var(--text)' }}>{fmtTime(s, 'end')}</strong></div>
+                        <div>📍 Chi nhánh: <strong style={{ color: 'var(--brand)' }}>{branchNameOf(s.branch_id || employee?.default_branch_id)}</strong></div>
+                        <div>📅 Ngày: <strong style={{ color: 'var(--text)' }}>{String(s.date || today).slice(8, 10)}/{String(s.date || today).slice(5, 7)}/{String(s.date || today).slice(0, 4)}</strong></div>
+                      </div>
+                    </div>
+                  );
+                }) : saleDraftShifts.length > 0 ? (
+                  <div style={{ backgroundColor: '#FFFBEB', border: '1.5px solid #FCD34D', borderRadius: 'var(--radius-sm)', padding: '12px', fontSize: '12px', color: '#92400E', lineHeight: 1.5, marginBottom: '12px' }}>
+                    ⏳ Hôm nay bạn có ca {saleDraftShifts.map((s: any) => shiftLabelOf(s)).join(' + ')} nhưng HR <strong>chưa phát hành lịch</strong>. Ca nháp chưa được tính là lịch chính thức — nhờ HR bấm "Phát Hành Lịch" để chốt ca.
+                  </div>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '20px 12px', backgroundColor: '#FAF8F6', borderRadius: 'var(--radius-sm)', marginBottom: '12px' }}>
+                    <div style={{ fontSize: '22px', marginBottom: '6px' }}>😴</div>
+                    <div style={{ fontSize: '13px', fontWeight: 800, color: '#475569' }}>
+                      Hôm nay bạn không có ca làm
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                      Ngày {today.slice(8, 10)}/{today.slice(5, 7)}/{today.slice(0, 4)} — nghỉ ngơi nhé!
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  className="btn-secondary"
+                  onClick={() => handleTabClick('schedule')}
+                  style={{ width: '100%', fontSize: '13px', fontWeight: 700 }}
+                >
+                  <Calendar size={16} style={{ marginRight: '6px' }} />
+                  Xem lịch làm việc
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+        {!isOffice && !isSale && activeTab === 'attendance' && (() => {
           // Ngày VN (UTC+7): cổng CA_1 mở 06:30 VN (= 23:30 UTC hôm trước) nên phải
           // dùng ngày VN — dùng ngày UTC sẽ lookup nhầm ca 00:00–07:00 VN.
           const today = vnTodayStr();
@@ -6212,13 +6327,6 @@ export function App() {
           const shiftStartStr = shiftStartHour !== undefined
             ? `${String(shiftStartHour).padStart(2, '0')}:00`
             : (shiftStart > 0 ? new Date(shiftStart).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : '');
-          // Giờ tan ca + trạng thái nút RA CA (Sale): chỉ mở khi đã hết ca.
-          const shiftEndMs = todayShift?.end_at ? new Date(todayShift.end_at).getTime() : NaN;
-          const endTimeStr = Number.isFinite(shiftEndMs)
-            ? new Date(shiftEndMs).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' })
-            : (shiftBounds(todayShift?.shift_code)[1] || '');
-          const minsToEnd = Number.isFinite(shiftEndMs) ? Math.max(0, Math.ceil((shiftEndMs - Math.max(vnNowMs(), attNow)) / 60000)) : 0;
-          const outOpen = !Number.isFinite(shiftEndMs) || Math.max(vnNowMs(), attNow) >= shiftEndMs;
           // Số phút vào ca trễ (dương) — dùng để cảnh báo NV; HR đã nhận thông báo tự động.
           const lateMin = shiftIn
             ? Math.max(
@@ -6348,8 +6456,8 @@ export function App() {
                       ⚠️ BẠN ĐÃ VÀO CA TRỄ {lateMin} PHÚT so với giờ ca ({shiftStartStr}). Hệ thống đã tự động gửi cảnh báo tới HR và ghi nhận mức phạt trễ theo quy chế.
                     </div>
                   )}
-                  {/* RÀNG BUỘC ĐẶC BIỆT: ÁO HỒNG + BẢNG TÊN (chỉ NV chính thức — thử việc được miễn) */}
-                  {!isProbation && (
+                  {/* RÀNG BUỘC ĐẶC BIỆT: ÁO HỒNG + BẢNG TÊN (chỉ NV chính thức, không áp dụng Sale — thử việc được miễn) */}
+                  {!isProbation && !isSale && (
                   <div style={{
                     backgroundColor: '#FDF2F8',
                     border: '1.5px solid #F472B6',
@@ -6461,79 +6569,7 @@ export function App() {
                   {/* Attendance Action Controller */}
                   {attendanceStep === 'IDLE' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      {isSale ? (
-                        /* ------------------------------------------------------------
-                           SALE: CHỈ 1 NÚT DUY NHẤT (VÀO CA → RA CA).
-                           - Chưa vào ca: nút VÀO CA, mở trước giờ ca 30 phút.
-                           - Đã vào ca: nút chuyển thành RA CA nhưng KHÓA, chỉ bấm
-                             được khi hết ca (end_at). Tự mở đúng giờ nhờ tick 5s.
-                           ------------------------------------------------------------ */
-                        tabAtt.checkedOut ? (
-                          <div style={{
-                            padding: '10px 12px',
-                            backgroundColor: '#ECFDF5',
-                            border: '1.5px solid #10B981',
-                            borderRadius: 'var(--radius-sm)',
-                            fontSize: '13px',
-                            color: '#065F46',
-                            fontWeight: 800,
-                            textAlign: 'center',
-                          }}>
-                            🎉 BẠN ĐÃ HOÀN TẤT CA LÀM VIỆC HÔM NAY! (VÀO CA: {tabAtt.checkInTime} • RA CA: {tabAtt.checkOutTime})
-                          </div>
-                        ) : !tabAtt.checkedIn ? (
-                          <>
-                            <button
-                              className="btn-primary"
-                              disabled={isEarly || shiftLocked}
-                              onClick={() => handleStartAttendance('CHECK_IN')}
-                              style={{
-                                width: '100%',
-                                fontSize: '16px',
-                                fontWeight: 900,
-                                padding: '14px',
-                                opacity: (isEarly || shiftLocked) ? 0.55 : 1,
-                                cursor: (isEarly || shiftLocked) ? 'not-allowed' : 'pointer',
-                              }}
-                            >
-                              <MapPin size={18} style={{ marginRight: '8px' }} />
-                              {isEarly
-                                ? `VÀO CA — MỞ LÚC ${openTimeStr}`
-                                : shiftLocked
-                                  ? 'VÀO CA — CA ĐÃ KHÓA (QUÁ 3 GIỜ)'
-                                  : 'VÀO CA'}
-                            </button>
-                            <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', textAlign: 'center' }}>
-                              Cổng vào ca mở trước giờ ca <strong>{checkInWindowMinutes} phút</strong> • Ca bắt đầu <strong>{shiftStartStr}</strong>
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              className="btn-primary"
-                              disabled={!outOpen}
-                              onClick={() => handleStartAttendance('CHECK_OUT')}
-                              style={{
-                                width: '100%',
-                                fontSize: '16px',
-                                fontWeight: 900,
-                                padding: '14px',
-                                backgroundColor: outOpen ? '#2563EB' : '#94A3B8',
-                                opacity: outOpen ? 1 : 0.65,
-                                cursor: outOpen ? 'pointer' : 'not-allowed',
-                              }}
-                            >
-                              {outOpen
-                                ? 'RA CA'
-                                : `RA CA — MỞ LÚC ${endTimeStr}${minsToEnd > 0 ? ` (còn ${minsToEnd} phút)` : ''}`}
-                            </button>
-                            <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', textAlign: 'center' }}>
-                              ✓ Đã vào ca lúc <strong>{tabAtt.checkInTime}</strong> • Nút <strong>RA CA</strong> chỉ bấm được khi hết ca (<strong>{endTimeStr}</strong>)
-                            </div>
-                          </>
-                        )
-                      ) : (
-                        <>
+                      <>
                           {/* NÚT CHECK-IN ĐẦU CA */}
                           {!tabAtt.checkedIn ? (
                             <button
@@ -6604,7 +6640,6 @@ export function App() {
                             </div>
                           )}
                         </>
-                      )}
                     </div>
                   )}
 
