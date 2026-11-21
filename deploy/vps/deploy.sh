@@ -61,11 +61,6 @@ VITE_API_URL="${API_BASE}" npm run build:admin
 VITE_API_URL="${API_BASE}" npm run build:employee
 VITE_VIOLATION_API_URL="${API_BASE}" npm run build:violation
 
-echo "==> 2b. Build HaraSocial Monitor (chạy dưới /harasocial/)"
-VITE_BASE_PATH="/harasocial/" VITE_API_BASE="/harasocial" \
-  NODE_OPTIONS="--max-old-space-size=1024" \
-  npm run build --workspace=@ubm/harasocial-monitor
-
 echo "==> 3. Publish static cho Nginx"
 sudo mkdir -p /opt/ubm/admin-web /opt/ubm/employee-web /opt/ubm/violation-web
 sudo rm -rf /opt/ubm/admin-web/* /opt/ubm/employee-web/* /opt/ubm/violation-web/*
@@ -116,31 +111,6 @@ if [ -f "deploy/vps/fix-violations-nginx.sh" ]; then
   sudo bash deploy/vps/fix-violations-nginx.sh || true
 fi
 
-echo "==> 5f. HaraSocial Monitor: DB + .env + systemd + Nginx /harasocial/"
-if [ -f "deploy/vps/setup-harasocial.sh" ]; then
-  sudo bash deploy/vps/setup-harasocial.sh
-fi
-if [ -f "deploy/vps/fix-harasocial-nginx.sh" ]; then
-  sudo bash deploy/vps/fix-harasocial-nginx.sh
-fi
-
-echo "==> 5g. Kiem tra suc khoe HaraSocial Monitor..."
-HS_READY=0
-for i in $(seq 1 15); do
-  if curl -fsS http://127.0.0.1:3010/api/health >/dev/null 2>&1; then
-    HS_READY=1
-    break
-  fi
-  sleep 2
-done
-if [ "$HS_READY" -eq 1 ]; then
-  curl -fsS http://127.0.0.1:3010/api/health || true
-  echo
-else
-  echo "[CANH BAO] HaraSocial Monitor chua phan hoi. Xem: journalctl -u harasocial-monitor -n 50 --no-pager"
-  journalctl -u harasocial-monitor -n 30 --no-pager || true
-fi
-
 echo "==> 6. Kiem tra suc khoe (cho backend san sang)..."
 READY=0
 for i in $(seq 1 15); do
@@ -163,5 +133,4 @@ echo "XONG:"
 echo "  NV:        https://umbomilk-nhansu-diemdanh.duckdns.org/"
 echo "  Admin:     https://umbomilk-nhansu-diemdanh.duckdns.org/admin/"
 echo "  Vi pham:   https://umbomilk-nhansu-diemdanh.duckdns.org/violations/"
-echo "  HaraSocial: https://umbomilk-nhansu-diemdanh.duckdns.org/harasocial/"
 echo "  API:       https://umbomilk-nhansu-diemdanh.duckdns.org/api/health"

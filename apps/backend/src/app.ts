@@ -81,7 +81,6 @@ import { AutoScheduleService } from './services/auto-schedule.service.js';
 import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
 import { SaleMonitorService } from './services/sale-monitor.service.js';
-import { HrScheduleWebhookService } from './services/hr-schedule-webhook.service.js';
 import { OfficeService } from './services/office.service.js';
 import { SalaryConfigService } from './services/salary-config.service.js';
 import { canonicalBranchId } from './utils/geo.js';
@@ -423,8 +422,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // Tool giám sát nhân viên Sale (ADMIN): đọc lịch ca + điểm danh và trả snapshot
   // realtime; dữ liệu được đẩy lại ngay qua socket `sale-monitor:updated`.
   const saleMonitorService = new SaleMonitorService(adapter);
-  // Đồng bộ lịch làm việc sang Web App thứ 3 (AIS workspace) sau mỗi lần lưu/sửa ca.
-  const hrScheduleWebhook = new HrScheduleWebhookService(adapter);
   // Nghiệp vụ riêng nhân viên KHỐI VĂN PHÒNG (group = VAN_PHONG): lịch hành chính,
   // nghỉ phép 1 ngày/tháng (duyệt Nhân sự → Kế toán → Giám đốc), điểm danh 08:00–08:30
   // + GPS 300m, bổ sung công 4 phiếu/tháng, lương tạm tính.
@@ -2915,19 +2912,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         role: String(req.user!.role || ''),
       }, decision, req.body?.note);
       broadcastUpdate('office-leaves', { action: 'reviewed', id: leave.leave_id, status: leave.status });
-      // Web App thứ 3: duyệt nghỉ Văn Phòng → không trực ngày đó.
-      if (leave.status === 'APPROVED') {
-        try {
-          const offDate = String((leave as any).leave_date || '').slice(0, 10);
-          const offEmp = await employeesService.getEmployee((leave as any).employee_id).catch(() => null);
-          if (offDate) {
-            void hrScheduleWebhook.notifyDay((leave as any).employee_id, offDate, {
-              active: false,
-              fallbackAssignment: { date: offDate, shift_code: (offEmp as any)?.default_shift_code },
-            });
-          }
-        } catch { /* non-fatal */ }
-      }
       res.json({ success: true, leave });
     } catch (err: any) { officeErr(res, err); }
   });
@@ -5123,8 +5107,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           actorId: req.user!.id,
         });
         broadcastUpdate('schedules', { action: 'create-shift', assignmentId: (result as any)?.assignment_id, shift: result });
-        // Đồng bộ sang Web App thứ 3: ca vừa lưu → gửi lại lịch trong ngày.
-        void hrScheduleWebhook.notifyAssignment(result, true);
         res.json(result);
       } catch (err: any) {
         res.status(400).json({ error: err.message });
@@ -5154,17 +5136,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           employeeId: req.body.employeeId,
           week: (result as any)?.week,
         });
-        // Đồng bộ Web App thứ 3: chọn ngày đại diện (hôm nay nếu thuộc tuần vừa xếp,
-        // ngược lại ngày sớm nhất) để tránh gửi 7 lần cho cùng 1 nhân viên.
-        try {
-          const r: any = result || {};
-          const dates: string[] = [
-            ...(r.created || []), ...(r.kept || []), ...(r.removed || []),
-          ].map((x: any) => String(x?.date || '').slice(0, 10)).filter(Boolean).sort();
-          const today = vnTodayISO();
-          const notifyDate = dates.includes(today) ? today : (dates[0] || String(r?.week?.mon || '').slice(0, 10));
-          if (notifyDate) void hrScheduleWebhook.notifyDay(req.body.employeeId, notifyDate);
-        } catch { /* non-fatal */ }
         res.json(result);
       } catch (err: any) {
         res.status(400).json({ error: err.message });
@@ -5198,8 +5169,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           shiftCode: req.body.shiftCode,
           created: (result as any)?.created || 0,
         });
-        // Đồng bộ Web App thứ 3: ca cố định có hiệu lực từ hôm nay (tự suy trạng thái).
-        void hrScheduleWebhook.notifyDay(req.body.employeeId, vnTodayISO());
         res.json(result);
       } catch (err: any) {
         res.status(400).json({ error: err.message });
@@ -5222,8 +5191,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           employeeId: result.employeeId,
           cancelled: result.cancelled,
         });
-        // Đồng bộ Web App thứ 3: tự suy trạng thái theo ca còn lại trong hôm nay.
-        void hrScheduleWebhook.notifyDay(result.employeeId, vnTodayISO());
         res.json(result);
       } catch (err: any) {
         res.status(400).json({ error: err.message });
@@ -5272,20 +5239,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           req.user!.id
         );
         broadcastUpdate('schedules', { action: 'excel-import', ...report });
-        // Đồng bộ Web App thứ 3: báo từng nhân viên có thay đổi trong file Excel
-        // (chọn hôm nay nếu thuộc tuần, ngược lại Thứ 2 của tuần).
-        try {
-          const week = String((report as any)?.week || '').slice(0, 10);
-          if (week) {
-            const today = vnTodayISO();
-            const dates = Array.from({ length: 7 }, (_, i) => addDaysIso(week, i));
-            const notifyDate = dates.includes(today) ? today : week;
-            for (const row of ((report as any)?.perEmp || [])) {
-              const empId = String(row?.employeeId || '').trim();
-              if (empId) void hrScheduleWebhook.notifyDay(empId, notifyDate);
-            }
-          }
-        } catch { /* non-fatal */ }
         res.json(report);
       } catch (err: any) {
         res.status(400).json({ error: err.message });
@@ -5308,15 +5261,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         if (force && req.user?.role === 'STORE') {
           return res.status(403).json({ error: 'STORE_FORCE_FORBIDDEN: Store không được xóa ca hoàn thành! Báo Admin/HR xử lý.' });
         }
-        // Giữ lại ca trước khi huỷ để báo Web App thứ 3 đúng khung giờ + active=false.
-        const beforeDelete = await adapter.getShiftById(req.params.id).catch(() => null);
         const result = await schedulesService.deleteShift(req.params.id, req.user!.id, req.user?.branchScope, force);
         broadcastUpdate('schedules', { action: 'delete-shift', id: req.params.id, assignmentId: req.params.id });
-        if (beforeDelete) {
-          void hrScheduleWebhook.notifyDay((beforeDelete as any).employee_id, (beforeDelete as any).date, {
-            fallbackAssignment: beforeDelete,
-          });
-        }
         res.json(result);
       } catch (err: any) {
         res.status(400).json({ error: err.message });
@@ -5333,7 +5279,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     validate({ params: idParams, body: shiftUpdateBody }),
     async (req: AuthenticatedRequest, res) => {
       try {
-        const beforeUpdate = await adapter.getShiftById(req.params.id).catch(() => null);
         const result = await schedulesService.updateShift(
           req.params.id,
           {
@@ -5346,20 +5291,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           req.user?.branchScope
         );
         broadcastUpdate('schedules', { action: 'update-shift', id: req.params.id, assignmentId: req.params.id, shift: result });
-        // Đồng bộ Web App thứ 3: ca vừa sửa → gửi lại lịch trong ngày.
-        void hrScheduleWebhook.notifyAssignment(result, true);
-        // Nếu ca bị chuyển sang nhân viên/ngày khác, ngày cũ cũng phải được cập nhật.
-        if (
-          beforeUpdate &&
-          (
-            String((beforeUpdate as any).employee_id) !== String((result as any)?.employee_id) ||
-            String((beforeUpdate as any).date || '').slice(0, 10) !== String((result as any)?.date || '').slice(0, 10)
-          )
-        ) {
-          void hrScheduleWebhook.notifyDay((beforeUpdate as any).employee_id, (beforeUpdate as any).date, {
-            fallbackAssignment: beforeUpdate,
-          });
-        }
         res.json(result);
       } catch (err: any) {
         res.status(400).json({ error: err.message });
@@ -5816,21 +5747,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         target_id: req.params.id,
       });
       broadcastUpdate('leaves', { action: 'review', leave: result.result });
-      // Web App thứ 3: duyệt nghỉ → nhân viên không trực ngày đó (active=false).
-      if (status === 'APPROVED') {
-        try {
-          const leaveDate = String((reviewed as any)?.requested_date || '').slice(0, 10);
-          if (leaveDate) {
-            void hrScheduleWebhook.notifyDay(String(reviewed.employee_id), leaveDate, {
-              active: false,
-              fallbackAssignment: {
-                date: leaveDate,
-                shift_code: (reviewed as any)?.shift_code || (leaveEmp as any)?.default_shift_code,
-              },
-            });
-          }
-        } catch { /* non-fatal */ }
-      }
       broadcastNotification({
         type: 'LEAVE',
         title: result.result.status === 'APPROVED' ? '✅ Đã Phê Duyệt Đơn Nghỉ' : '❌ Đã Từ Chối Đơn Nghỉ',
@@ -7020,17 +6936,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const branchId = req.body.branchId || (emp as any)?.default_branch_id || 'CN130';
       const result = await schedulesService.replaceWeeklyOff({ employeeId, branchId, day1, day2, reason });
       broadcastUpdate('leaves', { action: 'weekly-off-replace', leaves: result.result.leaves });
-      // Web App thứ 3: 2 ngày OFF → active=false cho từng ngày.
-      try {
-        for (const offDate of [day1, day2]) {
-          const d = String(offDate || '').slice(0, 10);
-          if (!d) continue;
-          void hrScheduleWebhook.notifyDay(employeeId, d, {
-            active: false,
-            fallbackAssignment: { date: d, shift_code: (emp as any)?.default_shift_code },
-          });
-        }
-      } catch { /* non-fatal */ }
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });

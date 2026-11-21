@@ -51,12 +51,10 @@ import {
   Banknote,
   Ban,
   Truck,
-  MessageSquareWarning,
 } from 'lucide-react';
 import { RoleViews } from './components/RoleViews';
 import { ChangePasswordView } from './components/ChangePasswordView';
 import { SaleMonitorView } from './components/SaleMonitorView';
-import { HarasocialAlertView } from './components/HarasocialAlertView';
 import { VpsPasswordCard } from './components/VpsPasswordCard';
 import { DirectorPayrollView } from './components/DirectorPayrollView';
 import { InternalWorkflowView } from './components/InternalWorkflowView';
@@ -142,8 +140,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'internal-workflow', label: '8. Yêu cầu công việc nội bộ', icon: Send },
     { id: 'office-approvals', label: '9. Duyệt Văn Phòng', icon: FileText },
     { id: 'ev-transport', label: '10. Vận chuyển sữa (EV)', icon: Truck },
-    { id: 'harasocial-alert', label: '11. HaraSocial Zalo Alert', icon: MessageSquareWarning },
-    { id: 'change-password', label: '12. Đổi mật khẩu', icon: KeyRound },
+    { id: 'change-password', label: '11. Đổi mật khẩu', icon: KeyRound },
   ],
   IT: [
     { id: 'internal-workflow', label: '1. Yêu cầu công việc nội bộ', icon: Send },
@@ -6211,9 +6208,6 @@ export function App() {
 
           {/* TOOL GIÁM SÁT NHÂN VIÊN SALE (ADMIN) — realtime 100% qua Socket.IO */}
           {activeTab === 'sale-monitor' && <SaleMonitorView showToast={stableShowToast} />}
-
-          {/* HARASOCIAL ZALO ALERT (GIÁM ĐỐC) — SaaS độc lập, nhúng/link sang app riêng */}
-          {activeTab === 'harasocial-alert' && <HarasocialAlertView showToast={stableShowToast} />}
 
           {/* GIÁM ĐỐC KÝ PHIẾU LƯƠNG (trước Quản lý chi nhánh) */}
           {activeTab === 'director-payroll' && <DirectorPayrollView currentUser={currentUser} />}
