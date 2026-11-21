@@ -9,8 +9,8 @@ import { parseUniform, uniformRefundMilestoneDate, uniformRefundTotal } from '..
 /**
  * Nhắc việc tự động (chạy mỗi 5 phút từ server.ts):
  *  1. Nhắc check-in (in-app + Zalo) đúng chi nhánh – ca làm cho MỌI khối:
- *     - Cửa hàng / Xưởng: chỉ nhắc NV có ca PUBLISHED hôm đó, mỗi ca 1 lần.
- *     - Sale: chỉ nhắc thông tin ca làm (khối Sale không điểm danh).
+ *     - Cửa hàng / Xưởng / Sale: chỉ nhắc NV có ca PUBLISHED hôm đó, mỗi ca 1 lần.
+ *     - Sale: nhắc điểm danh nhưng không nhắc áo hồng/bảng tên.
  *     - Văn phòng: nhắc theo đúng khung điểm danh hành chính 08:00–08:30.
  *     Khử trùng theo assignment (1 ca = 1 thông báo), lưu latch để restart không gửi lặp.
  *  2. Nhắc HR/Admin (in-app): NV chưa đổi PIN khởi tạo quá 3 ngày.
@@ -285,10 +285,10 @@ export async function sendCheckinReminderForShift(
     summary = `Hôm nay bạn có ${shiftName} tại ${branchName}. Khung điểm danh ${openStr}–${closeStr} (giờ Việt Nam) — mở Cổng Nhân Viên → Điểm danh để VÀO CA đúng giờ.`;
     zaloText = `⏰ [Ụm Bò Milk] Nhắc điểm danh: ${shiftName} tại ${branchName} hôm nay.\n👉 Khung điểm danh ${openStr}–${closeStr} (giờ Việt Nam). Mở Cổng Nhân Viên → Điểm danh để VÀO CA đúng giờ nhé!`;
   } else if (isSale) {
-    // Khối Sale không điểm danh: chỉ nhắc ca làm, KHÔNG nhắc áo hồng/bảng tên/GPS.
-    title = `⏰ Nhắc ca làm ${shiftName} — ${branchName}`;
-    summary = `Hôm nay bạn có ${shiftName} tại ${branchName}, bắt đầu lúc ${startStr}. Mở Cổng Nhân Viên → Ca của tôi để xem thông tin ca làm.`;
-    zaloText = `⏰ [Ụm Bò Milk] Nhắc ca làm: ${shiftName} tại ${branchName} của ${emp.full_name || 'bạn'} bắt đầu lúc ${startStr} hôm nay.\n👉 Mở Cổng Nhân Viên → Ca của tôi để xem thông tin ca làm nhé!`;
+    // Khối Sale có điểm danh nhưng KHÔNG nhắc áo hồng/bảng tên.
+    title = `⏰ Nhắc điểm danh ${shiftName} — ${branchName}`;
+    summary = `Hôm nay bạn có ${shiftName} tại ${branchName}, bắt đầu lúc ${startStr}. Mở Cổng Nhân Viên → Điểm danh để VÀO CA đúng giờ.`;
+    zaloText = `⏰ [Ụm Bò Milk] Nhắc điểm danh: ${shiftName} tại ${branchName} của ${emp.full_name || 'bạn'} bắt đầu lúc ${startStr} hôm nay.\n👉 Mở Cổng Nhân Viên → Điểm danh để VÀO CA đúng giờ nhé!`;
   } else {
     title = `⏰ Nhắc check-in ${shiftName} — ${branchName}`;
     summary = `Hôm nay bạn có ${shiftName} tại ${branchName}, bắt đầu lúc ${startStr}. Mở Cổng Nhân Viên → Điểm danh để check-in đúng ca (chụp ảnh áo hồng + bật GPS).`;
