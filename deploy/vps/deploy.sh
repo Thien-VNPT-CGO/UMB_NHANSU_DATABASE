@@ -18,6 +18,16 @@ git checkout -f vps 2>/dev/null || git checkout -f -B vps origin/vps
 # File untracked nhu apps/backend/.env, data/ van duoc giu nguyen.
 git reset --hard origin/vps
 
+# Tu cap nhat watcher autodeploy neu da cai (thay doi logic retry trong
+# deploy/autodeploy/autodeploy.sh). Ghi file tam roi mv de process dang chay
+# van doc duoc file cu, lan cron sau moi dung ban moi.
+if [ -f /opt/ubm/bin/autodeploy.sh ] && [ -f deploy/autodeploy/autodeploy.sh ]; then
+  if sudo -n install -m 0755 deploy/autodeploy/autodeploy.sh /opt/ubm/bin/.autodeploy.sh.new 2>/dev/null; then
+    sudo -n sed -i "s|^PROD_DIR=.*|PROD_DIR=\"$(pwd)\"|" /opt/ubm/bin/.autodeploy.sh.new 2>/dev/null || true
+    sudo -n mv /opt/ubm/bin/.autodeploy.sh.new /opt/ubm/bin/autodeploy.sh 2>/dev/null || true
+  fi
+fi
+
 echo "==> 2. Build 3 web tro ve API VPS (${API_BASE})"
 export GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
 node apps/backend/scripts/gen-version.cjs 2>/dev/null || true
@@ -54,12 +64,35 @@ fi
 # Dam bao node_modules/.bin luon co mat trong PATH cho moi sub-script
 export PATH="$(pwd)/node_modules/.bin:$PATH"
 
-echo "==> Build @ubm/shared..."
+echo "==> Build @ubm/shared (1 lan)..."
 npm run build:shared
 
-VITE_API_URL="${API_BASE}" npm run build:admin
-VITE_API_URL="${API_BASE}" npm run build:employee
-VITE_VIOLATION_API_URL="${API_BASE}" npm run build:violation
+# Build backend SONG SONG voi 3 web. `tsc` backend ~100 giay tren VPS 2 vCPU;
+# chay cung luc voi Vite se giau duoc gan 1 phut. Neu script loi, trap kill
+# process con de khong bo lai build treo.
+BACKEND_BUILD_PID=""
+cleanup_bg() {
+  if [ -n "${BACKEND_BUILD_PID:-}" ]; then
+    kill "$BACKEND_BUILD_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup_bg EXIT
+echo "==> Build backend (song song)..."
+npm run build:backend &
+BACKEND_BUILD_PID=$!
+
+# Sinh app-version 1 lan, roi build voi --ignore-scripts de KHONG chay lai
+# prebuild cua admin/employee — prebuild cu build lai shared 2 lan nua, rat
+# cham tren VPS 2 vCPU (~15-22 giay moi lan).
+node apps/admin-web/scripts/gen-version.cjs
+node apps/employee-web/scripts/gen-version.cjs
+
+VITE_API_URL="${API_BASE}" npm run build --workspace=@ubm/admin-web --ignore-scripts
+VITE_API_URL="${API_BASE}" npm run build --workspace=@ubm/employee-web --ignore-scripts
+VITE_VIOLATION_API_URL="${API_BASE}" npm run build --workspace=@ubm/violation-web --ignore-scripts
+
+wait "$BACKEND_BUILD_PID"
+BACKEND_BUILD_PID=""
 
 echo "==> 3. Publish static cho Nginx"
 sudo mkdir -p /opt/ubm/admin-web /opt/ubm/employee-web /opt/ubm/violation-web
@@ -68,23 +101,45 @@ sudo cp -r apps/admin-web/dist/* /opt/ubm/admin-web/
 sudo cp -r apps/employee-web/dist/* /opt/ubm/employee-web/
 sudo cp -r apps/violation-web/dist/* /opt/ubm/violation-web/
 
-echo "==> 4. Build + chay backend (Docker)"
+echo "==> 4. Chuan bi backend (Docker)"
 test -f apps/backend/.env || { echo "THIEU apps/backend/.env (copy tu deploy/vps/.env.vps.example)"; exit 1; }
 # Tu dong chuan hoa GOOGLE_SERVICE_ACCOUNT_JSON ve 1 dong tranh loi Docker Compose
 if [ -f "deploy/vps/sanitize-env.cjs" ]; then
   node deploy/vps/sanitize-env.cjs || true
 fi
 
-echo "==> 4b. Chuan bi volume du lieu ben vung (snapshot + journal)"
+echo "==> 4a. Chuan bi volume du lieu ben vung (snapshot + journal)"
 mkdir -p data
 # Container backend chay user uid 1000; bind mount phai ghi duoc.
 sudo chown -R 1000:1000 data 2>/dev/null || chown -R 1000:1000 data 2>/dev/null || true
 export GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
-docker compose up --build -d
 
-echo "==> 4c. Don dep Docker image cu va build cache de giai phong o cung"
+# Build image TRUOC: neu build loi thi container cu van dang chay binh thuong.
+# USE_HOST_DIST=1: dùng dist vừa build trên host, Docker chỉ đóng gói.
+echo "==> 4b. Build Docker image backend (dung dist da build tren host)"
+export USE_HOST_DIST=1
+docker compose build backend
+
+# Xoa container cu truoc khi tao moi de tranh loi da gap ngay 20/11:
+#   Conflict. The container name "..._ubm-vps-backend-1" is already in use
+# (container rename tam con sot lai tu lan recreate bi ngat).
+echo "==> 4c. Recreate backend container"
+COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')}"
+if [ -n "${COMPOSE_PROJECT:-}" ]; then
+  for c in $(docker ps -aq --filter "name=_${COMPOSE_PROJECT}-backend-1" 2>/dev/null || true); do
+    docker rm -f "$c" >/dev/null 2>&1 || true
+  done
+fi
+docker compose rm -sf backend >/dev/null 2>&1 \
+  || docker rm -f "$(docker compose ps -q backend)" >/dev/null 2>&1 \
+  || true
+docker compose up -d --remove-orphans
+
+echo "==> 4d. Don dep Docker image cu va build cache de giai phong o cung"
 docker image prune -f >/dev/null 2>&1 || true
-docker builder prune -f --keep-storage 1GB >/dev/null 2>&1 || true
+# Giu 5GB cache (truoc chi 1GB, sat nguong nen de bi xoa layer npm ci/build
+# -> lan sau build nguoi +5 phut). O dia VPS con 31GB nen 5GB la an toan.
+docker builder prune -f --keep-storage 5GB >/dev/null 2>&1 || true
 
 echo "==> 5. Dam bao Nginx proxy Socket.IO"
 if [ -f "deploy/vps/fix-socketio-nginx.sh" ]; then

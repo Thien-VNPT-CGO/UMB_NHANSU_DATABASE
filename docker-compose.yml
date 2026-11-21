@@ -58,6 +58,10 @@ services:
     build:
       context: .
       dockerfile: apps/backend/Dockerfile
+      args:
+        # deploy.sh đặt =1 sau khi đã build sẵn trên host; mặc định 0 để
+        # `docker compose up --build` / CI vẫn build đầy đủ trong image.
+        USE_HOST_DIST: ${USE_HOST_DIST:-0}
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,6 +75,10 @@ services:
     environment:
       PORT: ${BACKEND_PORT:-4005}
       NODE_ENV: production
+      # VPS 3.8GB RAM: nâng heap để tránh OOM khi tính lương/đồng bộ Sheets.
+      # Trước đây fix này chỉ nằm trong docker-compose.override.yml (untracked)
+      # nên rất dễ mất khi clone lại repo.
+      NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=3072}
       GIT_COMMIT: ${GIT_COMMIT:-}
       # PostgreSQL là nguồn sự thật. DATABASE_URL lấy từ apps/backend/.env
       # (ví dụ: postgresql://ubm:matkhau@postgres:5432/ubm_hr).

@@ -14,11 +14,26 @@ COPY apps/employee-web/package.json apps/employee-web/
 COPY apps/violation-web/package.json apps/violation-web/
 RUN npm ci
 
-# ---------- build: build toàn bộ workspaces ----------
+# ---------- build: dùng dist host (deploy VPS) hoặc build toàn bộ (CI) ----------
 FROM deps AS build
+ARG USE_HOST_DIST=0
 WORKDIR /app
 COPY . .
-RUN npm run build
+# Deploy VPS: deploy.sh đã build shared + backend + 3 web trên host và truyền
+# USE_HOST_DIST=1, nên ở đây chỉ kiểm tra đủ artifact rồi đóng gói — KHÔNG
+# build lại (trước đây build trùng tốn ~3-5 phút mỗi lần trên VPS 2 vCPU).
+# CI/máy mới: mặc định 0 -> build toàn bộ như cũ.
+RUN if [ "$USE_HOST_DIST" = "1" ]; then \
+      echo "==> Dung dist build san tu host (bo qua build trong Docker)"; \
+      test -f packages/shared/dist/index.js; \
+      test -f apps/backend/dist/server.js; \
+      test -f apps/admin-web/dist/index.html; \
+      test -f apps/employee-web/dist/index.html; \
+      test -f apps/violation-web/dist/index.html; \
+    else \
+      echo "==> Build toan bo workspace trong Docker"; \
+      npm run build; \
+    fi
 
 # ---------- prod: chỉ prod deps + output đã build ----------
 FROM node:${NODE_VERSION}-alpine AS prod
@@ -45,7 +60,12 @@ COPY --from=build /app/apps/admin-web/dist ./apps/admin-web/dist
 COPY --from=build /app/apps/employee-web/dist ./apps/employee-web/dist
 COPY --from=build /app/apps/violation-web/dist ./apps/violation-web/dist
 
-RUN chown -R node:node /app
+# KHÔNG chown đệ quy toàn /app: node_modules ~450MB chỉ cần quyền đọc, còn
+# `chown -R` từng tốn ~55-63 giây mỗi lần deploy. Chỉ cấp quyền ghi cho đúng
+# các thư mục runtime cần ghi (session Zalo, file tạm); /app cấp quyền ghi để
+# backend tạo được file ở thư mục làm việc.
+RUN chown node:node /app \
+ && chown -R node:node /app/apps/backend /app/packages/shared
 USER node
 
 EXPOSE 4005

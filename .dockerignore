@@ -5,8 +5,11 @@ yarn-debug.log*
 yarn-error.log*
 *.log
 
-# Build output (được build lại trong image)
-dist/
+# Build output.
+# KHÔNG loại dist của shared/backend/3 web: deploy VPS build sẵn trên host rồi
+# truyền USE_HOST_DIST=1 để Docker chỉ đóng gói (tiết kiệm ~2-3 phút/lần).
+# Khi build Docker độc lập (CI/máy mới), USE_HOST_DIST=0 -> Docker tự build lại.
+apps/*/dist-demo/
 build/
 *.tsbuildinfo
 
