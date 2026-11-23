@@ -16,6 +16,9 @@ import { Server } from 'socket.io';
  * 5. Ưu tiên người ít ngày công tháng (tháng dương lịch chứa ngày xếp) để đảm bảo
  *    mỗi NV đủ 10–12 ngày làm việc/tháng (sàn tối thiểu 10, mục tiêu 12),
  *    rồi đến người ít ca trong tuần (chia 3/4).
+ * 5b. SÀN TUẦN: mỗi NV chính thức ít nhất {@link MIN_WEEKLY_SHIFTS} ca/tuần.
+ *    Nếu số chỗ ca (7 ngày) ít hơn số NV cùng ca, BOT xếp thêm người thứ 2 vào
+ *    cùng ca/ngày (tối đa 2 người/ca/ngày) — không bao giờ đụng ngày OFF.
  * 6. NV THỬ VIỆC độc lập hoàn toàn: ca thử việc (tự đăng ký 5 OFF / tự thêm ca)
  *    KHÔNG chiếm slot của NV chính thức — BOT xếp lịch chính thức như thể các
  *    ca thử việc không tồn tại (không ảnh hưởng lẫn nhau).
@@ -69,6 +72,14 @@ const ACTIVE_SHIFTS: ShiftCode[] = ['CA_1', 'CA_2', 'CA_3', 'CA_4'];
 export const MIN_MONTHLY_DAYS = 10;
 /** Mục tiêu ngày công tháng (đủ 10–12 ngày): dưới 12 vẫn được ưu tiên bù sau khi mọi người qua sàn 10. */
 export const TARGET_MONTHLY_DAYS = 12;
+/**
+ * Sàn ca/tuần: BOT đảm bảo mỗi NV chính thức có ÍT NHẤT 3 ca trong tuần.
+ * Khi số chỗ ca ít hơn số NV cùng ca, cho phép xếp thêm người thứ 2 vào cùng
+ * ca/ngày (tối đa {@link MAX_STAFF_PER_SHIFT_DAY}) để không ai dưới sàn.
+ */
+export const MIN_WEEKLY_SHIFTS = 3;
+/** Trần số người BOT được xếp vào CÙNG 1 ca trong ngày khi bù sàn tuần. */
+export const MAX_STAFF_PER_SHIFT_DAY = 2;
 
 /**
  * Chuẩn hóa mã chi nhánh (Sheets có thể ghi CN1/CN2/CN3/CN4 trong khi
@@ -300,6 +311,91 @@ export async function buildAutoPlan(
   }
   }
 
+  // --- SÀN TUẦN (quy tắc 5b): mỗi NV chính thức ÍT NHẤT MIN_WEEKLY_SHIFTS ca ---
+  // BOT lấp 1 người/ca/ngày nên khi cùng ca đông người, có NV chỉ được 1–2 ca.
+  // Bù bằng cách xếp thêm người thứ 2 vào ca/ngày còn trống (tối đa
+  // MAX_STAFF_PER_SHIFT_DAY người/ca/ngày), tuyệt đối không đụng ngày OFF.
+  const staffPerShiftDay = new Map<string, number>();
+  const bumpStaff = (branch: string, shift: string, date: string) => {
+    const k = `${branch}|${shift}|${date}`;
+    staffPerShiftDay.set(k, (staffPerShiftDay.get(k) || 0) + 1);
+  };
+  for (const s of existing || []) {
+    if (String((s as any).status || '').toUpperCase() === 'CANCELLED') continue;
+    if (probationIds.has(String((s as any).employee_id))) continue;
+    const d = String((s as any).date || '').slice(0, 10);
+    if (!d || d < weekMon || d > weekSun) continue;
+    bumpStaff(canonicalBranch((s as any).branch_id), String((s as any).shift_code || '').toUpperCase(), d);
+  }
+  for (const it of items) {
+    bumpStaff(canonicalBranch(it.branch_id), it.shift_code, it.date);
+  }
+
+  const inScope = (e: any) => branchId === '*' || sameBranch(e.default_branch_id, branchId);
+  const shortList = schedulable
+    .filter(inScope)
+    .filter((e: any) => (weeklyCount.get(String(e.employee_id)) || 0) < MIN_WEEKLY_SHIFTS)
+    .sort(
+      (a: any, b: any) =>
+        (weeklyCount.get(String(a.employee_id)) || 0) - (weeklyCount.get(String(b.employee_id)) || 0) ||
+        String(a.employee_id).localeCompare(String(b.employee_id))
+    );
+
+  for (const e of shortList) {
+    const empId = String(e.employee_id);
+    const empBranch = canonicalBranch((e as any).default_branch_id);
+    const shift = String((e as any).default_shift_code || '').toUpperCase() as ShiftCode;
+    if (!empBranch || !shift) continue;
+    let need = MIN_WEEKLY_SHIFTS - (weeklyCount.get(empId) || 0);
+    if (need <= 0) continue;
+    const workedDates = dates.filter((d) => empDay.has(`${empId}|${d}`));
+    const gapOf = (d: string) =>
+      workedDates.length === 0
+        ? 99
+        : Math.min(
+            ...workedDates.map(
+              (w) => Math.abs(Date.parse(`${w}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86_400_000
+            )
+          );
+    const candidates = dates
+      .filter((d) => !offByEmp.get(empId)?.has(d))
+      .filter((d) => !empDay.has(`${empId}|${d}`))
+      .filter(
+        (d) => (staffPerShiftDay.get(`${empBranch}|${shift}|${d}`) || 0) < MAX_STAFF_PER_SHIFT_DAY
+      )
+      .sort((a, b) => {
+        const ca = staffPerShiftDay.get(`${empBranch}|${shift}|${a}`) || 0;
+        const cb = staffPerShiftDay.get(`${empBranch}|${shift}|${b}`) || 0;
+        if (ca !== cb) return ca - cb; // ưu tiên ngày ca còn ít người
+        const ga = gapOf(a);
+        const gb = gapOf(b);
+        if (ga !== gb) return gb - ga; // rải đều, tránh dồn sát ngày đã làm
+        return a.localeCompare(b);
+      });
+    for (const date of candidates) {
+      if (need <= 0) break;
+      items.push({
+        employee_id: empId,
+        employee_name: (e as any).full_name || empId,
+        branch_id: empBranch,
+        shift_code: shift,
+        date,
+      });
+      empDay.add(`${empId}|${date}`);
+      weeklyCount.set(empId, (weeklyCount.get(empId) || 0) + 1);
+      bumpMonth(empId, date);
+      bumpStaff(empBranch, shift, date);
+      need -= 1;
+    }
+    const have = weeklyCount.get(empId) || 0;
+    if (have < MIN_WEEKLY_SHIFTS) {
+      warnings.push({
+        employee_id: empId,
+        message: `${(e as any).full_name || empId} tuần này chỉ xếp được ${have} ca (< ${MIN_WEEKLY_SHIFTS} tối thiểu) vì trùng ngày OFF/đã có ca — HR xếp bù thêm.`,
+      });
+    }
+  }
+
   const statMonthKey = weekMon.slice(0, 7);
   const statMonthKey2 = weekSun.slice(0, 7) !== statMonthKey ? weekSun.slice(0, 7) : undefined;
 
@@ -391,27 +487,34 @@ export class AutoScheduleService {
       entityId: `AUTO_${branchId}_${plan.weekMon}`,
       actorId,
       execute: async () => {
-        const out: any[] = [];
         const emps = (await this.repo.listEmployees().catch(() => [])) as any[];
         const groupById = new Map<string, string>();
         for (const e of emps || []) groupById.set(String((e as any)?.employee_id || ''), String((e as any)?.group || ''));
-        for (const it of plan.items) {
+        const payloads = plan.items.map((it) => {
           const template = resolveShiftTemplate(it.shift_code, groupById.get(String(it.employee_id))) || ALL_SHIFT_TEMPLATES[it.shift_code];
           const sh = String(template.start_hour).padStart(2, '0');
           const eh = String(template.end_hour).padStart(2, '0');
-          out.push(
-            await this.repo.createShiftAssignment({
-              assignment_id: `SHIFT_AUTO_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
-              employee_id: it.employee_id,
-              branch_id: it.branch_id,
-              shift_code: it.shift_code,
-              date: it.date,
-              start_at: `${it.date}T${sh}:00:00+07:00`,
-              end_at: `${it.date}T${eh}:00:00+07:00`,
-              status: 'DRAFT',
-              schedule_version: 1,
-            })
-          );
+          return {
+            assignment_id: `SHIFT_AUTO_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
+            employee_id: it.employee_id,
+            branch_id: it.branch_id,
+            shift_code: it.shift_code,
+            date: it.date,
+            start_at: `${it.date}T${sh}:00:00+07:00`,
+            end_at: `${it.date}T${eh}:00:00+07:00`,
+            status: 'DRAFT' as const,
+            schedule_version: 1,
+          };
+        });
+        // Tạo 1 LƯỢT (bulk): trước đây mỗi ca gọi createShiftAssignment → mỗi ca
+        // đẩy cả tab PHAN_CONG_CA lên Google Sheets (N lần × ~1s), publish rất chậm.
+        const bulk = (this.repo as any).createShiftAssignmentsBulk;
+        if (typeof bulk === 'function') {
+          return (await bulk.call(this.repo, payloads)) || [];
+        }
+        const out: any[] = [];
+        for (const row of payloads) {
+          out.push(await this.repo.createShiftAssignment(row));
         }
         return out;
       },

@@ -68,17 +68,21 @@ test('khung đã qua giờ trong ngày hôm nay bị khóa', () => {
 });
 
 test('validateProposalSlot chấp nhận ngày tương lai + khung hợp lệ', () => {
-  const r = validateProposalSlot('2026-11-20', '15:30', [], undefined, NOW);
+  // Ngày tương lai động: validateProposalSlot so với hôm nay thực tế (vnToday),
+  // nên hard-code ngày sẽ hỏng test khi qua ngày.
+  const future = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+  const r = validateProposalSlot(future, '15:30', [], undefined, NOW);
   assert.equal(r.ok, true);
-  if (r.ok) assert.deepEqual(r.value, { date: '2026-11-20', time: '15:30' });
+  if (r.ok) assert.deepEqual(r.value, { date: future, time: '15:30' });
 });
 
 test('validateProposalSlot từ chối ngoài khung làm việc / ngày đã qua / khung bị chiếm', () => {
-  assert.equal(validateProposalSlot('2026-11-20', '12:00', [], undefined, NOW).ok, false);
-  assert.equal(validateProposalSlot('2026-11-20', '17:00', [], undefined, NOW).ok, false);
+  const future = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+  assert.equal(validateProposalSlot(future, '12:00', [], undefined, NOW).ok, false);
+  assert.equal(validateProposalSlot(future, '17:00', [], undefined, NOW).ok, false);
   assert.equal(validateProposalSlot('2026-11-01', '09:00', [], undefined, NOW).ok, false);
-  const taken = validateProposalSlot('2026-11-20', '09:00', [
-    { submission_id: 'CAND_0003', full_name: 'Khác', status: 'CONFIRMED', interview_date: '2026-11-20', interview_time_slot: '09:00' },
+  const taken = validateProposalSlot(future, '09:00', [
+    { submission_id: 'CAND_0003', full_name: 'Khác', status: 'CONFIRMED', interview_date: future, interview_time_slot: '09:00' },
   ], 'CAND_9999', NOW);
   assert.equal(taken.ok, false);
   if (!taken.ok) assert.match(taken.error, /đã có ứng viên khác/);

@@ -5445,13 +5445,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           broadcastUpdate('schedules', { action: 'auto-schedule', branchId, week: req.params.week, created: autoSummary.created });
         }
         const result = await schedulesService.publishWeekSchedule(branchId, req.params.week, req.user!.id);
+        // Hàng đợi single-writer trả { operationId, result } → bóc payload thật.
+        const published = (result as any)?.result ?? result;
         broadcastUpdate('schedules', { action: 'publish', branchId, week: req.params.week });
         // HR publish lịch tuần → báo inbox từng NV có ca trong tuần để cổng NV
         // tự mở lịch tuần đó cho NV xem (kể cả NV mở app sau, không realtime).
         // Chỉ báo khi có ca vừa được duyệt (count > 0) để bấm publish lặp không spam.
         try {
-          const empIds = ((result as any)?.employeeIds || []).filter((id: any) => id && id !== 'ALL');
-          if (((result as any)?.count || 0) > 0 && empIds.length > 0) {
+          const empIds = ((published as any)?.employeeIds || []).filter((id: any) => id && id !== 'ALL');
+          if (((published as any)?.count || 0) > 0 && empIds.length > 0) {
             const wk = weekRangeOf(String(req.params.week || '').slice(0, 10));
             const fmt = (s: string) => s.split('-').reverse().join('/');
             await notificationsService.sendNotification({
@@ -5468,19 +5470,22 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         // Ghi Sheet ĐỒNG BỘ để PUBLISHED bền vững ngay (restart sau publish
         // không rớt về DRAFT khiến NV mất quyền đổi ca oan). Rớt thì báo cờ để
         // HR bấm đồng bộ lại — không chặn response (bộ nhớ đã đúng).
-        let sheetPersisted = false;
-        try {
-          const syncSvc = (adapter as any)?.syncService;
-          if (syncSvc?.pushShiftsTab) {
-            sheetPersisted = await Promise.race([
-              syncSvc.pushShiftsTab(adapter).then(() => true).catch(() => false),
-              new Promise<false>(r => setTimeout(() => r(false), 15000)),
-            ]);
-          } else {
-            sheetPersisted = true;
-          }
-        } catch { sheetPersisted = false; }
-        res.json({ ...(result as any), auto: autoSummary, sheetPersisted });
+        // LƯU Ý HIỆU NĂNG: publishWeekSchedule dùng bulk publish — adapter
+        // google-sheets đã đẩy tab PHAN_CONG_CA ĐỒNG BỘ trong lượt bulk đó.
+        // Push thêm lần nữa chỉ tốn 1 write cả tab + vài giây chờ vô ích.
+        let sheetPersisted = true;
+        if (!(published as any)?.bulkSheetPush) {
+          try {
+            const syncSvc = (adapter as any)?.syncService;
+            if (syncSvc?.pushShiftsTab) {
+              sheetPersisted = await Promise.race([
+                syncSvc.pushShiftsTab(adapter).then(() => true).catch(() => false),
+                new Promise<false>(r => setTimeout(() => r(false), 15000)),
+              ]);
+            }
+          } catch { sheetPersisted = false; }
+        }
+        res.json({ ...(published as any), auto: autoSummary, sheetPersisted });
       } catch (err: any) {
         res.status(400).json({ error: err.message });
       }

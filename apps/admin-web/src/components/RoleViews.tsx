@@ -1160,7 +1160,7 @@ export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
     }
   };
   const doPublish = async () => {
-    if (!window.confirm(`BOT sẽ tự xếp ca chỗ trống tuần ${weekMon} → ${weekSun} (trừ ngày OFF đã đăng ký), giữ ca xếp tay, rồi PUBLISHED toàn chi nhánh ${branch}?\nTiếp tục?`)) return;
+    if (!window.confirm(`BOT sẽ tự xếp ca chỗ trống tuần ${weekMon} → ${weekSun} (trừ ngày OFF đã đăng ký, đảm bảo mỗi NV ít nhất 3 ca/tuần), giữ ca xếp tay, rồi PUBLISHED toàn chi nhánh ${branch}?\nTiếp tục?`)) return;
     setBusy(true);
     try {
       const res = await apiRequest(`/schedules/${weekMon}/publish`, {
@@ -1170,11 +1170,12 @@ export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
       const autoCount = res?.auto?.created ?? 0;
       const warns: string[] = (res?.auto?.warnings || []).map((w: any) => w.message || '').filter(Boolean);
       const warnText = warns.length > 0 ? ` Cảnh báo (${warns.length}): ${warns.slice(0, 3).join(' | ')}${warns.length > 3 ? ' | ...' : ''}` : '';
+      const skipped = Array.isArray(res?.skippedOff) ? res.skippedOff.length : 0;
+      const offText = skipped > 0 ? ` Đã hủy ${skipped} ca nháp trùng ngày OFF đã đăng ký (OFF được giữ nguyên).` : '';
       const persistWarn = res?.sheetPersisted === false ? ' ⚠️ Chưa ghi được lên Google Sheets — restart server có thể rớt về nháp, bấm Đồng bộ lại!' : '';
-      showToast(`Đã PUBLISH tuần ${weekMon}: BOT xếp thêm ${autoCount} ca, duyệt ${res?.count ?? 0} ca (DRAFT→PUBLISHED).${warnText}${persistWarn}`);
+      showToast(`Đã PUBLISH tuần ${weekMon}: BOT xếp thêm ${autoCount} ca, duyệt ${res?.count ?? 0} ca (DRAFT→PUBLISHED).${offText}${warnText}${persistWarn}`);
       onClose();
       if (onRefreshData) await onRefreshData();
-      if (onSyncSheets) await onSyncSheets();
     } catch (e: any) {
       showToast(e?.message || 'Lỗi khi phát hành lịch');
     } finally {
@@ -1194,7 +1195,7 @@ export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
           <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={onClose}>Đóng</button>
         </div>
         <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.6 }}>
-          Tuần <strong>{weekMon} → {weekSun}</strong> • BOT trừ ngày OFF đã đăng ký, cùng chi nhánh + cùng ca không trực trùng ngày, giữ ca xếp tay, ưu tiên bù đủ 12 ngày công/tháng.
+          Tuần <strong>{weekMon} → {weekSun}</strong> • BOT trừ ngày OFF đã đăng ký, mỗi NV ít nhất 3 ca/tuần (cho phép 2 người/ca/ngày khi thiếu chỗ), giữ ca xếp tay, ưu tiên bù đủ 12 ngày công/tháng. Ca nháp trùng ngày OFF sẽ tự hủy — OFF luôn được giữ.
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '12px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '12px', fontWeight: 700 }}>Chi nhánh:</span>

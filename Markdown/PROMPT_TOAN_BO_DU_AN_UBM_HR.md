@@ -413,7 +413,8 @@ Tắt êm (SIGTERM/SIGINT): `gracefulShutdown` — `flushSheetsWrites(20s)`, `se
 
 ## 5.6. Nghiệp vụ chi tiết quan trọng
 
-- **BOT xếp lịch (4 quy tắc):** (1) ưu tiên ca cố định của NV; (2) trừ 2 OFF đã đăng ký + `DOT_XUAT` APPROVED; (3) 2 NV cùng chi nhánh cùng ca không trực cùng ngày; (4) người ít ngày công tháng được ưu tiên — mục tiêu `MIN_MONTHLY_DAYS=10`, `TARGET_MONTHLY_DAYS=12`. NV thử việc có lịch độc lập, không chiếm slot NV chính thức.
+- **BOT xếp lịch (5 quy tắc):** (1) ưu tiên ca cố định của NV; (2) trừ 2 OFF đã đăng ký + `DOT_XUAT` APPROVED; (3) 2 NV cùng chi nhánh cùng ca không trực cùng ngày; (4) người ít ngày công tháng được ưu tiên — mục tiêu `MIN_MONTHLY_DAYS=10`, `TARGET_MONTHLY_DAYS=12`; (5) **sàn tuần `MIN_WEEKLY_SHIFTS=3`**: mỗi NV chính thức ít nhất 3 ca/tuần — khi số chỗ ca ít hơn số NV cùng ca, BOT xếp thêm người thứ 2 vào cùng ca/ngày (tối đa `MAX_STAFF_PER_SHIFT_DAY=2`), không bao giờ đụng ngày OFF. NV thử việc có lịch độc lập, không chiếm slot NV chính thức.
+- **PUBLISH lịch tuần:** duyệt ca nháp hàng loạt (bulk `publishShiftAssignments` + 1 lượt push Sheet, không update từng ca); **OFF được ưu tiên** — ca nháp rơi đúng ngày NV đã đăng ký OFF sẽ bị hủy (CANCELLED), OFF giữ nguyên, HR thấy số ca đã hủy trong toast.
 - **Tính lương:** mỗi ca PUBLISHED/COMPLETED tính theo giai đoạn ngày đó (`rateOnDate` — trước `official_date` giá TV); phạt trễ trừ vào; công thức Excel từ `CONG_THUC_LUONG` + `DULIEU_LUONG_KY`; tổng hợp **Tổng Lương / Tổng / Thực Lãnh**; auto-draft mùng 1 hàng tháng.
 - **Điểm tích lũy:** hoàn thành ca +2 điểm; `BU_CONG_NGAY` tiêu 5 điểm; lưu cột `Điểm Tích Lũy/Điểm Đã Dùng` trên `NHAN_VIEN_MASTER`.
 - **VietQR/QR ngân hàng:** decode QR VietQR (EMVCo TLV) phía server hỗ trợ xác thực (`parseVietQRPartial`), tick 1h dọn QR hỏng/label sai.

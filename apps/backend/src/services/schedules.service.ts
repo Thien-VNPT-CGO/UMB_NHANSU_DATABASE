@@ -1386,34 +1386,81 @@ export class SchedulesService {
             }
           }
         } catch { /* bỏ qua */ }
-        const updatedShifts: ShiftAssignment[] = [];
+        // Ưu tiên OFF: ngày NV đã đăng ký OFF (đã duyệt, hoặc HANG_TUAN đang chờ)
+        // thì ca nháp trùng ngày đó KHÔNG được publish — giữ nguyên OFF của NV.
+        // Trước đây publish còn tự HỦY OFF để biến thành ca làm việc, vừa sai
+        // nghiệp vụ vừa tốn 1 lượt đọc + ghi đơn nghỉ cho MỖI ca (rất chậm).
+        const offKeys = new Set<string>();
+        try {
+          const leaves = await this.repo.listLeaveRequests().catch(() => []);
+          for (const l of leaves || []) {
+            const st = String((l as any)?.status || '').trim().toUpperCase();
+            const isWeekly = String((l as any)?.leave_type || '').trim().toUpperCase() === 'HANG_TUAN';
+            if (st !== 'APPROVED' && !(st === 'PENDING' && isWeekly)) continue;
+            const d = normSheetDate((l as any)?.requested_date) || String((l as any)?.requested_date || '').slice(0, 10);
+            if (!d) continue;
+            offKeys.add(`${String((l as any)?.employee_id || '').trim()}|${d}`);
+          }
+        } catch { /* không đọc được OFF: vẫn publish bình thường */ }
 
+        const toPublish: ShiftAssignment[] = [];
+        const skippedOff: Array<{ assignment_id: string; employee_id: string; date: string; shift_code: string }> = [];
         for (const shift of shifts) {
           const shiftStatus = String((shift as any).status || '').trim().toUpperCase();
-          if (shiftStatus === 'DRAFT' && !lockedIds.has(String((shift as any).employee_id))) {
-            const updated = await this.repo.updateShiftAssignment(shift.assignment_id, {
-              status: 'PUBLISHED',
-              schedule_version: shift.schedule_version + 1,
+          if (shiftStatus !== 'DRAFT') continue;
+          const empId = String((shift as any).employee_id || '');
+          if (lockedIds.has(empId)) continue;
+          const day = normSheetDate((shift as any).date) || String((shift as any).date || '').slice(0, 10);
+          if (day && offKeys.has(`${empId.trim()}|${day}`)) {
+            skippedOff.push({
+              assignment_id: String((shift as any).assignment_id || ''),
+              employee_id: empId,
+              date: day,
+              shift_code: String((shift as any).shift_code || ''),
             });
-            updatedShifts.push(updated);
-            // Ca được chốt publish mà trùng ngày OFF đã duyệt → ngày OFF đó lập tức
-            // chuyển thành ca làm việc (tự hủy OFF, tránh cảnh báo ca trùng ngày OFF).
-            try {
-              const notes = await this.cancelReceiverLeavesOnWorkDay(
-                String((shift as any).employee_id || ''),
-                String((shift as any).date || '').slice(0, 10));
-              for (const n of notes) {
-                if (this.io) {
-                  this.io.to(`user:${String((shift as any).employee_id || '')}`).emit('system:notification', {
-                    type: 'SYSTEM',
-                    origin: 'ADMIN',
-                    title: '📅 Ngày OFF đã chuyển thành ca làm việc',
-                    message: `${n} (Lịch tuần đã được phát hành).`,
-                    timestamp: new Date().toISOString(),
-                  });
-                }
-              }
-            } catch { /* best-effort: ca vẫn publish, OFF xử lý sau */ }
+            continue;
+          }
+          toPublish.push(shift);
+        }
+
+        // Duyệt hàng loạt trong MỘT lượt ghi. Trước đây mỗi ca gọi
+        // updateShiftAssignment (adapter đẩy nguyên tab PHAN_CONG_CA lên Sheets,
+        // chờ tới 15s/lần) + hủy OFF riêng từng ca → publish hàng chục ca mất
+        // vài phút. Bulk: 1 lượt bộ nhớ + 1 lượt push Sheet.
+        let count = 0;
+        // Adapter có bulk tự đẩy Sheet ĐỒNG BỘ trong lượt bulk (google-sheets)
+        // và tự snapshot (postgres) — route không cần push lần 2 (mỗi lần là
+        // 1 write cả tab, lấp quota + chậm).
+        const bulkPublish = (this.repo as any).publishShiftAssignments;
+        const bulkSheetPush = typeof bulkPublish === 'function';
+        const ids = toPublish.map((s) => String((s as any).assignment_id || '')).filter(Boolean);
+        if (ids.length > 0) {
+          if (bulkSheetPush) {
+            count = Number(await bulkPublish.call(this.repo, ids)) || 0;
+          } else {
+            for (const shift of toPublish) {
+              try {
+                await this.repo.updateShiftAssignment(shift.assignment_id, {
+                  status: 'PUBLISHED',
+                  schedule_version: Number((shift as any).schedule_version || 1) + 1,
+                });
+                count += 1;
+              } catch { /* ca lỗi: các ca khác vẫn publish */ }
+            }
+          }
+        }
+
+        // Ca nháp trùng ngày OFF đã đăng ký là dữ liệu cũ (OFF được ưu tiên):
+        // hủy luôn để cổng NV không hiện "ca nháp" chen vào ngày nghỉ.
+        const cancelledOffIds = skippedOff.map((x) => x.assignment_id).filter(Boolean);
+        if (cancelledOffIds.length > 0) {
+          const cancelBulk = (this.repo as any).cancelShiftAssignmentsBulk;
+          if (typeof cancelBulk === 'function') {
+            await cancelBulk.call(this.repo, cancelledOffIds).catch(() => 0);
+          } else {
+            for (const id of cancelledOffIds) {
+              await this.repo.updateShiftAssignment(id, { status: 'CANCELLED' }).catch(() => null);
+            }
           }
         }
 
@@ -1429,9 +1476,12 @@ export class SchedulesService {
         return {
           branchId,
           weekStartDate,
-          count: updatedShifts.length,
+          count,
           status: 'PUBLISHED',
           employeeIds: [...inWeekEmpIds].sort(),
+          /** Ca nháp bị hủy vì trùng ngày OFF đã đăng ký (OFF được ưu tiên). */
+          skippedOff,
+          bulkSheetPush,
         };
       },
     });
@@ -1548,12 +1598,29 @@ export class SchedulesService {
       }
     } catch { /* không đọc được tài khoản: vẫn heal, chỉ bỏ qua bước khóa */ }
 
+    // Ưu tiên OFF: ca nháp trùng ngày NV đã đăng ký OFF (đã duyệt hoặc
+    // HANG_TUAN đang chờ) thì GIỮ NGUYÊN DRAFT — không tự chốt PUBLISHED
+    // (nếu không, lượt self-heal sẽ biến ngày OFF thành ca làm việc).
+    const offKeys = new Set<string>();
+    try {
+      const leaves = await this.repo.listLeaveRequests().catch(() => []);
+      for (const l of leaves || []) {
+        const st = String((l as any)?.status || '').trim().toUpperCase();
+        const isWeekly = String((l as any)?.leave_type || '').trim().toUpperCase() === 'HANG_TUAN';
+        if (st !== 'APPROVED' && !(st === 'PENDING' && isWeekly)) continue;
+        const d = normSheetDate((l as any)?.requested_date) || String((l as any)?.requested_date || '').slice(0, 10);
+        if (!d) continue;
+        offKeys.add(`${String((l as any)?.employee_id || '').trim()}|${d}`);
+      }
+    } catch { /* không đọc được OFF: vẫn heal như cũ */ }
+
     const toPublish: Array<{ id: string; employeeId: string; date: string }> = [];
     const weeks = new Set<string>();
     for (const g of groups.values()) {
       if (!g.published || g.drafts.length === 0) continue;
       for (const d of g.drafts) {
         if (d.employeeId && locked.has(d.employeeId)) continue;
+        if (d.employeeId && d.date && offKeys.has(`${d.employeeId}|${d.date}`)) continue;
         toPublish.push(d);
         weeks.add(g.week);
       }
@@ -1579,13 +1646,6 @@ export class SchedulesService {
     }
 
     if (healed > 0) {
-      // Ca vừa chốt trùng ngày OFF đã duyệt → OFF chuyển thành ca làm việc.
-      for (const d of toPublish) {
-        if (!d.employeeId || !d.date) continue;
-        try {
-          await this.cancelReceiverLeavesOnWorkDay(d.employeeId, d.date);
-        } catch { /* ca vẫn đã publish; OFF xử lý ở lượt sau */ }
-      }
       if (this.io) {
         this.io.emit('data:updated', {
           entity: 'schedules',

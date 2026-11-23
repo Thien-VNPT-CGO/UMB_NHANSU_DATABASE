@@ -7,12 +7,15 @@ import { EmployeesService } from '../src/services/employees.service.js';
  * phải được xóa khỏi hồ sơ — nếu còn sót, pull/push sau sẽ hiển thị lại lịch
  * đề xuất cũ như thể ứng viên vẫn đang chờ HR duyệt.
  */
+/** Ngày tương lai động (test không được chết theo thời gian thực). */
+const FUTURE_DATE = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+
 test('approveProposedSchedule xóa đề xuất sau khi chốt lịch mới', async () => {
   const cand: any = {
     submission_id: 'CAND_0100',
     full_name: 'Ứng Viên Test',
     status: 'RESCHEDULE_PROPOSED',
-    interview_proposed_date: '2026-11-20',
+    interview_proposed_date: FUTURE_DATE,
     interview_proposed_time_slot: '16:00',
     interview_proposed_note: 'Chỉ rảnh chiều',
     interview_proposed_at: '2026-11-12T02:16:14.002Z',
@@ -32,7 +35,7 @@ test('approveProposedSchedule xóa đề xuất sau khi chốt lịch mới', as
   const updated: any = await svc.approveProposedSchedule('CAND_0100', 'ADM_002');
 
   assert.equal(updated.status, 'INVITED_INTERVIEW');
-  assert.equal(updated.interview_date, '2026-11-20');
+  assert.equal(updated.interview_date, FUTURE_DATE);
   assert.equal(updated.interview_time_slot, '16:00');
   assert.equal(updated.interview_proposed_date, undefined);
   assert.equal(updated.interview_proposed_time_slot, undefined);
