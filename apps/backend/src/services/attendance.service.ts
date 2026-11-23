@@ -9,6 +9,7 @@ import {
   GPSStatus,
   shiftHoursOf,
   isBranchGpsEnabled,
+  isSaleGroup,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
@@ -158,7 +159,10 @@ export class AttendanceService {
         const branch: any = (branchRows || []).find(
           (b: any) => String(b?.id || b?.branch_id) === String(shift.branch_id)
         ) || BRANCHES.find(b => b.id === shift.branch_id);
-        const gpsEnabled = isBranchGpsEnabled(branch);
+        // Khối SALE: điểm danh không yêu cầu định vị GPS — không chặn theo bán
+        // kính chi nhánh (vẫn lưu toạ độ thô nếu thiết bị gửi kèm).
+        const attendanceEmp: any = await this.repo.getEmployeeById(data.employeeId).catch(() => null);
+        const gpsEnabled = !isSaleGroup(attendanceEmp?.group) && isBranchGpsEnabled(branch);
         let distanceMeters = 0;
         let gpsStatus: GPSStatus = gpsEnabled ? 'UNAVAILABLE' : 'VALID';
 
@@ -227,7 +231,7 @@ export class AttendanceService {
         let fineAmount = 0;
         if (data.type === 'CHECK_IN' && isLate && minutesDeviation >= LATE_FINE_GRACE_MINUTES) {
           try {
-            const emp = await this.repo.getEmployeeById(data.employeeId).catch(() => null);
+            const emp = attendanceEmp;
             const rate = Number((emp as any)?.current_rate_per_hour) || 0;
             const hours = shiftHoursOf(String(shift.shift_code || ''), (emp as any)?.group);
             const fine = lateFineFor(minutesDeviation, hours * rate);

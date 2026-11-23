@@ -6030,6 +6030,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // chuẩn mở 30p trước ca và kéo dài tới 3 H SẼ CHO CHECK-IN SAU 08:30, phá quy chế
       // 08:00–08:30 giờ Việt Nam. Chặn tuyệt đối ở đây để không có đường vòng.
       const empForGuard: any = await employeesService.getEmployee(employeeId).catch(() => null);
+      // Khối SALE: chỉ bấm VÀO CA — không bắt buộc chụp ảnh và KHÔNG cần định vị GPS.
+      const checkinIsSale = isSaleGroup((empForGuard as any)?.group);
       if (empForGuard && OfficeService.isOfficeEmployee(empForGuard)) {
         return res.status(403).json({
           error: 'OFFICE_PORTAL_ONLY',
@@ -6106,8 +6108,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       }
 
       // GPS thật: bắt buộc khi chi nhánh BẬT định vị; nếu Admin đã tắt GPS cho
-      // chi nhánh thì cho phép điểm danh không cần toạ độ (vẫn nhận nếu có gửi).
-      const gpsRequired = await branchGpsEnabledOf(String((existingShift as any).branch_id || ''));
+      // chi nhánh — hoặc nhân viên thuộc khối SALE — thì cho phép điểm danh
+      // không cần toạ độ (vẫn nhận nếu có gửi).
+      const gpsRequired = !checkinIsSale && await branchGpsEnabledOf(String((existingShift as any).branch_id || ''));
       const lat = req.body.lat ?? req.body.latitude;
       const lng = req.body.lng ?? req.body.longitude;
       const hasGps = lat !== undefined && lng !== undefined && !Number.isNaN(Number(lat)) && !Number.isNaN(Number(lng));
@@ -6118,8 +6121,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         });
       }
       // Khối SALE chỉ cần bấm VÀO CA — không bắt buộc chụp ảnh như cửa hàng.
-      const checkinGroup = String(((await employeesService.getEmployee(employeeId).catch(() => null)) as any)?.group || '');
-      if (!isSaleGroup(checkinGroup) && !req.body.photo_base64) {
+      if (!checkinIsSale && !req.body.photo_base64) {
         return res.status(400).json({
           error: ERROR_CODES.CAMERA_REQUIRED,
           message: 'Bắt buộc chụp ảnh xác nhận (áo hồng + bảng tên) khi check-in!',
@@ -6172,7 +6174,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       broadcastNotification({
         type: 'CHECKIN',
         title: (result.result as any).is_late ? '🟡 Check-in Trễ Giờ' : '🟢 Điểm Danh Check-in Realtime',
-        message: `${checkinEmp?.full_name || employeeId} (${checkinEmp?.employee_code || 'NV'}) vừa vào ca! ${gpsRequired ? `GPS ${dist}m hợp lệ` : 'Chi nhánh đã tắt định vị GPS'}, áo hồng chuẩn thương hiệu.${lateNote}`,
+        message: `${checkinEmp?.full_name || employeeId} (${checkinEmp?.employee_code || 'NV'}) vừa vào ca! ${checkinIsSale ? 'Khối Sale — không yêu cầu GPS' : gpsRequired ? `GPS ${dist}m hợp lệ` : 'Chi nhánh đã tắt định vị GPS'}, áo hồng chuẩn thương hiệu.${lateNote}`,
         linkTab: 'hr-schedule',
         metadata: { employeeId, event: result.result },
         targetRoles: ['ADMIN', 'HR', 'STORE'],
@@ -6271,12 +6273,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       } catch { /* lớp service chặn tiếp bên dưới */ }
       const requestId = (req.headers['idempotency-key'] as string) || req.body.requestId || `REQ_OUT_${employeeId}_${Date.now()}`;
 
-      // GPS thật: bắt buộc khi chi nhánh BẬT định vị; nếu đã TẮT thì cho phép
-      // check-out không cần toạ độ (vẫn lưu nếu thiết bị gửi kèm).
+      // GPS thật: bắt buộc khi chi nhánh BẬT định vị; nếu đã TẮT — hoặc nhân
+      // viên khối SALE — thì cho phép check-out không cần toạ độ (vẫn lưu nếu
+      // thiết bị gửi kèm).
       const outShift: any = actualAssignmentId
         ? await adapter.getShiftById(actualAssignmentId).catch(() => null)
         : null;
-      const gpsRequired = await branchGpsEnabledOf(String(outShift?.branch_id || (checkInEvent as any)?.branch_id || ''));
+      const outEmp: any = await employeesService.getEmployee(employeeId).catch(() => null);
+      const checkoutIsSale = isSaleGroup(outEmp?.group);
+      const gpsRequired = !checkoutIsSale && await branchGpsEnabledOf(String(outShift?.branch_id || (checkInEvent as any)?.branch_id || ''));
       const outLat = req.body.lat ?? req.body.latitude;
       const outLng = req.body.lng ?? req.body.longitude;
       const hasOutGps = outLat !== undefined && outLng !== undefined && !Number.isNaN(Number(outLat)) && !Number.isNaN(Number(outLng));
@@ -6288,7 +6293,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       }
 
       // BETA: chốt 1 thiết bị 1 NV trước khi ghi receipt (chống điểm danh hộ)
-      const buddyCheckout = await buddyPunchGuard(req, employeeId, (await employeesService.getEmployee(employeeId).catch(() => null))?.full_name || employeeId);
+      const buddyCheckout = await buddyPunchGuard(req, employeeId, outEmp?.full_name || employeeId);
       if (buddyCheckout) {
         return res.status(403).json({
           error: 'DEVICE_SHARING',

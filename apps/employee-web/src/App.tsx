@@ -3166,15 +3166,16 @@ export function App() {
     setPhotoData(null);
     setPhotoPinkRatio(null);
 
+    // Khối SALE: chỉ bấm nút là điểm danh — KHÔNG yêu cầu định vị GPS và
+    // cũng không qua bước chụp ảnh như khối cửa hàng.
+    if (isSaleGate) {
+      void handleSubmitAttendance({ action, gps: null });
+      return;
+    }
     // GPS THẬT 100%: đo từ vệ tinh thiết bị, không dùng tọa độ giả lập.
     // Từ chối định vị / ngoài vùng phủ sóng -> dừng, KHÔNG ghi nhận.
     // Ngoại lệ: chi nhánh đã TẮT định vị (Admin cấu hình) -> bỏ qua bước GPS.
     if (!gpsEnabled) {
-      // Khối SALE: không chụp ảnh — gửi điểm danh ngay sau khi bấm nút.
-      if (isSaleGate) {
-        void handleSubmitAttendance({ action, gps: null });
-        return;
-      }
       setAttendanceStep('READY_CAMERA');
       return;
     }
@@ -3191,11 +3192,6 @@ export function App() {
           accuracy: Math.round(pos.coords.accuracy),
         };
         setGpsCoords(coords);
-        // Khối SALE: không qua bước chụp ảnh, gửi điểm danh luôn.
-        if (isSaleGate) {
-          void handleSubmitAttendance({ action, gps: coords });
-          return;
-        }
         setAttendanceStep('READY_CAMERA');
       },
       (err) => {
@@ -3424,9 +3420,9 @@ export function App() {
       showToast('⚠️ VI PHẠM ĐỒNG PHỤC QUY CHUẨN: Vui lòng xác nhận đang mặc Áo Hồng Ụm Bò Milk và Đeo Bảng Tên hợp lệ!');
       return;
     }
-    // Bắt buộc: GPS thật + ảnh thật (check-in). Khối SALE miễn ảnh.
+    // Bắt buộc: GPS thật + ảnh thật (check-in). Khối SALE miễn ảnh và miễn GPS.
     // Chi nhánh đã tắt định vị thì không bắt buộc GPS.
-    if (gpsEnabled && !effectiveGps) {
+    if (gpsEnabled && !isSaleGate && !effectiveGps) {
       showToast('🚫 Chưa có tọa độ GPS thật! Vui lòng bấm Bắt đầu lại để đo GPS.');
       setAttendanceStep('IDLE');
       return;
@@ -3475,7 +3471,7 @@ export function App() {
         }
       } catch { /* không chặn luồng chính */ }
       // GPS yếu/vượt phạm vi bị server từ chối thẳng (không ghi nhận) nên không còn nhánh này.
-      const gpsNote = gpsEnabled ? '' : ' (chi nhánh đã tắt định vị GPS)';
+      const gpsNote = (gpsEnabled || isSaleGate) ? '' : ' (chi nhánh đã tắt định vị GPS)';
       const receipt: any = res?.receipt || {};
       const lateMinutes = Math.max(0, Math.round(Number(receipt?.minutes_deviation) || 0));
       if (actionType === 'CHECK_IN' && (receipt?.is_late === true || lateMinutes > 0)) {
@@ -3483,7 +3479,9 @@ export function App() {
         showToast(`⚠️ BẠN ĐÃ VÀO CA TRỄ ${lateMinutes || 1} PHÚT — hệ thống đã gửi cảnh báo tới HR và ghi nhận mức phạt trễ theo quy chế!`);
       } else {
         showToast(actionType === 'CHECK_IN'
-          ? `✓ Điểm danh Check-in thành công!${gpsEnabled ? (isSaleGate ? ' GPS thật đã ghi nhận.' : ' GPS thật + ảnh thật đã ghi nhận.') : ''}${gpsNote}`
+          ? (isSaleGate
+            ? '✓ Điểm danh Check-in thành công! (khối Sale — không yêu cầu GPS)'
+            : `✓ Điểm danh Check-in thành công!${gpsEnabled ? ' GPS thật + ảnh thật đã ghi nhận.' : ''}${gpsNote}`)
           : `✓ Điểm danh Check-out thành công! Ca làm việc đã ghi nhận vào Google Sheets.${gpsNote}`
         );
       }
@@ -6466,7 +6464,9 @@ export function App() {
                     </div>
                     <div>
                       <div style={{ color: 'var(--text-muted)' }}>GPS thật của bạn:</div>
-                      {!gpsEnabled ? (
+                      {isSaleGate ? (
+                        <strong style={{ color: 'var(--brand)' }}>📍 Khối Sale — không bắt buộc định vị GPS</strong>
+                      ) : !gpsEnabled ? (
                         <strong style={{ color: 'var(--brand)' }}>📵 Chi nhánh đã tắt định vị — không bắt buộc GPS</strong>
                       ) : gpsCoords ? (
                         <strong style={{ color: '#10B981' }}>
@@ -6726,8 +6726,8 @@ export function App() {
                       </h4>
                       <div style={{ fontSize: '12px', color: '#047857', marginTop: '4px' }}>
                         Thời gian: {new Date().toLocaleTimeString('vi-VN')} • Khoảng cách:{' '}
-                        {typeof lastReceipt?.distance_meters === 'number' ? `${Math.round(lastReceipt.distance_meters)}m` : (gpsEnabled ? 'đang đối soát' : 'không bắt buộc GPS')}
-                        {gpsEnabled && lastReceipt?.gps_status === 'OUT_OF_BOUNDS' ? ' (⚠️ ngoài 300m — đã ghi nhận để đối soát)' : ''} • Đồng phục: Áo hồng + Bảng tên hợp lệ.
+                        {typeof lastReceipt?.distance_meters === 'number' && !isSaleGate ? `${Math.round(lastReceipt.distance_meters)}m` : (gpsEnabled && !isSaleGate ? 'đang đối soát' : 'không bắt buộc GPS')}
+                        {gpsEnabled && !isSaleGate && lastReceipt?.gps_status === 'OUT_OF_BOUNDS' ? ' (⚠️ ngoài 300m — đã ghi nhận để đối soát)' : ''} • Đồng phục: Áo hồng + Bảng tên hợp lệ.
                       </div>
                       <button
                         className="btn-secondary"
