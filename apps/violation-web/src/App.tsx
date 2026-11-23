@@ -1,13 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
+  BadgeCheck,
+  BookOpenCheck,
+  ChevronRight,
+  Clock3,
   Gavel,
   Landmark,
   LayoutDashboard,
   Loader2,
   LogOut,
   ShieldCheck,
-  Sparkles,
+  UserRound,
   Wifi,
   WifiOff,
 } from 'lucide-react';
@@ -20,34 +24,73 @@ import { Dashboard } from './components/Dashboard';
 import { RegulationsView } from './components/RegulationsView';
 import { CatchViolationView } from './components/CatchViolationView';
 import { TicketsView } from './components/TicketsView';
-import { AdjustRegulationsView } from './components/AdjustRegulationsView';
-import { ProfileView } from './components/ProfileView';
+import { AccountView } from './components/AccountView';
 import { initials } from './components/ui';
 
 const VIEW_LABELS: Record<ViewKey, string> = {
   dashboard: 'Trung tâm điều hành',
-  regulations: 'Quy chế Công Ty',
+  regulations: 'Quy chế Công ty',
   catch: 'Bắt lỗi vi phạm',
-  pending: 'Lỗi vi phạm chưa duyệt',
-  approved: 'Lỗi vi phạm đã duyệt',
-  adjust: 'Điều chỉnh quy chế',
-  'change-pin': 'Đổi mật khẩu',
-  profile: 'Thông tin cá nhân',
+  pending: 'Phiếu chờ duyệt',
+  approved: 'Phiếu đã duyệt',
+  account: 'Tài khoản & bảo mật',
 };
 
 const REALTIME_LABEL: Record<RealtimeStatus, string> = {
   connecting: 'Đang kết nối',
-  online: 'Realtime',
+  online: 'Trực tuyến',
   offline: 'Ngoại tuyến',
 };
+
+const VIEW_KEYS = Object.keys(VIEW_LABELS) as ViewKey[];
+
+/** Hỗ trợ deep-link dạng #quy-che để mở thẳng một màn hình khi tải trang. */
+const VIEW_ALIASES: Record<string, ViewKey> = {
+  dashboard: 'dashboard',
+  'tong-quan': 'dashboard',
+  regulations: 'regulations',
+  'quy-che': 'regulations',
+  catch: 'catch',
+  'bat-loi': 'catch',
+  pending: 'pending',
+  'cho-duyet': 'pending',
+  approved: 'approved',
+  'da-duyet': 'approved',
+  account: 'account',
+  'tai-khoan': 'account',
+};
+
+function viewFromHash(): ViewKey {
+  if (typeof window === 'undefined') return 'dashboard';
+  const raw = window.location.hash.replace(/^#\/?/, '').trim().toLowerCase();
+  if (!raw) return 'dashboard';
+  if (VIEW_ALIASES[raw]) return VIEW_ALIASES[raw];
+  return VIEW_KEYS.includes(raw as ViewKey) ? (raw as ViewKey) : 'dashboard';
+}
+
+interface NavItem {
+  key: ViewKey;
+  label: string;
+  hint: string;
+  icon: React.ComponentType<{ size?: number | string }>;
+}
+
+const MAIN_NAV: NavItem[] = [
+  { key: 'dashboard', label: 'Tổng quan', hint: 'Bảng điều khiển', icon: LayoutDashboard },
+  { key: 'catch', label: 'Bắt lỗi', hint: 'Lập phiếu vi phạm', icon: Gavel },
+  { key: 'pending', label: 'Chờ duyệt', hint: 'Phiếu cần xử lý', icon: Clock3 },
+  { key: 'approved', label: 'Đã duyệt', hint: 'Kho phiếu & KPI', icon: BadgeCheck },
+  { key: 'regulations', label: 'Quy chế', hint: 'Bộ luật công ty', icon: BookOpenCheck },
+];
+
+const MOBILE_NAV: NavItem[] = [MAIN_NAV[0], MAIN_NAV[1], MAIN_NAV[2], MAIN_NAV[3], { key: 'account', label: 'Tài khoản', hint: 'Hồ sơ & PIN', icon: UserRound }];
 
 export function App() {
   const [booting, setBooting] = useState(true);
   const [account, setAccount] = useState<ViolationAccount | null>(null);
   const [mustChange, setMustChange] = useState(false);
   const [knownPin, setKnownPin] = useState('');
-  const [view, setView] = useState<ViewKey>('dashboard');
-  const [viewHistory, setViewHistory] = useState<ViewKey[]>([]);
+  const [view, setView] = useState<ViewKey>(() => viewFromHash());
   const [refreshKey, setRefreshKey] = useState(0);
   const [realtime, setRealtime] = useState<RealtimeStatus>('connecting');
   const [notice, setNotice] = useState('');
@@ -84,9 +127,13 @@ export function App() {
     setMustChange(false);
     setKnownPin('');
     setView('dashboard');
-    setViewHistory([]);
     setRealtime('connecting');
     setNotice(message || '');
+    try {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    } catch {
+      /* bỏ qua */
+    }
   }, []);
 
   useEffect(() => {
@@ -119,7 +166,11 @@ export function App() {
     setMustChange(result.mustChangePin || result.account.must_change_pin === true);
     setNotice('');
     setView('dashboard');
-    setViewHistory([]);
+    try {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    } catch {
+      /* bỏ qua */
+    }
   };
 
   const handlePinChanged = (result: AuthResult, newPin: string) => {
@@ -133,11 +184,23 @@ export function App() {
     leaveSession(message);
   };
 
-  const navigate = (next: ViewKey, opts?: { replace?: boolean }) => {
-    if (next !== view && !opts?.replace) {
-      setViewHistory(history => [...history, view].slice(-20));
+  useEffect(() => {
+    const onHashChange = () => setView(viewFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  useEffect(() => {
+    const label = account && !mustChange ? VIEW_LABELS[view] : 'Đăng nhập';
+    document.title = `${label} · Tòa Án Tối Cao Ụm Bò Milk`;
+  }, [view, account, mustChange]);
+
+  const navigate = (next: ViewKey) => {
+    if (viewFromHash() === next) {
+      setView(next);
+    } else {
+      window.location.hash = next;
     }
-    setView(next);
     try {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch {
@@ -145,28 +208,9 @@ export function App() {
     }
   };
 
-  /**
-   * Nút "quay lại": lùi về màn hình vừa xem trong cổng vi phạm; khi đang ở
-   * Trung tâm điều hành thì trở ra hệ thống nhân sự chính (nền tảng hiển thị App).
-   */
-  const goBack = () => {
-    const previous = viewHistory[viewHistory.length - 1];
-    if (previous) {
-      setViewHistory(history => history.slice(0, -1));
-      setView(previous);
-      try {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      } catch {
-        window.scrollTo(0, 0);
-      }
-      return;
-    }
-    window.location.assign('/');
-  };
-
   const handleSaved = (status: 'PENDING' | 'APPROVED') => {
     bumpRefresh();
-    navigate(status === 'PENDING' ? 'pending' : 'approved', { replace: true });
+    navigate(status === 'PENDING' ? 'pending' : 'approved');
   };
 
   const currentLabel = useMemo(() => VIEW_LABELS[view], [view]);
@@ -174,9 +218,8 @@ export function App() {
   if (booting) {
     return (
       <div className="splash-screen">
-        <div className="login-aurora" aria-hidden="true" />
         <div className="splash-seal">
-          <Landmark size={38} />
+          <Landmark size={34} />
         </div>
         <strong>TÒA ÁN TỐI CAO ỤM BÒ MILK</strong>
         <span>
@@ -206,102 +249,145 @@ export function App() {
   const renderView = () => {
     switch (view) {
       case 'regulations':
-        return <RegulationsView refreshKey={refreshKey} onAdjust={() => navigate('adjust')} />;
+        return <RegulationsView refreshKey={refreshKey} />;
       case 'catch':
         return <CatchViolationView refreshKey={refreshKey} onSaved={handleSaved} />;
       case 'pending':
         return <TicketsView status="PENDING" refreshKey={refreshKey} />;
       case 'approved':
         return <TicketsView status="APPROVED" refreshKey={refreshKey} />;
-      case 'adjust':
-        return <AdjustRegulationsView refreshKey={refreshKey} />;
-      case 'change-pin':
+      case 'account':
         return (
-          <div className="view view-narrow">
-            <PinChangeView
-              account={account}
-              knownPin={knownPin}
-              onChanged={handlePinChanged}
-              onReset={handlePinReset}
-              onLogout={() => leaveSession('')}
-            />
-          </div>
+          <AccountView
+            account={account}
+            knownPin={knownPin}
+            onChanged={handlePinChanged}
+            onReset={handlePinReset}
+            onLogout={() => leaveSession('')}
+          />
         );
-      case 'profile':
-        return <ProfileView account={account} />;
       default:
-        return <Dashboard account={account} refreshKey={refreshKey} onNavigate={navigate} />;
+        return <Dashboard refreshKey={refreshKey} onNavigate={navigate} />;
     }
   };
 
   return (
     <div className="app-shell">
-      <div className="app-bg" aria-hidden="true" />
-      <header className="app-header">
-        <button
-          type="button"
-          className="header-back-btn"
-          onClick={goBack}
-          aria-label={viewHistory.length > 0 ? 'Quay lại màn hình trước' : 'Về hệ thống nhân sự'}
-          title={viewHistory.length > 0 ? 'Quay lại màn hình trước' : 'Về hệ thống nhân sự'}
-        >
-          <ArrowLeft size={17} />
-          <span className="header-back-label">
-            {viewHistory.length > 0 ? 'Quay lại' : 'Hệ thống'}
-          </span>
-        </button>
-
-        <button type="button" className="app-brand" onClick={() => navigate('dashboard')} aria-label="Về trang chủ">
-          <span className="app-brand-seal">
+      <aside className="app-sidebar">
+        <button type="button" className="sidebar-brand" onClick={() => navigate('dashboard')} aria-label="Về trang tổng quan">
+          <span className="brand-mark">
             <Landmark size={20} />
           </span>
-          <span className="app-brand-copy">
+          <span className="brand-lines">
             <strong>Tòa Án Tối Cao</strong>
-            <span>Ụm Bò Milk · Kiểm soát vi phạm</span>
+            <span>Ụm Bò Milk</span>
           </span>
         </button>
 
-        <div className="app-header-center">
-          <span className="header-context">
-            {view === 'dashboard' ? <LayoutDashboard size={14} /> : null} {currentLabel}
-          </span>
+        <nav className="side-nav" aria-label="Điều hướng chính">
+          <span className="side-nav-label">Điều hành</span>
+          {MAIN_NAV.map(item => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                className={`side-link ${view === item.key ? 'is-active' : ''}`}
+                onClick={() => navigate(item.key)}
+                aria-current={view === item.key ? 'page' : undefined}
+              >
+                <span className="side-link-icon">
+                  <Icon size={18} />
+                </span>
+                <span className="side-link-copy">
+                  <strong>{item.label}</strong>
+                  <span>{item.hint}</span>
+                </span>
+              </button>
+            );
+          })}
+          <span className="side-nav-label">Cá nhân</span>
+          <button
+            type="button"
+            className={`side-link ${view === 'account' ? 'is-active' : ''}`}
+            onClick={() => navigate('account')}
+            aria-current={view === 'account' ? 'page' : undefined}
+          >
+            <span className="side-link-icon">
+              <UserRound size={18} />
+            </span>
+            <span className="side-link-copy">
+              <strong>Tài khoản</strong>
+              <span>Hồ sơ &amp; mã PIN</span>
+            </span>
+          </button>
+        </nav>
+
+        <div className="side-foot">
+          <a className="side-exit" href="/">
+            <ArrowLeft size={15} /> Về hệ thống nhân sự
+          </a>
         </div>
+      </aside>
 
-        <div className="app-header-right">
-          <span className={`realtime-pill realtime-${realtime}`}>
-            {realtime === 'online' ? <Wifi size={13} /> : <WifiOff size={13} />}
-            {REALTIME_LABEL[realtime]}
-          </span>
-
-          <div className="header-account">
-            <span className="mini-avatar">{initials(account.display_name)}</span>
-            <span className="header-account-copy">
-              <strong>{account.display_name}</strong>
-              <span>
-                <ShieldCheck size={11} /> Toàn quyền
+      <div className="app-main-wrap">
+        <header className="app-topbar">
+          <div className="topbar-crumb">
+            <span className="topbar-brand-mobile">
+              <span className="brand-mark brand-mark-sm">
+                <Landmark size={16} />
               </span>
+              <strong>Tòa Án Ụm Bò Milk</strong>
+            </span>
+            <span className="topbar-path">
+              <ShieldCheck size={14} />
+              <span>Quản trị vi phạm</span>
+              <ChevronRight size={13} />
+              <strong>{currentLabel}</strong>
             </span>
           </div>
 
-          <button type="button" className="icon-button header-logout" onClick={() => leaveSession('')} aria-label="Đăng xuất">
-            <LogOut size={17} />
-          </button>
-        </div>
-      </header>
+          <div className="topbar-right">
+            <span className={`realtime-pill realtime-${realtime} topbar-realtime`}>
+              {realtime === 'online' ? <Wifi size={13} /> : <WifiOff size={13} />}
+              {REALTIME_LABEL[realtime]}
+            </span>
 
-      <main className="app-main">{renderView()}</main>
+            <button type="button" className="topbar-account" onClick={() => navigate('account')}>
+              <span className="mini-avatar">{initials(account.display_name)}</span>
+              <span className="topbar-account-copy">
+                <strong>{account.display_name}</strong>
+                <span>Toàn quyền hệ thống</span>
+              </span>
+            </button>
 
-      <footer className="app-footer">
-        <span>
-          <Sparkles size={13} /> Tòa Án Tối Cao Ụm Bò Milk · Hệ thống kiểm soát &amp; xử lý vi phạm
-        </span>
-        <span>
-          <Gavel size={13} /> Phiếu đã duyệt tự động lưu Drive &amp; cấn trừ KPI
-        </span>
-        <a className="app-footer-link" href="/">
-          <ArrowLeft size={13} /> Về hệ thống nhân sự
-        </a>
-      </footer>
+            <button type="button" className="icon-button" onClick={() => leaveSession('')} aria-label="Đăng xuất" title="Đăng xuất">
+              <LogOut size={17} />
+            </button>
+          </div>
+        </header>
+
+        <main className="app-main">{renderView()}</main>
+      </div>
+
+      <nav className="mobile-nav" aria-label="Điều hướng nhanh">
+        {MOBILE_NAV.map(item => {
+          const Icon = item.icon;
+          const active = view === item.key;
+          return (
+            <button
+              key={item.key}
+              type="button"
+              className={`mobile-nav-item ${active ? 'is-active' : ''}`}
+              onClick={() => navigate(item.key)}
+              aria-current={active ? 'page' : undefined}
+            >
+              <Icon size={19} />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }

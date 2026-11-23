@@ -298,10 +298,10 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
               </div>
 
               <div className="panel composer-panel">
-                <div className="form-grid two">
+                <div className="form-grid one">
                   <label className="field">
                     <span className="field-label">
-                      Ngày vi phạm <small>bắt buộc</small>
+                      Ngày vi phạm <small>bắt buộc · kỳ KPI tính tự động</small>
                     </span>
                     <div className="input-with-icon">
                       <CalendarDays size={16} />
@@ -312,12 +312,6 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
                         onChange={event => setViolationDate(event.target.value || todayIso())}
                       />
                     </div>
-                  </label>
-                  <label className="field">
-                    <span className="field-label">
-                      Kỳ ghi nhận <small>tự động</small>
-                    </span>
-                    <input className="input" value={violationDate.slice(0, 7)} readOnly />
                   </label>
                 </div>
 
@@ -448,7 +442,7 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         title="Chọn lỗi vi phạm"
-        subtitle="Có thể chọn nhiều lỗi cho cùng một phiếu. Mức phạt được điền sẵn theo quy chế và có thể sửa trực tiếp ngay tại đây."
+        subtitle="Có thể chọn nhiều lỗi cho cùng một phiếu. Mức phạt được điền sẵn theo quy chế; bấm lại để bỏ chọn."
         size="lg"
         footer={
           <>
@@ -487,15 +481,13 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
 
         <div className="picker-list">
           {pickerResults.map(regulation => {
-            const addedItem = items.find(item => item.regulation_id === regulation.regulation_id);
-            const added = !!addedItem;
+            const added = items.some(item => item.regulation_id === regulation.regulation_id);
             return (
               <div key={regulation.regulation_id} className={`picker-row ${added ? 'is-added' : ''}`}>
                 <button
                   type="button"
                   className="picker-select"
-                  onClick={() => addRegulation(regulation)}
-                  disabled={added}
+                  onClick={() => (added ? removeItem(regulation.regulation_id) : addRegulation(regulation))}
                   aria-pressed={added}
                 >
                   <span className="regulation-code">{regulation.code}</span>
@@ -509,44 +501,6 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
                     {added ? <Check size={16} /> : <Plus size={16} />}
                   </span>
                 </button>
-
-                {added && addedItem ? (
-                  <div className="picker-amount">
-                    <label className="money-input money-input-picker">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        aria-label={`Số tiền lỗi ${regulation.name}`}
-                        title="Sửa số tiền lỗi thay cho mức phạt mặc định"
-                        value={addedItem.fine_amount ? addedItem.fine_amount.toLocaleString('vi-VN') : ''}
-                        placeholder={regulation.fine_note ? 'Nhập số tiền' : '0'}
-                        onFocus={event => event.currentTarget.select()}
-                        onChange={event => updateFine(regulation.regulation_id, event.target.value)}
-                      />
-                      <span>đ</span>
-                    </label>
-                    {addedItem.fine_amount !== regulation.fine_amount ? (
-                      <button
-                        type="button"
-                        className="icon-button icon-button-sm"
-                        onClick={() => resetFine(regulation.regulation_id)}
-                        title={`Khôi phục mức phạt mặc định (${money(regulation.fine_amount)})`}
-                        aria-label={`Khôi phục mức phạt mặc định cho ${regulation.name}`}
-                      >
-                        <RotateCcw size={14} />
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="icon-button icon-button-sm icon-button-danger"
-                      onClick={() => removeItem(regulation.regulation_id)}
-                      title="Bỏ lỗi khỏi phiếu"
-                      aria-label={`Bỏ ${regulation.name} khỏi phiếu`}
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-                ) : null}
               </div>
             );
           })}

@@ -1,41 +1,27 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowUpRight,
+  ArrowRight,
   BadgeCheck,
   BookOpenCheck,
   CalendarDays,
   ChevronRight,
   Clock3,
   CloudUpload,
-  Crown,
   Gavel,
-  KeyRound,
   Landmark,
   Scale,
-  Settings2,
   ShieldCheck,
-  Sparkles,
   TrendingDown,
   Users,
 } from 'lucide-react';
 import { ApiError, fetchOverview, fetchTickets } from '../services/api';
-import type { ViolationAccount, ViolationOverview, ViolationTicket, ViewKey } from '../types';
-import { compactMoney, formatDate, initials, money, monthLabel } from './ui';
+import type { ViolationOverview, ViolationTicket, ViewKey } from '../types';
+import { compactMoney, currentPeriod, formatDate, initials, money, monthLabel } from './ui';
 import { useToast } from './toast';
 
 interface Props {
-  account: ViolationAccount;
   refreshKey: number;
   onNavigate: (view: ViewKey) => void;
-}
-
-interface TileConfig {
-  key: ViewKey;
-  title: string;
-  description: string;
-  icon: React.ComponentType<{ size?: number | string }>;
-  accent: string;
-  badge?: string;
 }
 
 function greeting(): string {
@@ -48,7 +34,7 @@ function greeting(): string {
   return 'Chào buổi tối';
 }
 
-export function Dashboard({ account, refreshKey, onNavigate }: Props) {
+export function Dashboard({ refreshKey, onNavigate }: Props) {
   const toast = useToast();
   const [overview, setOverview] = useState<ViolationOverview | null>(null);
   const [tickets, setTickets] = useState<ViolationTicket[]>([]);
@@ -78,100 +64,48 @@ export function Dashboard({ account, refreshKey, onNavigate }: Props) {
   const pending = useMemo(() => tickets.filter(ticket => ticket.status === 'PENDING'), [tickets]);
   const approved = useMemo(() => tickets.filter(ticket => ticket.status === 'APPROVED'), [tickets]);
 
-  const tiles: TileConfig[] = [
-    {
-      key: 'regulations',
-      title: 'Quy chế Công Ty',
-      description: 'Tra cứu toàn bộ lỗi vi phạm và mức phạt đang áp dụng.',
-      icon: BookOpenCheck,
-      accent: '#e3b866',
-      badge: overview ? `${overview.regulations_active} điều` : undefined,
-    },
-    {
-      key: 'catch',
-      title: 'Bắt Lỗi Vi Phạm',
-      description: 'Chọn nhân viên, gắn lỗi và lập phiếu vi phạm mới.',
-      icon: Gavel,
-      accent: '#f2705b',
-    },
-    {
-      key: 'pending',
-      title: 'Lỗi Vi Phạm Chưa Duyệt',
-      description: 'Kiểm tra, chỉnh sửa hoặc duyệt các phiếu đang chờ.',
-      icon: Clock3,
-      accent: '#f5b544',
-      badge: overview ? `${overview.pending_count}` : undefined,
-    },
-    {
-      key: 'approved',
-      title: 'Lỗi Vi Phạm Đã Duyệt',
-      description: 'Kho phiếu đã duyệt, PDF Drive và trạng thái TRỪ KPI.',
-      icon: BadgeCheck,
-      accent: '#51c99a',
-      badge: overview ? `${overview.approved_count}` : undefined,
-    },
-    {
-      key: 'adjust',
-      title: 'Điều Chỉnh Quy Chế',
-      description: 'Thêm, sửa, xóa quy chế và mức phạt — đồng bộ tức thời.',
-      icon: Settings2,
-      accent: '#65a9f3',
-    },
-    {
-      key: 'change-pin',
-      title: 'Đổi Mật Khẩu',
-      description: 'Quản trị mã PIN 8 số và cấp lại mật khẩu khẩn cấp.',
-      icon: KeyRound,
-      accent: '#b48af7',
-    },
-    {
-      key: 'profile',
-      title: 'Thông Tin Cá Nhân',
-      description: 'Toàn bộ thẩm quyền tối cao và dấu ấn phiên làm việc.',
-      icon: Crown,
-      accent: '#f08fb0',
-    },
-  ];
-
-  const month = overview?.month || new Date().toISOString().slice(0, 7);
+  const month = overview?.month || currentPeriod();
 
   return (
     <div className="dashboard">
-      <section className="dashboard-hero">
-        <div className="hero-copy">
+      <section className="dashboard-intro">
+        <div className="intro-copy">
           <span className="eyebrow">
-            <Landmark size={13} /> TÒA ÁN TỐI CAO · {account.display_name.toUpperCase()}
+            <Landmark size={13} /> TÒA ÁN TỐI CAO · ỤM BÒ MILK
           </span>
           <h1>
             {greeting()}, <em>thẩm phán tối cao</em>.
           </h1>
           <p>
-            Hôm nay là {new Date().toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}
-            . Mọi thay đổi về quy chế, phiếu vi phạm và KPI đều được đồng bộ theo thời gian thực.
+            Hôm nay là{' '}
+            {new Date().toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}.
+            Mọi thay đổi về quy chế, phiếu vi phạm và KPI đều được đồng bộ theo thời gian thực.
           </p>
-          <div className="hero-actions">
+          <div className="intro-actions">
             <button type="button" className="btn btn-gold" onClick={() => onNavigate('catch')}>
               <Gavel size={17} /> Bắt lỗi ngay
             </button>
-            <button type="button" className="btn btn-ghost" onClick={() => onNavigate('pending')}>
-              <Clock3 size={17} /> Xem phiếu chờ duyệt
-              <ChevronRight size={15} />
+            <button type="button" className="btn btn-ghost" onClick={() => onNavigate('regulations')}>
+              <BookOpenCheck size={17} /> Xem quy chế
             </button>
           </div>
         </div>
-        <div className="hero-seal" aria-hidden="true">
-          <div className="hero-seal-inner">
-            <Scale size={44} />
-            <span>THẨM QUYỀN</span>
-            <strong>TOÀN PHẦN</strong>
+        <div className="intro-summary">
+          <span className="intro-summary-icon">
+            <Scale size={30} />
+          </span>
+          <div>
+            <strong>{overview?.pending_count ?? '—'}</strong>
+            <span>phiếu đang chờ phán quyết</span>
           </div>
-          <div className="hero-orbit hero-orbit-one" />
-          <div className="hero-orbit hero-orbit-two" />
+          <button type="button" className="intro-summary-link" onClick={() => onNavigate('pending')}>
+            Xử lý ngay <ArrowRight size={14} />
+          </button>
         </div>
       </section>
 
       <section className="stat-grid">
-        <article className="stat-card stat-amber">
+        <button type="button" className="stat-card stat-amber" onClick={() => onNavigate('pending')}>
           <div className="stat-head">
             <span>Chờ duyệt</span>
             <Clock3 size={17} />
@@ -181,8 +115,8 @@ export function Dashboard({ account, refreshKey, onNavigate }: Props) {
             <span>{money(overview?.pending_amount || 0)}</span>
             <span className="stat-trend">cần xử lý</span>
           </div>
-        </article>
-        <article className="stat-card stat-emerald">
+        </button>
+        <button type="button" className="stat-card stat-emerald" onClick={() => onNavigate('approved')}>
           <div className="stat-head">
             <span>Đã duyệt</span>
             <BadgeCheck size={17} />
@@ -192,8 +126,8 @@ export function Dashboard({ account, refreshKey, onNavigate }: Props) {
             <span>{money(overview?.approved_amount || 0)}</span>
             <span className="stat-trend">tổng phạt</span>
           </div>
-        </article>
-        <article className="stat-card stat-gold">
+        </button>
+        <button type="button" className="stat-card stat-gold" onClick={() => onNavigate('approved')}>
           <div className="stat-head">
             <span>{monthLabel(month)}</span>
             <TrendingDown size={17} />
@@ -203,8 +137,8 @@ export function Dashboard({ account, refreshKey, onNavigate }: Props) {
             <span>{compactMoney(overview?.month_amount || 0)}</span>
             <span className="stat-trend">trừ KPI tháng</span>
           </div>
-        </article>
-        <article className="stat-card stat-sky">
+        </button>
+        <button type="button" className="stat-card stat-sky" onClick={() => onNavigate('regulations')}>
           <div className="stat-head">
             <span>Quy chế hiệu lực</span>
             <BookOpenCheck size={17} />
@@ -219,7 +153,7 @@ export function Dashboard({ account, refreshKey, onNavigate }: Props) {
             </span>
             <span className="stat-trend">đang theo dõi</span>
           </div>
-        </article>
+        </button>
       </section>
 
       {overview && overview.drive_error_count > 0 ? (
@@ -234,48 +168,6 @@ export function Dashboard({ account, refreshKey, onNavigate }: Props) {
           </button>
         </div>
       ) : null}
-
-      <section className="section-block">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">
-              <Sparkles size={13} /> TRUNG TÂM ĐIỀU HÀNH
-            </span>
-            <h2>Chức năng tối cao</h2>
-          </div>
-          <span className="section-note">7 nghiệp vụ · một cú chạm</span>
-        </div>
-
-        <div className={`tile-grid ${loading ? 'is-loading' : ''}`}>
-          {tiles.map((tile, index) => {
-            const Icon = tile.icon;
-            return (
-              <button
-                key={tile.key}
-                type="button"
-                className="tile"
-                style={{ ['--tile-accent' as any]: tile.accent, ['--tile-delay' as any]: `${index * 45}ms` }}
-                onClick={() => onNavigate(tile.key)}
-              >
-                <div className="tile-top">
-                  <span className="tile-icon">
-                    <Icon size={22} />
-                  </span>
-                  {tile.badge ? <span className="tile-badge">{tile.badge}</span> : <span className="tile-index">0{index + 1}</span>}
-                </div>
-                <div className="tile-copy">
-                  <strong>{tile.title}</strong>
-                  <span>{tile.description}</span>
-                </div>
-                <div className="tile-foot">
-                  <span>Mở chức năng</span>
-                  <ArrowUpRight size={16} />
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </section>
 
       <section className="recent-grid">
         <div className="panel">

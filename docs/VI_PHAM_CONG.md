@@ -16,20 +16,24 @@ Web app riêng, phục vụ tại `https://<domain>/violations/`, dùng chung ba
 
 | Chức năng | Mô tả |
 | --- | --- |
-| Quy chế Công Ty | Tra cứu lỗi vi phạm, nhóm và mức phạt đang áp dụng. |
+| Tổng quan | Bảng điều khiển 4 chỉ số (chờ duyệt, đã duyệt, KPI tháng, quy chế hiệu lực) và danh sách phiếu gần đây. |
+| Quy chế Công Ty | Tra cứu, thêm, sửa, xóa lỗi vi phạm và mức phạt — đồng bộ realtime sang màn hình bắt lỗi. |
 | Bắt Lỗi Vi Phạm | Chọn nhân viên (tên + chi nhánh), thêm nhiều lỗi, sửa mức phạt, tự cộng tổng. |
-| Lỗi Vi Phạm Chưa Duyệt | Phiếu `Lưu tạm`; có thể xem, duyệt hoặc xóa. |
-| Lỗi Vi Phạm Đã Duyệt | Kho phiếu đã duyệt, trạng thái PDF Drive + TRỪ KPI. |
-| Điều Chỉnh Quy Chế | Thêm / sửa / xóa quy chế, đồng bộ realtime sang Quy chế Công ty. |
-| Đổi Mật Khẩu | Đổi PIN 8 số và cấp lại mật khẩu khẩn cấp. |
-| Thông Tin Cá Nhân | Hiển thị đầy đủ 10 thẩm quyền tối cao và dấu ấn phiên. |
+| Phiếu Chờ Duyệt | Phiếu `Lưu tạm`; có thể xem, duyệt hoặc xóa. |
+| Phiếu Đã Duyệt | Kho phiếu đã duyệt, trạng thái PDF Drive + TRỪ KPI. |
+| Tài Khoản & Bảo Mật | Thông tin phiên làm việc, thẩm quyền hệ thống, đổi PIN 8 số và cấp lại mật khẩu khẩn cấp. |
+
+Giao diện dùng nền sáng, thanh điều hướng cố định bên trái (thu gọn thành thanh dưới trên di động).
+Các thao tác quản trị quy chế được gộp chung vào màn hình **Quy chế Công Ty**; hồ sơ và đổi PIN được gộp
+chung vào **Tài Khoản & Bảo Mật** để tránh trùng lặp màn hình. Có thể mở thẳng màn hình bằng hash:
+`#dashboard`, `#regulations`, `#catch`, `#pending`, `#approved`, `#account`.
 
 ### 2.1. Bộ mã lỗi mặc định
 
 Bộ quy chế gốc bám theo bảng **“QUY CHẾ LÀM VIỆC DÀNH CHO NHÂN VIÊN TẠI CỬA HÀNG”**
 (32 mã lỗi, 2 nhóm `TÁC PHONG` và `VẬN HÀNH`). Mỗi mã có nội dung và mức phạt riêng; khi chọn mã
 ở màn hình **Bắt Lỗi Vi Phạm**, mức phạt được điền tự động và có thể sửa lại số tiền mong muốn ngay
-trong bảng chọn mã hoặc trong danh sách lỗi của phiếu trước khi lưu. Nút khôi phục giúp trả về đúng
+trong danh sách lỗi của phiếu trước khi lưu. Nút khôi phục giúp trả về đúng
 mức phạt gốc của quy chế.
 
 - Mức phạt cố định (VD `VAO TRE 5P` → 30.000đ) điền thẳng vào ô tiền.

@@ -115,6 +115,4 @@ export type ViewKey =
   | 'catch'
   | 'pending'
   | 'approved'
-  | 'adjust'
-  | 'change-pin'
-  | 'profile';
+  | 'account';

@@ -153,7 +153,7 @@ export function PinChangeView({ account, forced = false, knownPin = '', onChange
           value={oldPin}
           onChange={setOldPin}
           reveal={reveal}
-          autoFocus={!knownPin}
+          autoFocus={forced && !knownPin}
         />
         <div className="pin-form-grid">
           <PinField label="Mã PIN mới" hint="đúng 8 chữ số" value={newPin} onChange={setNewPin} reveal={reveal} />
@@ -222,7 +222,6 @@ export function PinChangeView({ account, forced = false, knownPin = '', onChange
 
   return (
     <div className="forced-screen">
-      <div className="login-aurora" aria-hidden="true" />
       <div className="forced-top">
         <div className="brand-seal brand-seal-small">
           <div className="seal-ring">
