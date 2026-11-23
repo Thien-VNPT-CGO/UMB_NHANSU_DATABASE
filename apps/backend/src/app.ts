@@ -60,7 +60,6 @@ import {
   createViolationTicket,
   deleteViolationRegulation,
   deleteViolationTicket,
-  ensureViolationAccount,
   getViolationOverview,
   listViolationEmployees,
   listViolationRegulations,
@@ -70,7 +69,7 @@ import {
   retryViolationDriveSync,
   updateViolationTicket,
   upsertViolationRegulation,
-  VIOLATION_CAPABILITIES,
+  violationCapabilitiesFor,
   VIOLATION_PORTAL_DISPLAY_NAME,
 } from './services/violation.service.js';
 import { AccountsService } from './services/accounts.service.js';
@@ -9006,9 +9005,22 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // HỆ THỐNG KIỂM SOÁT & XỬ LÝ VI PHẠM (web app riêng — PIN 8 số)
   // =====================================================================
   const violationActor = (req: any) => ({
-    id: 'VIOLATION_PORTAL',
+    id: String(req?.violation?.account?.account_id || 'VIOLATION_PORTAL'),
     name: String(req?.violation?.account?.display_name || VIOLATION_PORTAL_DISPLAY_NAME),
+    role: req?.violation?.account?.role === 'CREATOR' ? 'CREATOR' as const : 'ADMIN' as const,
   });
+
+  /** Chặn thao tác quản trị (duyệt phiếu, sửa tiền, quản lý quy chế) với tài khoản nhân viên. */
+  const requireViolationAdmin = (req: any, res: any, next: any) => {
+    if (req?.violation?.role !== 'ADMIN') {
+      return res.status(403).json({
+        error: 'FORBIDDEN',
+        code: 'FORBIDDEN',
+        message: 'Tài khoản nhân viên chỉ được lập phiếu. Duyệt phiếu và sửa mức phạt do Admin thực hiện.',
+      });
+    }
+    return next();
+  };
 
   /**
    * Đẩy ngay cấu hình cổng vi phạm (PIN, quy chế, phiếu) lên Sheet sau thao tác
@@ -9038,17 +9050,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.get('/violations/me', violationAuth, async (req: any, res) => {
     try {
-      const account = await ensureViolationAccount(adapter);
+      const account = req.violation.account;
       res.json({
         account_id: account.account_id,
         display_name: account.display_name,
         system_name: account.system_name,
+        role: account.role,
         must_change_pin: account.must_change_pin === true,
         last_login_at: account.last_login_at || null,
         reset_at: account.reset_at || null,
         created_at: account.created_at,
         updated_at: account.updated_at,
-        capabilities: VIOLATION_CAPABILITIES,
+        capabilities: violationCapabilitiesFor(account.role),
       });
     } catch (err: any) {
       res.status(500).json({ error: 'ME_FAILED', message: err?.message || 'FAILED' });
@@ -9057,7 +9070,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.post('/violations/auth/change-pin', violationAuth, async (req: any, res) => {
     try {
-      const result = await changeViolationPin(adapter, req.body?.old_pin, req.body?.new_pin);
+      const result = await changeViolationPin(
+        adapter,
+        req.violation.account.account_id,
+        req.body?.old_pin,
+        req.body?.new_pin,
+      );
       await flushViolationSettings();
       res.json(result);
     } catch (err: any) {
@@ -9066,18 +9084,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         INVALID_PIN: 'Mã PIN hiện tại không đúng.',
         WEAK_PIN: 'Mã PIN mới phải gồm đúng 8 chữ số.',
         SAME_PIN: 'Mã PIN mới phải khác mã PIN hiện tại.',
+        PIN_IN_USE: 'Mã PIN này đang thuộc tài khoản khác. Vui lòng chọn mã khác.',
       };
       res.status(400).json({ error: code, message: messages[code] || 'Không thể đổi mã PIN.' });
     }
   });
 
-  app.post('/violations/auth/reset-pin', violationAuth, async (_req, res) => {
+  app.post('/violations/auth/reset-pin', violationAuth, async (req: any, res) => {
     try {
-      const result = await resetViolationPin(adapter);
+      const result = await resetViolationPin(adapter, req.violation.account.account_id);
       await flushViolationSettings();
       res.json({ ok: true, ...result });
     } catch (err: any) {
-      res.status(500).json({ error: 'RESET_PIN_FAILED', message: err?.message || 'FAILED' });
+      const code = String(err?.message || 'RESET_PIN_FAILED');
+      res.status(code === 'PIN_IN_USE' ? 400 : 500).json({
+        error: code,
+        message: code === 'PIN_IN_USE'
+          ? 'Không thể cấp lại PIN vì trùng tài khoản khác. Vui lòng liên hệ quản trị.'
+          : 'Không thể cấp lại mã PIN.',
+      });
     }
   });
 
@@ -9089,7 +9114,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/violations/regulations', violationAuth, async (req: any, res) => {
+  app.post('/violations/regulations', violationAuth, requireViolationAdmin, async (req: any, res) => {
     try {
       const saved = await upsertViolationRegulation(adapter, req.body || {}, violationActor(req));
       await flushViolationSettings();
@@ -9104,7 +9129,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.delete('/violations/regulations/:id', violationAuth, async (req: any, res) => {
+  app.delete('/violations/regulations/:id', violationAuth, requireViolationAdmin, async (req: any, res) => {
     try {
       const ok = await deleteViolationRegulation(adapter, req.params.id);
       await flushViolationSettings();
@@ -9165,7 +9190,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/violations/tickets/:id/approve', violationAuth, async (req: any, res) => {
+  app.post('/violations/tickets/:id/approve', violationAuth, requireViolationAdmin, async (req: any, res) => {
     try {
       const ticket = await approveViolationTicket(adapter, req.params.id, violationActor(req));
       if (!ticket) return res.status(404).json({ error: 'TICKET_NOT_FOUND', message: 'Không tìm thấy phiếu vi phạm.' });
@@ -9178,7 +9203,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.patch('/violations/tickets/:id', violationAuth, async (req: any, res) => {
+  app.patch('/violations/tickets/:id', violationAuth, requireViolationAdmin, async (req: any, res) => {
     try {
       const ticket = await updateViolationTicket(adapter, req.params.id, req.body || {}, violationActor(req));
       if (!ticket) return res.status(404).json({ error: 'TICKET_NOT_FOUND', message: 'Không tìm thấy phiếu vi phạm.' });
@@ -9199,9 +9224,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.delete('/violations/tickets/:id', violationAuth, async (req: any, res) => {
+  app.delete('/violations/tickets/:id', violationAuth, requireViolationAdmin, async (req: any, res) => {
     try {
-      const ok = await deleteViolationTicket(adapter, req.params.id);
+      const ok = await deleteViolationTicket(adapter, req.params.id, violationActor(req));
       if (!ok) return res.status(400).json({ error: 'TICKET_NOT_DELETABLE', message: 'Chỉ có thể xóa phiếu đang chờ duyệt.' });
       await flushViolationSettings();
       broadcastUpdate('violations', { action: 'ticket-delete', id: req.params.id });
@@ -9211,7 +9236,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/violations/tickets/:id/sync-drive', violationAuth, async (req: any, res) => {
+  app.post('/violations/tickets/:id/sync-drive', violationAuth, requireViolationAdmin, async (req: any, res) => {
     try {
       const ticket = await retryViolationDriveSync(adapter, req.params.id);
       if (!ticket) return res.status(404).json({ error: 'TICKET_NOT_FOUND', message: 'Không tìm thấy phiếu vi phạm.' });

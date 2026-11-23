@@ -1,5 +1,7 @@
 export type TicketStatus = 'PENDING' | 'APPROVED';
 export type DriveSyncStatus = 'PENDING' | 'SYNCED' | 'ERROR' | 'NOT_CONFIGURED';
+/** ADMIN = toàn quyền; CREATOR = chỉ lập phiếu. */
+export type ViolationRole = 'ADMIN' | 'CREATOR';
 
 export interface Capability {
   code: string;
@@ -11,6 +13,7 @@ export interface ViolationAccount {
   account_id: string;
   display_name: string;
   system_name: string;
+  role: ViolationRole;
   must_change_pin: boolean;
   last_login_at?: string | null;
   reset_at?: string | null;

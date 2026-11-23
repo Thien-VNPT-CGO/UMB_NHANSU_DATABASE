@@ -43,6 +43,8 @@ import { useToast } from './toast';
 interface Props {
   status: 'PENDING' | 'APPROVED';
   refreshKey: number;
+  /** ADMIN: duyệt/sửa tiền/xóa/đồng bộ Drive. Nhân viên chỉ xem. */
+  canManage?: boolean;
 }
 
 function StatusBadge({ status }: { status: ViolationTicket['status'] }) {
@@ -87,7 +89,7 @@ function DriveBadge({ ticket }: { ticket: ViolationTicket }) {
   );
 }
 
-export function TicketsView({ status, refreshKey }: Props) {
+export function TicketsView({ status, refreshKey, canManage = true }: Props) {
   const toast = useToast();
   const [tickets, setTickets] = useState<ViolationTicket[]>([]);
   const [loading, setLoading] = useState(true);
@@ -155,6 +157,7 @@ export function TicketsView({ status, refreshKey }: Props) {
 
   const draftTotal = draftFines.reduce((sum, value) => sum + (Number(value) || 0), 0);
   const editDirty =
+    canManage &&
     !!detail &&
     detail.status === 'PENDING' &&
     draftFines.some((value, index) => value !== (detail.items[index]?.fine_amount ?? 0));
@@ -165,6 +168,7 @@ export function TicketsView({ status, refreshKey }: Props) {
   };
 
   const saveEdits = async (): Promise<ViolationTicket | null> => {
+    if (!canManage) return null;
     if (!detail || detail.status !== 'PENDING') return null;
     if (!editDirty) return detail;
     if (savingEdit) return null;
@@ -411,9 +415,9 @@ export function TicketsView({ status, refreshKey }: Props) {
 
             <div className="ticket-actions">
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDetailId(ticket.ticket_id)}>
-                <Eye size={15} /> {ticket.status === 'PENDING' ? 'Xem & sửa phạt' : 'Chi tiết'}
+                <Eye size={15} /> {ticket.status === 'PENDING' && canManage ? 'Xem & sửa phạt' : 'Chi tiết'}
               </button>
-              {ticket.status === 'PENDING' ? (
+              {ticket.status === 'PENDING' && canManage ? (
                 <>
                   <button type="button" className="btn btn-ghost btn-sm btn-danger-ghost" onClick={() => setDeleteId(ticket.ticket_id)}>
                     <Trash2 size={15} />
@@ -422,7 +426,7 @@ export function TicketsView({ status, refreshKey }: Props) {
                     <Gavel size={15} /> Duyệt
                   </button>
                 </>
-              ) : (
+              ) : ticket.status === 'APPROVED' ? (
                 <>
                   {ticket.drive_view_url ? (
                     <a className="btn btn-ghost btn-sm" href={ticket.drive_view_url} target="_blank" rel="noreferrer">
@@ -441,7 +445,7 @@ export function TicketsView({ status, refreshKey }: Props) {
                     </button>
                   ) : null}
                 </>
-              )}
+              ) : null}
             </div>
           </article>
         ))}
@@ -459,7 +463,7 @@ export function TicketsView({ status, refreshKey }: Props) {
               <button type="button" className="btn btn-ghost" onClick={() => setDetailId('')}>
                 Đóng
               </button>
-              {detail.status === 'PENDING' ? (
+              {detail.status === 'PENDING' && canManage ? (
                 <>
                   <button
                     type="button"
@@ -479,7 +483,7 @@ export function TicketsView({ status, refreshKey }: Props) {
                     <Gavel size={16} /> Duyệt phiếu
                   </button>
                 </>
-              ) : detail.drive_sync_status !== 'SYNCED' ? (
+              ) : detail.status === 'APPROVED' && canManage && detail.drive_sync_status !== 'SYNCED' ? (
                 <button
                   type="button"
                   className="btn btn-gold"
@@ -545,7 +549,7 @@ export function TicketsView({ status, refreshKey }: Props) {
               <h4>
                 <FileText size={15} /> Danh sách lỗi vi phạm
               </h4>
-              {detail.status === 'PENDING' ? (
+              {detail.status === 'PENDING' && canManage ? (
                 <p className="detail-hint">
                   Nhập lại số tiền từng lỗi nếu cần điều chỉnh (ví dụ giảm cho lần vi phạm đầu), rồi bấm “Lưu thay
                   đổi” trước khi duyệt.
@@ -562,7 +566,7 @@ export function TicketsView({ status, refreshKey }: Props) {
                         {item.fine_note ? ` · ${item.fine_note}` : ''}
                       </span>
                     </div>
-                    {detail.status === 'PENDING' ? (
+                    {detail.status === 'PENDING' && canManage ? (
                       <label className="money-input detail-money-input" title="Nhập mức phạt điều chỉnh cho lỗi này">
                         <input
                           type="text"
@@ -583,7 +587,7 @@ export function TicketsView({ status, refreshKey }: Props) {
               </div>
               <div className="detail-total">
                 <span>{detail.status === 'PENDING' && editDirty ? 'Tổng sau điều chỉnh' : 'Tổng mức phạt'}</span>
-                <strong>{money(detail.status === 'PENDING' ? draftTotal : detail.total_amount)}</strong>
+                <strong>{money(editDirty ? draftTotal : detail.total_amount)}</strong>
               </div>
               {detail.original_total_amount !== undefined && detail.original_total_amount !== detail.total_amount ? (
                 <p className="detail-adjust-note">

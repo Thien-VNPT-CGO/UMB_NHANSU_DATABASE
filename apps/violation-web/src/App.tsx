@@ -165,7 +165,7 @@ export function App() {
     setKnownPin(pin);
     setMustChange(result.mustChangePin || result.account.must_change_pin === true);
     setNotice('');
-    setView('dashboard');
+    setView(result.account.role === 'ADMIN' ? 'dashboard' : 'catch');
     try {
       window.history.replaceState(null, '', window.location.pathname + window.location.search);
     } catch {
@@ -210,8 +210,46 @@ export function App() {
 
   const handleSaved = (status: 'PENDING' | 'APPROVED') => {
     bumpRefresh();
+    if (account?.role !== 'ADMIN') {
+      // Nhân viên chỉ có màn lập phiếu: ở lại trang này để lập tiếp.
+      setView('catch');
+      return;
+    }
     navigate(status === 'PENDING' ? 'pending' : 'approved');
   };
+
+  const isAdmin = account?.role === 'ADMIN';
+  const allowedViews = useMemo<ViewKey[]>(
+    () => (isAdmin ? VIEW_KEYS : ['catch', 'account']),
+    [isAdmin],
+  );
+  const navItems = useMemo(
+    () => (isAdmin ? MAIN_NAV : MAIN_NAV.filter(item => item.key === 'catch')),
+    [isAdmin],
+  );
+  const mobileItems = useMemo(
+    () =>
+      isAdmin
+        ? MOBILE_NAV
+        : [
+            MAIN_NAV[1],
+            { key: 'account' as ViewKey, label: 'Tài khoản', hint: 'Hồ sơ & PIN', icon: UserRound },
+          ],
+    [isAdmin],
+  );
+
+  // Chặn deep-link/hash tới màn hình ngoài quyền của tài khoản nhân viên.
+  useEffect(() => {
+    if (!account || mustChange) return;
+    if (!allowedViews.includes(view)) {
+      setView(allowedViews[0]);
+      try {
+        window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${allowedViews[0]}`);
+      } catch {
+        /* bỏ qua */
+      }
+    }
+  }, [account, mustChange, view, allowedViews]);
 
   const currentLabel = useMemo(() => VIEW_LABELS[view], [view]);
 
@@ -247,15 +285,29 @@ export function App() {
   }
 
   const renderView = () => {
+    if (!isAdmin) {
+      if (view === 'account') {
+        return (
+          <AccountView
+            account={account}
+            knownPin={knownPin}
+            onChanged={handlePinChanged}
+            onReset={handlePinReset}
+            onLogout={() => leaveSession('')}
+          />
+        );
+      }
+      return <CatchViolationView refreshKey={refreshKey} onSaved={handleSaved} canApprove={false} />;
+    }
     switch (view) {
       case 'regulations':
         return <RegulationsView refreshKey={refreshKey} />;
       case 'catch':
-        return <CatchViolationView refreshKey={refreshKey} onSaved={handleSaved} />;
+        return <CatchViolationView refreshKey={refreshKey} onSaved={handleSaved} canApprove />;
       case 'pending':
-        return <TicketsView status="PENDING" refreshKey={refreshKey} />;
+        return <TicketsView status="PENDING" refreshKey={refreshKey} canManage />;
       case 'approved':
-        return <TicketsView status="APPROVED" refreshKey={refreshKey} />;
+        return <TicketsView status="APPROVED" refreshKey={refreshKey} canManage />;
       case 'account':
         return (
           <AccountView
@@ -285,8 +337,8 @@ export function App() {
         </button>
 
         <nav className="side-nav" aria-label="Điều hướng chính">
-          <span className="side-nav-label">Điều hành</span>
-          {MAIN_NAV.map(item => {
+          <span className="side-nav-label">{isAdmin ? 'Điều hành' : 'Lập phiếu'}</span>
+          {navItems.map(item => {
             const Icon = item.icon;
             return (
               <button
@@ -357,7 +409,7 @@ export function App() {
               <span className="mini-avatar">{initials(account.display_name)}</span>
               <span className="topbar-account-copy">
                 <strong>{account.display_name}</strong>
-                <span>Toàn quyền hệ thống</span>
+                <span>{isAdmin ? 'Toàn quyền hệ thống' : 'Nhân viên lập phiếu'}</span>
               </span>
             </button>
 
@@ -371,7 +423,7 @@ export function App() {
       </div>
 
       <nav className="mobile-nav" aria-label="Điều hướng nhanh">
-        {MOBILE_NAV.map(item => {
+        {mobileItems.map(item => {
           const Icon = item.icon;
           const active = view === item.key;
           return (

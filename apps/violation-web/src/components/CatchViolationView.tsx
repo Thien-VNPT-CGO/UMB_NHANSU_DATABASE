@@ -34,9 +34,11 @@ import { useToast } from './toast';
 interface Props {
   refreshKey: number;
   onSaved: (status: TicketStatus) => void;
+  /** ADMIN được duyệt ngay & sửa tiền; CREATOR chỉ lập phiếu theo đúng quy chế. */
+  canApprove: boolean;
 }
 
-export function CatchViolationView({ refreshKey, onSaved }: Props) {
+export function CatchViolationView({ refreshKey, onSaved, canApprove }: Props) {
   const toast = useToast();
   const [employees, setEmployees] = useState<ViolationEmployee[]>([]);
   const [regulations, setRegulations] = useState<Regulation[]>([]);
@@ -160,6 +162,7 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
 
   const save = async (status: TicketStatus) => {
     if (saving) return;
+    if (status === 'APPROVED' && !canApprove) return;
     if (!selectedEmployee) {
       toast('Vui lòng chọn nhân viên vi phạm.', 'error');
       return;
@@ -189,7 +192,12 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
           );
         }
       } else {
-        toast(`Đã lưu tạm phiếu ${ticket.ticket_code} vào khu vực Chưa duyệt.`, 'success');
+        toast(
+          canApprove
+            ? `Đã lưu tạm phiếu ${ticket.ticket_code} vào khu vực Chưa duyệt.`
+            : `Đã gửi phiếu ${ticket.ticket_code} cho Admin duyệt.`,
+          'success',
+        );
       }
       resetComposer();
       onSaved(status);
@@ -210,7 +218,11 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
           </>
         }
         title="Lập phiếu vi phạm"
-        description="Chọn nhân viên, gắn các lỗi vi phạm và điều chỉnh mức phạt. Lưu tạm để rà soát hoặc duyệt ngay để cập nhật Drive và TRỪ KPI."
+        description={
+          canApprove
+            ? 'Chọn nhân viên, gắn các lỗi vi phạm và điều chỉnh mức phạt. Lưu tạm để rà soát hoặc duyệt ngay để cập nhật Drive và TRỪ KPI.'
+            : 'Chọn nhân viên và gắn các lỗi vi phạm theo đúng quy chế. Phiếu lưu tạm sẽ chuyển cho Admin duyệt; mức phạt do quy chế quy định.'
+        }
       />
 
       {loading ? <Spinner label="Đang tải nhân viên và quy chế..." /> : null}
@@ -354,32 +366,38 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
                               </span>
                             ) : null}
                           </div>
-                          <div className="item-amount">
-                            <label className="money-input">
-                              <input
-                                type="text"
-                                inputMode="numeric"
-                                aria-label={`Số tiền lỗi ${item.name}`}
-                                title="Sửa số tiền lỗi cho phiếu này"
-                                value={item.fine_amount ? item.fine_amount.toLocaleString('vi-VN') : ''}
-                                placeholder={item.fine_note ? 'Nhập số tiền' : '0'}
-                                onFocus={event => event.currentTarget.select()}
-                                onChange={event => updateFine(item.regulation_id, event.target.value)}
-                              />
-                              <span>đ</span>
-                            </label>
-                            {overridden ? (
-                              <button
-                                type="button"
-                                className="icon-button icon-button-sm"
-                                onClick={() => resetFine(item.regulation_id)}
-                                title={`Khôi phục mức phạt mặc định (${money(defaultFine)})`}
-                                aria-label={`Khôi phục mức phạt mặc định cho ${item.name}`}
-                              >
-                                <RotateCcw size={14} />
-                              </button>
-                            ) : null}
-                          </div>
+                          {canApprove ? (
+                            <div className="item-amount">
+                              <label className="money-input">
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  aria-label={`Số tiền lỗi ${item.name}`}
+                                  title="Sửa số tiền lỗi cho phiếu này"
+                                  value={item.fine_amount ? item.fine_amount.toLocaleString('vi-VN') : ''}
+                                  placeholder={item.fine_note ? 'Nhập số tiền' : '0'}
+                                  onFocus={event => event.currentTarget.select()}
+                                  onChange={event => updateFine(item.regulation_id, event.target.value)}
+                                />
+                                <span>đ</span>
+                              </label>
+                              {overridden ? (
+                                <button
+                                  type="button"
+                                  className="icon-button icon-button-sm"
+                                  onClick={() => resetFine(item.regulation_id)}
+                                  title={`Khôi phục mức phạt mặc định (${money(defaultFine)})`}
+                                  aria-label={`Khôi phục mức phạt mặc định cho ${item.name}`}
+                                >
+                                  <RotateCcw size={14} />
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <strong className="item-fixed-amount">
+                              {item.fine_amount > 0 ? money(item.fine_amount) : item.fine_note || 'Theo quy chế'}
+                            </strong>
+                          )}
                           <button
                             type="button"
                             className="icon-button icon-button-danger"
@@ -420,17 +438,19 @@ export function CatchViolationView({ refreshKey, onSaved }: Props) {
                 <div className="composer-actions">
                   <button type="button" className="btn btn-ghost" onClick={() => void save('PENDING')} disabled={!!saving}>
                     {saving === 'PENDING' ? <Loader2 size={16} className="spin" /> : <ShieldCheck size={16} />}
-                    Lưu tạm
+                    {canApprove ? 'Lưu tạm' : 'Gửi phiếu chờ duyệt'}
                   </button>
-                  <button
-                    type="button"
-                    className="btn btn-gold"
-                    onClick={() => setAskApprove(true)}
-                    disabled={!!saving}
-                  >
-                    {saving === 'APPROVED' ? <Loader2 size={16} className="spin" /> : <Gavel size={16} />}
-                    Duyệt phiếu
-                  </button>
+                  {canApprove ? (
+                    <button
+                      type="button"
+                      className="btn btn-gold"
+                      onClick={() => setAskApprove(true)}
+                      disabled={!!saving}
+                    >
+                      {saving === 'APPROVED' ? <Loader2 size={16} className="spin" /> : <Gavel size={16} />}
+                      Duyệt phiếu
+                    </button>
+                  ) : null}
                 </div>
               </div>
             </>

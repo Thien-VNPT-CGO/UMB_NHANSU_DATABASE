@@ -148,7 +148,7 @@ export function LoginScreen({ onSuccess, notice }: Props) {
                 <LockKeyhole size={13} /> CỔNG NỘI BỘ
               </span>
               <h2>Đăng nhập tối cao</h2>
-              <p>Chỉ cần mã PIN 8 số để mở phiên làm việc.</p>
+              <p>Mỗi mã PIN 8 số ứng với một tài khoản: Admin toàn quyền hoặc nhân viên lập phiếu.</p>
             </div>
 
             <div className="login-account">
@@ -158,7 +158,7 @@ export function LoginScreen({ onSuccess, notice }: Props) {
                 <span>{SYSTEM_NAME}</span>
               </div>
               <span className="account-role">
-                <BadgeCheck size={13} /> TOÀN QUYỀN
+                <BadgeCheck size={13} /> 2 CẤP QUYỀN
               </span>
             </div>
 

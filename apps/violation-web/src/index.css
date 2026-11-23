@@ -662,6 +662,17 @@ select.input,
   outline: none;
 }
 
+/* Nhân viên lập phiếu: mức phạt cố định theo quy chế, chỉ hiển thị. */
+.item-fixed-amount {
+  flex: none;
+  min-width: 96px;
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 650;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .money-input span {
   color: var(--muted-2);
   font-size: 0.78rem;

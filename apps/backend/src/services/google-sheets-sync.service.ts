@@ -668,6 +668,7 @@ export function mergeSystemSettingsFromSheet(curSettings: any, settingsObj: any)
   // `violationSettingsUpdatedAt` quyết định bản nào mới hơn.
   const VIOLATION_SETTING_KEYS = [
     'violationPortalAccount',
+    'violationPortalAccounts',
     'violationRegulations',
     'violationTickets',
     'violationCatalogVersion',

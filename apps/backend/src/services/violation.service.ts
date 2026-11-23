@@ -3,7 +3,9 @@
  * ==================================
  * Web app riêng "Tòa Án Tối Cao Ụm Bò Milk".
  *
- * - Đăng nhập bằng PIN 8 số (mặc định 12345678, reset 68686868).
+ * - Đăng nhập bằng PIN 8 số, mỗi PIN ứng với một tài khoản:
+ *     + ADMIN   — toàn quyền (mặc định 12345678).
+ *     + CREATOR — chỉ lập phiếu, không duyệt/không sửa tiền (mặc định 68686868).
  * - Quy chế + phiếu vi phạm lưu trong system settings (tab CAU_HINH_HE_THONG)
  *   để đi theo luồng đồng bộ Sheet sẵn có.
  * - Chỉ phiếu ĐÃ DUYỆT mới:
@@ -27,6 +29,12 @@ import { getDriveStorage } from './drive-storage.service.js';
 export const VIOLATION_REGULATIONS_KEY = 'violationRegulations';
 export const VIOLATION_TICKETS_KEY = 'violationTickets';
 export const VIOLATION_ACCOUNT_KEY = 'violationPortalAccount';
+/** Danh sách tài khoản cổng vi phạm (ADMIN + CREATOR). */
+export const VIOLATION_ACCOUNTS_KEY = 'violationPortalAccounts';
+export const VIOLATION_ADMIN_ACCOUNT_ID = 'VIOLATION_PORTAL';
+export const VIOLATION_STAFF_ACCOUNT_ID = 'VIOLATION_STAFF';
+export const VIOLATION_STAFF_DISPLAY_NAME = 'Nhân viên lập phiếu';
+export type ViolationRole = 'ADMIN' | 'CREATOR';
 /** Mốc cập nhật dữ liệu cổng vi phạm — chống pull Sheets cũ ghi đè dữ liệu vừa lưu. */
 export const VIOLATION_SETTINGS_STAMP_KEY = 'violationSettingsUpdatedAt';
 /** Phiên bản bộ quy chế mặc định (đổi khi cập nhật bảng lỗi công ty). */
@@ -36,7 +44,10 @@ export const VIOLATION_CATALOG_VERSION = '2026-11-13';
 export const VIOLATION_PORTAL_DISPLAY_NAME = 'Tòa Án Tối Cao Ụm Bò Milk';
 export const VIOLATION_PORTAL_SYSTEM_NAME = 'HỆ THỐNG KIỂM SOÁT & XỬ LÝ VI PHẠM';
 export const VIOLATION_DEFAULT_PIN = '12345678';
-export const VIOLATION_RESET_PIN = '68686868';
+/** PIN mặc định của tài khoản nhân viên lập phiếu (CREATOR). */
+export const VIOLATION_STAFF_PIN = '68686868';
+/** Giữ tên cũ cho tương thích: PIN cấp lại của tài khoản nhân viên. */
+export const VIOLATION_RESET_PIN = VIOLATION_STAFF_PIN;
 export const VIOLATION_PIN_RE = /^\d{8}$/;
 
 export const VIOLATION_DRIVE_ROOT_ID = '1ZX8PitPsemXHjZz7ftPJR-Y10PgWOb-h';
@@ -107,6 +118,8 @@ export interface ViolationPortalAccount {
   account_id: string;
   display_name: string;
   system_name: string;
+  /** ADMIN = toàn quyền; CREATOR = chỉ lập phiếu, không duyệt/không sửa tiền. */
+  role: ViolationRole;
   pin_hash: string;
   pin_version: number;
   must_change_pin: boolean;
@@ -128,9 +141,11 @@ export interface ViolationEmployeeRow {
 export interface ViolationActor {
   id: string;
   name?: string;
+  role?: ViolationRole;
 }
 
-export const VIOLATION_CAPABILITIES = [
+/** Toàn quyền cho ADMIN. */
+const ADMIN_CAPABILITIES = [
   { code: 'REGULATIONS_VIEW', name: 'Tra cứu Quy chế Công ty', description: 'Xem toàn bộ lỗi vi phạm và mức phạt đang áp dụng.' },
   { code: 'VIOLATION_CREATE', name: 'Bắt lỗi vi phạm', description: 'Lập phiếu vi phạm cho bất kỳ nhân viên nào trong hệ thống.' },
   { code: 'VIOLATION_DRAFT', name: 'Lưu tạm phiếu', description: 'Lưu phiếu vào khu vực Chưa duyệt để kiểm tra lại.' },
@@ -142,6 +157,18 @@ export const VIOLATION_CAPABILITIES = [
   { code: 'ACCOUNT_SECURITY', name: 'Quản trị mã PIN tối cao', description: 'Đổi PIN 8 số và cấp lại PIN khẩn cấp theo quy trình bảo mật.' },
   { code: 'PERSONAL_SOVEREIGNTY', name: 'Thông tin cá nhân tối cao', description: 'Xem đầy đủ thẩm quyền, dấu ấn phiên và trạng thái bảo mật của tài khoản.' },
 ];
+
+/** Tài khoản nhân viên: chỉ tra cứu quy chế để chọn lỗi và lập phiếu nháp. */
+const CREATOR_CAPABILITIES = ADMIN_CAPABILITIES.filter(capability =>
+  ['REGULATIONS_VIEW', 'VIOLATION_CREATE', 'VIOLATION_DRAFT', 'ACCOUNT_SECURITY', 'PERSONAL_SOVEREIGNTY'].includes(capability.code),
+);
+
+export function violationCapabilitiesFor(role: ViolationRole) {
+  return role === 'ADMIN' ? ADMIN_CAPABILITIES : CREATOR_CAPABILITIES;
+}
+
+/** Giữ xuất cũ (toàn bộ thẩm quyền) cho nơi khác nếu còn tham chiếu. */
+export const VIOLATION_CAPABILITIES = ADMIN_CAPABILITIES;
 
 // ---------------------------------------------------------------- defaults
 /**
@@ -328,12 +355,13 @@ function publicAccount(acc: ViolationPortalAccount) {
     account_id: acc.account_id,
     display_name: acc.display_name,
     system_name: acc.system_name,
+    role: acc.role,
     must_change_pin: acc.must_change_pin === true,
     last_login_at: acc.last_login_at || null,
     reset_at: acc.reset_at || null,
     created_at: acc.created_at,
     updated_at: acc.updated_at,
-    capabilities: VIOLATION_CAPABILITIES,
+    capabilities: violationCapabilitiesFor(acc.role),
   };
 }
 
@@ -355,59 +383,165 @@ async function persistSettings(repo: ISheetsRepository, patch: Record<string, an
 }
 
 // ---------------------------------------------------------------- account
-export async function ensureViolationAccount(repo: ISheetsRepository): Promise<ViolationPortalAccount> {
-  const settings = await getSettings(repo);
-  const existing = settings?.[VIOLATION_ACCOUNT_KEY];
-  if (existing && existing.pin_hash) {
-    return {
-      account_id: String(existing.account_id || 'VIOLATION_PORTAL'),
-      display_name: String(existing.display_name || VIOLATION_PORTAL_DISPLAY_NAME),
-      system_name: String(existing.system_name || VIOLATION_PORTAL_SYSTEM_NAME),
-      pin_hash: String(existing.pin_hash),
-      pin_version: Number(existing.pin_version || 1),
-      must_change_pin: existing.must_change_pin !== false,
-      last_login_at: existing.last_login_at ? String(existing.last_login_at) : undefined,
-      reset_at: existing.reset_at ? String(existing.reset_at) : undefined,
-      created_at: String(existing.created_at || new Date().toISOString()),
-      updated_at: String(existing.updated_at || new Date().toISOString()),
-    };
-  }
+function normalizeAccount(raw: any): ViolationPortalAccount | null {
+  if (!raw || typeof raw !== 'object' || !raw.pin_hash) return null;
+  const role: ViolationRole = raw.role === 'CREATOR' ? 'CREATOR' : 'ADMIN';
+  return {
+    account_id: String(raw.account_id || (role === 'ADMIN' ? VIOLATION_ADMIN_ACCOUNT_ID : VIOLATION_STAFF_ACCOUNT_ID)),
+    display_name: String(raw.display_name || (role === 'ADMIN' ? VIOLATION_PORTAL_DISPLAY_NAME : VIOLATION_STAFF_DISPLAY_NAME)),
+    system_name: String(raw.system_name || VIOLATION_PORTAL_SYSTEM_NAME),
+    role,
+    pin_hash: String(raw.pin_hash),
+    pin_version: Number(raw.pin_version || 1),
+    must_change_pin: raw.must_change_pin === true,
+    last_login_at: raw.last_login_at ? String(raw.last_login_at) : undefined,
+    reset_at: raw.reset_at ? String(raw.reset_at) : undefined,
+    created_at: String(raw.created_at || new Date().toISOString()),
+    updated_at: String(raw.updated_at || new Date().toISOString()),
+  };
+}
 
-  const now = new Date().toISOString();
-  const account: ViolationPortalAccount = {
-    account_id: 'VIOLATION_PORTAL',
-    display_name: VIOLATION_PORTAL_DISPLAY_NAME,
+function defaultStaffAccount(now: string): Omit<ViolationPortalAccount, 'pin_hash'> & { pin_hash?: string } {
+  return {
+    account_id: VIOLATION_STAFF_ACCOUNT_ID,
+    display_name: VIOLATION_STAFF_DISPLAY_NAME,
     system_name: VIOLATION_PORTAL_SYSTEM_NAME,
-    pin_hash: await hashPassword(VIOLATION_DEFAULT_PIN),
+    role: 'CREATOR',
     pin_version: 1,
-    must_change_pin: true,
+    must_change_pin: false,
     created_at: now,
     updated_at: now,
   };
-  await persistSettings(repo, { [VIOLATION_ACCOUNT_KEY]: account });
-  return account;
+}
+
+async function persistAccounts(repo: ISheetsRepository, accounts: ViolationPortalAccount[]): Promise<void> {
+  const admin = accounts.find(a => a.role === 'ADMIN') || accounts[0];
+  await persistSettings(repo, {
+    [VIOLATION_ACCOUNTS_KEY]: accounts,
+    // Giữ khoá đơn cũ = tài khoản ADMIN để dữ liệu/bản cũ vẫn đọc được.
+    [VIOLATION_ACCOUNT_KEY]: admin,
+  });
+}
+
+/**
+ * PIN nhân viên mặc định là 68686868. Nếu tài khoản ADMIN đang dùng đúng mã này
+ * (thường do lần cấp lại PIN cũ), đưa ADMIN về PIN mặc định 12345678 và thu hồi
+ * phiên cũ để 68686868 luôn đăng nhập đúng tài khoản nhân viên.
+ */
+async function resolveStaffPinConflict(accounts: ViolationPortalAccount[]): Promise<boolean> {
+  const staff = accounts.find(acc => acc.role === 'CREATOR');
+  const admin = accounts.find(acc => acc.role === 'ADMIN');
+  if (!staff || !admin || staff.account_id === admin.account_id) return false;
+  if (!(await verifyPassword(VIOLATION_STAFF_PIN, admin.pin_hash))) return false;
+
+  admin.pin_hash = await hashPassword(VIOLATION_DEFAULT_PIN);
+  admin.pin_version = Number(admin.pin_version || 1) + 1;
+  admin.must_change_pin = true;
+  admin.updated_at = new Date().toISOString();
+  return true;
+}
+
+/**
+ * Bảo đảm luôn đủ 2 tài khoản:
+ *  - ADMIN   : toàn quyền, giữ nguyên PIN hiện có khi nâng cấp.
+ *  - CREATOR : chỉ lập phiếu, PIN mặc định 68686868.
+ */
+export async function ensureViolationAccounts(repo: ISheetsRepository): Promise<ViolationPortalAccount[]> {
+  const settings = await getSettings(repo);
+  const now = new Date().toISOString();
+  const stored = Array.isArray(settings?.[VIOLATION_ACCOUNTS_KEY]) ? settings[VIOLATION_ACCOUNTS_KEY] : null;
+
+  if (stored) {
+    const accounts = stored
+      .map(normalizeAccount)
+      .filter((acc): acc is ViolationPortalAccount => !!acc);
+    if (accounts.length > 0) {
+      let changed = accounts.length !== stored.length;
+      if (!accounts.some(acc => acc.role === 'ADMIN')) {
+        accounts[0] = { ...accounts[0], role: 'ADMIN' };
+        changed = true;
+      }
+      if (!accounts.some(acc => acc.role === 'CREATOR')) {
+        accounts.push({
+          ...defaultStaffAccount(now),
+          pin_hash: await hashPassword(VIOLATION_STAFF_PIN),
+        });
+        changed = true;
+      }
+      if (await resolveStaffPinConflict(accounts)) changed = true;
+      if (changed) await persistAccounts(repo, accounts);
+      return accounts;
+    }
+  }
+
+  // Nâng cấp lần đầu: tài khoản đơn cũ trở thành ADMIN, giữ nguyên PIN.
+  const legacy = normalizeAccount(settings?.[VIOLATION_ACCOUNT_KEY]);
+  const admin: ViolationPortalAccount = legacy
+    ? { ...legacy, account_id: VIOLATION_ADMIN_ACCOUNT_ID, role: 'ADMIN' }
+    : {
+        account_id: VIOLATION_ADMIN_ACCOUNT_ID,
+        display_name: VIOLATION_PORTAL_DISPLAY_NAME,
+        system_name: VIOLATION_PORTAL_SYSTEM_NAME,
+        role: 'ADMIN',
+        pin_hash: await hashPassword(VIOLATION_DEFAULT_PIN),
+        pin_version: 1,
+        must_change_pin: true,
+        created_at: now,
+        updated_at: now,
+      };
+  const staff: ViolationPortalAccount = {
+    ...defaultStaffAccount(now),
+    pin_hash: await hashPassword(VIOLATION_STAFF_PIN),
+  };
+  const accounts = [admin, staff];
+  await resolveStaffPinConflict(accounts);
+  await persistAccounts(repo, accounts);
+  return accounts;
+}
+
+/** Tương thích cũ: trả về tài khoản ADMIN. */
+export async function ensureViolationAccount(repo: ISheetsRepository): Promise<ViolationPortalAccount> {
+  const accounts = await ensureViolationAccounts(repo);
+  return accounts.find(acc => acc.role === 'ADMIN') || accounts[0];
+}
+
+async function findAccountByPin(
+  accounts: ViolationPortalAccount[],
+  pin: string,
+): Promise<ViolationPortalAccount | null> {
+  for (const account of accounts) {
+    if (await verifyPassword(pin, account.pin_hash)) return account;
+  }
+  return null;
+}
+
+function signViolationToken(account: ViolationPortalAccount): string {
+  return jwt.sign(
+    { sub: account.account_id, typ: 'violation-access', pv: account.pin_version, role: account.role },
+    getJwtSecret(),
+    { expiresIn: '12h' },
+  );
 }
 
 export async function loginViolationPortal(repo: ISheetsRepository, pinInput: string) {
   const pin = String(pinInput || '').trim();
   if (!VIOLATION_PIN_RE.test(pin)) throw new Error('INVALID_PIN');
-  const account = await ensureViolationAccount(repo);
-  if (!(await verifyPassword(pin, account.pin_hash))) throw new Error('INVALID_PIN');
+  const accounts = await ensureViolationAccounts(repo);
+
+  // PIN quyết định tài khoản: 12345678 -> ADMIN, 68686868 -> CREATOR.
+  const matched = await findAccountByPin(accounts, pin);
+  if (!matched) throw new Error('INVALID_PIN');
 
   const now = new Date().toISOString();
-  const next: ViolationPortalAccount = { ...account, last_login_at: now, updated_at: now };
-  await persistSettings(repo, { [VIOLATION_ACCOUNT_KEY]: next });
+  const next: ViolationPortalAccount = { ...matched, last_login_at: now, updated_at: now };
+  await persistAccounts(repo, accounts.map(acc => (acc.account_id === next.account_id ? next : acc)));
 
-  const token = jwt.sign(
-    { sub: next.account_id, typ: 'violation-access', pv: next.pin_version, role: 'VIOLATION_PORTAL' },
-    getJwtSecret(),
-    { expiresIn: '12h' },
-  );
-  return { token, account: publicAccount(next), mustChangePin: next.must_change_pin === true };
+  return { token: signViolationToken(next), account: publicAccount(next), mustChangePin: next.must_change_pin === true };
 }
 
 export async function changeViolationPin(
   repo: ISheetsRepository,
+  accountId: string,
   oldPinInput: string,
   newPinInput: string,
 ) {
@@ -416,8 +550,13 @@ export async function changeViolationPin(
   if (!VIOLATION_PIN_RE.test(newPin)) throw new Error('WEAK_PIN');
   if (oldPin === newPin) throw new Error('SAME_PIN');
 
-  const account = await ensureViolationAccount(repo);
+  const accounts = await ensureViolationAccounts(repo);
+  const account = accounts.find(acc => acc.account_id === accountId);
+  if (!account) throw new Error('INVALID_TOKEN');
   if (!(await verifyPassword(oldPin, account.pin_hash))) throw new Error('INVALID_PIN');
+  if (await findAccountByPin(accounts.filter(acc => acc.account_id !== account.account_id), newPin)) {
+    throw new Error('PIN_IN_USE');
+  }
 
   const now = new Date().toISOString();
   const next: ViolationPortalAccount = {
@@ -427,40 +566,50 @@ export async function changeViolationPin(
     must_change_pin: false,
     updated_at: now,
   };
-  await persistSettings(repo, { [VIOLATION_ACCOUNT_KEY]: next });
+  await persistAccounts(repo, accounts.map(acc => (acc.account_id === next.account_id ? next : acc)));
 
-  const token = jwt.sign(
-    { sub: next.account_id, typ: 'violation-access', pv: next.pin_version, role: 'VIOLATION_PORTAL' },
-    getJwtSecret(),
-    { expiresIn: '12h' },
-  );
-  return { token, account: publicAccount(next), mustChangePin: false };
+  return { token: signViolationToken(next), account: publicAccount(next), mustChangePin: false };
 }
 
 /**
- * Cấp lại PIN khẩn cấp: đặt PIN về 68686868, tăng version (văng mọi phiên cũ),
- * trả về thông điệp "liên hệ Admin" để không lộ PIN qua giao diện.
+ * Cấp lại PIN khẩn cấp cho chính tài khoản đang đăng nhập:
+ *  - ADMIN   -> 12345678
+ *  - CREATOR -> 68686868
+ * Tăng version để văng mọi phiên cũ và buộc đổi PIN ở lần đăng nhập kế tiếp.
  */
-export async function resetViolationPin(repo: ISheetsRepository): Promise<{ message: string }> {
-  const account = await ensureViolationAccount(repo);
+export async function resetViolationPin(repo: ISheetsRepository, accountId: string): Promise<{ message: string }> {
+  const accounts = await ensureViolationAccounts(repo);
+  const account = accounts.find(acc => acc.account_id === accountId);
+  if (!account) throw new Error('INVALID_TOKEN');
+
+  const targetPin = account.role === 'ADMIN' ? VIOLATION_DEFAULT_PIN : VIOLATION_STAFF_PIN;
+  if (await findAccountByPin(accounts.filter(acc => acc.account_id !== account.account_id), targetPin)) {
+    throw new Error('PIN_IN_USE');
+  }
+
   const now = new Date().toISOString();
   const next: ViolationPortalAccount = {
     ...account,
-    pin_hash: await hashPassword(VIOLATION_RESET_PIN),
+    pin_hash: await hashPassword(targetPin),
     pin_version: Number(account.pin_version || 1) + 1,
     must_change_pin: true,
     reset_at: now,
     updated_at: now,
   };
-  await persistSettings(repo, { [VIOLATION_ACCOUNT_KEY]: next });
-  return { message: 'Vui lòng liên hệ Admin để lấy mã PIN.' };
+  await persistAccounts(repo, accounts.map(acc => (acc.account_id === next.account_id ? next : acc)));
+  return {
+    message:
+      account.role === 'ADMIN'
+        ? 'Mã PIN đã được cấp lại về mã mặc định của Admin. Hãy đăng nhập lại và đổi PIN ngay.'
+        : 'Mã PIN đã được cấp lại về mã mặc định của nhân viên. Hãy đăng nhập lại và đổi PIN ngay.',
+  };
 }
 
 export interface ViolationTokenPayload {
   sub: string;
   typ: 'violation-access';
   pv: number;
-  role: 'VIOLATION_PORTAL';
+  role: ViolationRole;
   account: ViolationPortalAccount;
 }
 
@@ -476,9 +625,11 @@ export async function verifyViolationToken(
     throw new Error('INVALID_TOKEN');
   }
   if (decoded?.typ !== 'violation-access') throw new Error('INVALID_TOKEN');
-  const account = await ensureViolationAccount(repo);
+  const accounts = await ensureViolationAccounts(repo);
+  const account = accounts.find(acc => acc.account_id === String(decoded?.sub || ''));
+  if (!account) throw new Error('INVALID_TOKEN');
   if (Number(decoded.pv) !== Number(account.pin_version)) throw new Error('TOKEN_REVOKED');
-  return { ...decoded, account };
+  return { ...decoded, role: account.role, account };
 }
 
 /** Middleware xác thực riêng cho cổng vi phạm (không dùng token nhân viên/admin). */
@@ -675,17 +826,25 @@ export async function createViolationTicket(
     || String((employee as any).default_branch_id || 'Chưa xác định');
 
   const rawItems = Array.isArray(input?.items) ? input.items : [];
+  const isAdmin = actor.role === 'ADMIN';
   const items: ViolationTicketItem[] = rawItems
     .map((it: any) => {
       const reg = regulations.find(r => r.regulation_id === String(it?.regulation_id || ''));
-      const name = String(it?.name || reg?.name || '').trim();
+      // Tài khoản nhân viên chỉ được chọn lỗi có trong quy chế, mức phạt lấy
+      // đúng theo quy chế (không cho gửi số tiền tùy ý qua API).
+      if (!isAdmin && !reg) return null;
+      const name = String(reg?.name || it?.name || '').trim();
       if (!name) return null;
       return {
-        regulation_id: String(it?.regulation_id || reg?.regulation_id || ''),
+        regulation_id: String(reg?.regulation_id || it?.regulation_id || ''),
         name: name.slice(0, 200),
-        category: String(it?.category || reg?.category || 'CHUNG').slice(0, 60),
-        fine_amount: safeMoney(it?.fine_amount !== undefined ? it.fine_amount : reg?.fine_amount),
-        fine_note: it?.fine_note ? String(it.fine_note).slice(0, 120) : reg?.fine_note,
+        category: String(reg?.category || it?.category || 'CHUNG').slice(0, 60),
+        fine_amount: isAdmin
+          ? safeMoney(it?.fine_amount !== undefined ? it.fine_amount : reg?.fine_amount)
+          : safeMoney(reg?.fine_amount ?? 0),
+        fine_note: isAdmin
+          ? (it?.fine_note ? String(it.fine_note).slice(0, 120) : reg?.fine_note)
+          : reg?.fine_note,
       } as ViolationTicketItem;
     })
     .filter((it: ViolationTicketItem | null): it is ViolationTicketItem => !!it);
@@ -694,7 +853,7 @@ export async function createViolationTicket(
 
   const date = normalizeDate(input?.violation_date);
   const now = new Date().toISOString();
-  const desiredApproved = input?.status === 'APPROVED';
+  const desiredApproved = isAdmin && input?.status === 'APPROVED';
   const ticket: ViolationTicket = {
     ticket_id: `VT_${Date.now()}_${randomUUID().slice(0, 8)}`,
     ticket_code: makeTicketCode(date),
@@ -732,6 +891,7 @@ export async function approveViolationTicket(
   ticketId: string,
   actor: ViolationActor,
 ): Promise<ViolationTicket | null> {
+  if (actor.role !== 'ADMIN') throw new Error('FORBIDDEN');
   const tickets = await listViolationTickets(repo);
   const ticket = tickets.find(t => t.ticket_id === ticketId);
   if (!ticket) return null;
@@ -780,7 +940,12 @@ export async function approveViolationTicket(
   return next;
 }
 
-export async function deleteViolationTicket(repo: ISheetsRepository, ticketId: string): Promise<boolean> {
+export async function deleteViolationTicket(
+  repo: ISheetsRepository,
+  ticketId: string,
+  actor?: ViolationActor,
+): Promise<boolean> {
+  if (actor && actor.role !== 'ADMIN') throw new Error('FORBIDDEN');
   const tickets = await listViolationTickets(repo);
   const ticket = tickets.find(t => t.ticket_id === ticketId);
   if (!ticket || ticket.status === 'APPROVED') return false;
@@ -800,6 +965,7 @@ export async function updateViolationTicket(
   input: any,
   actor: ViolationActor,
 ): Promise<ViolationTicket | null> {
+  if (actor.role !== 'ADMIN') throw new Error('FORBIDDEN');
   const tickets = await listViolationTickets(repo);
   const ticket = tickets.find(t => t.ticket_id === ticketId);
   if (!ticket) return null;

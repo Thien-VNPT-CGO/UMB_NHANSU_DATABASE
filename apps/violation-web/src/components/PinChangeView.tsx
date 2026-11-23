@@ -141,7 +141,7 @@ export function PinChangeView({ account, forced = false, knownPin = '', onChange
         <div className="alert alert-gold">
           <ShieldAlert size={18} />
           <span>
-            Hệ thống yêu cầu đổi mã PIN trước khi cho phép tra cứu quy chế, lập phiếu hoặc duyệt vi phạm.
+            Hệ thống yêu cầu đổi mã PIN trước khi cho phép tiếp tục sử dụng.
           </span>
         </div>
       ) : null}
@@ -192,11 +192,11 @@ export function PinChangeView({ account, forced = false, knownPin = '', onChange
         </div>
         <div>
           <ShieldCheck size={16} />
-          <span>Đổi PIN thành công sẽ thu hồi mọi phiên đăng nhập cũ ngay lập tức.</span>
+          <span>Mỗi mã PIN ứng với một tài khoản riêng: Admin toàn quyền, nhân viên chỉ lập phiếu.</span>
         </div>
         <div>
           <RotateCcw size={16} />
-          <span>Cấp lại mật khẩu sẽ khóa phiên hiện tại và yêu cầu Admin cấp mã PIN mới.</span>
+          <span>Cấp lại mật khẩu sẽ đưa PIN về mã mặc định của chính tài khoản và buộc đổi ở lần sau.</span>
         </div>
       </div>
 
@@ -205,8 +205,8 @@ export function PinChangeView({ account, forced = false, knownPin = '', onChange
         title="Cấp lại mật khẩu?"
         message={
           <>
-            Toàn bộ phiên đăng nhập hiện tại sẽ bị khóa và mã PIN được đưa về trạng thái cấp lại.
-            Bạn sẽ cần liên hệ Admin để nhận mã PIN mới.
+            Phiên hiện tại sẽ bị khóa và mã PIN được đưa về mã cấp lại mặc định của tài khoản. Bạn sẽ phải đổi PIN
+            ngay ở lần đăng nhập kế tiếp.
           </>
         }
         confirmLabel="Cấp lại mật khẩu"

@@ -22,6 +22,7 @@ interface Props {
 }
 
 export function AccountView({ account, knownPin, onChanged, onReset, onLogout }: Props) {
+  const isAdmin = account.role === 'ADMIN';
   const capabilities = account.capabilities || [];
 
   return (
@@ -32,8 +33,12 @@ export function AccountView({ account, knownPin, onChanged, onReset, onLogout }:
             <UserRound size={13} /> TÀI KHOẢN &amp; BẢO MẬT
           </>
         }
-        title="Hồ sơ thẩm phán tối cao"
-        description="Thông tin phiên làm việc, quyền hạn hệ thống và mã PIN bảo vệ cổng điều hành."
+        title={isAdmin ? 'Hồ sơ thẩm phán tối cao' : 'Hồ sơ nhân viên lập phiếu'}
+        description={
+          isAdmin
+            ? 'Thông tin phiên làm việc, quyền hạn hệ thống và mã PIN bảo vệ cổng điều hành.'
+            : 'Thông tin phiên làm việc, quyền lập phiếu vi phạm và mã PIN bảo vệ tài khoản.'
+        }
       />
 
       <div className="account-layout">
@@ -43,7 +48,7 @@ export function AccountView({ account, knownPin, onChanged, onReset, onLogout }:
               <span className="profile-avatar">{initials(account.display_name)}</span>
               <div>
                 <span className="eyebrow">
-                  <Crown size={13} /> TÒA ÁN TỐI CAO
+                  <Crown size={13} /> {isAdmin ? 'TÒA ÁN TỐI CAO' : 'NHÂN VIÊN LẬP PHIẾU'}
                 </span>
                 <h2>{account.display_name}</h2>
                 <p>{account.system_name}</p>
@@ -82,7 +87,7 @@ export function AccountView({ account, knownPin, onChanged, onReset, onLogout }:
                 <span>
                   <Landmark size={13} /> Chức danh
                 </span>
-                <strong>Thẩm phán tối cao</strong>
+                <strong>{isAdmin ? 'Thẩm phán tối cao' : 'Nhân viên lập phiếu'}</strong>
               </div>
               <div className="profile-meta">
                 <span>
