@@ -80,7 +80,6 @@ import { ScheduleExcelService, XLSX_MIME } from './services/schedule-excel.servi
 import { AutoScheduleService } from './services/auto-schedule.service.js';
 import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
-import { SaleMonitorService } from './services/sale-monitor.service.js';
 import { OfficeService } from './services/office.service.js';
 import { SalaryConfigService } from './services/salary-config.service.js';
 import { canonicalBranchId } from './utils/geo.js';
@@ -419,9 +418,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const autoScheduleService = new AutoScheduleService(adapter);
   const testsService = new TestsService(adapter);
   const attendanceService = new AttendanceService(adapter);
-  // Tool giám sát nhân viên Sale (ADMIN): đọc lịch ca + điểm danh và trả snapshot
-  // realtime; dữ liệu được đẩy lại ngay qua socket `sale-monitor:updated`.
-  const saleMonitorService = new SaleMonitorService(adapter);
   // Nghiệp vụ riêng nhân viên KHỐI VĂN PHÒNG (group = VAN_PHONG): lịch hành chính,
   // nghỉ phép 1 ngày/tháng (duyệt Nhân sự → Kế toán → Giám đốc), điểm danh 08:00–08:30
   // + GPS 300m, bổ sung công 4 phiếu/tháng, lương tạm tính.
@@ -561,15 +557,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (io) {
         const timestamp = new Date().toISOString();
         io.emit('data:updated', { entity, data, timestamp });
-        // Tool giám sát Sale (Admin) — kênh realtime riêng, chỉ phát cho các
-        // entity ảnh hưởng tới lịch ca / thời gian làm việc của nhân viên Sale.
-        const ent = String(entity || '').toLowerCase();
-        if ([
-          'attendance', 'schedules', 'schedule', 'employees', 'leaves',
-          'swaps', 'office-attendance', 'office-leaves', 'all',
-        ].includes(ent)) {
-          io.emit('sale-monitor:updated', { entity, data, timestamp });
-        }
       }
     } catch (e) {
       // non-fatal
@@ -7625,23 +7612,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json({ success: true, ...board });
     } catch (err: any) {
       res.status(400).json({ error: String(err?.message || 'Lỗi tải bảng ca cần hoàn thành') });
-    }
-  });
-
-  // TOOL GIÁM SÁT NHÂN VIÊN SALE (ADMIN) — snapshot lịch ca + điểm danh realtime.
-  // Dữ liệu lấy từ đúng nguồn PHAN_CONG_CA + SU_KIEN_DIEM_DANH mà Cổng Employee Web
-  // đang dùng, nên mọi thay đổi ca/check-in/check-out hiển thị tức thời (Socket.IO).
-  app.get('/admin/sale-monitor', authMiddleware, requireRole(['ADMIN', 'HR', 'DIRECTOR']), async (req: AuthenticatedRequest, res) => {
-    try {
-      const q: any = req.query || {};
-      const date = /^\d{4}-\d{2}-\d{2}$/.test(String(q.date || ''))
-        ? String(q.date)
-        : new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
-      const snapshot = await saleMonitorService.getSnapshot({ date });
-      res.setHeader('Cache-Control', 'no-store');
-      res.json(snapshot);
-    } catch (err: any) {
-      res.status(400).json({ error: String(err?.message || 'Lỗi tải dữ liệu giám sát nhân viên Sale') });
     }
   });
 

@@ -54,7 +54,6 @@ import {
 } from 'lucide-react';
 import { RoleViews } from './components/RoleViews';
 import { ChangePasswordView } from './components/ChangePasswordView';
-import { SaleMonitorView } from './components/SaleMonitorView';
 import { VpsPasswordCard } from './components/VpsPasswordCard';
 import { DirectorPayrollView } from './components/DirectorPayrollView';
 import { InternalWorkflowView } from './components/InternalWorkflowView';
@@ -154,17 +153,16 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'hr-schedule', label: '5. Lịch làm việc', icon: Calendar },
     { id: 'hr-leave', label: '6. Nghỉ OFF', icon: Clock },
     { id: 'hr-swap', label: '7. Đổi ca', icon: RefreshCw },
-    { id: 'sale-monitor', label: '8. Giám sát nhân viên Sale', icon: Radio },
-    { id: 'hr-adjustments', label: '9. Bổ sung công', icon: FileText },
-    { id: 'notify', label: '10. Thông báo', icon: Bell },
-    { id: 'policies', label: '11. Chính sách', icon: Sliders },
-    { id: 'integrations', label: '12. Tích hợp & Đồng bộ', icon: Database },
-    { id: 'maintenance', label: '13. Bảo trì', icon: Activity },
-    { id: 'audit', label: '14. Nhật ký Audit', icon: FileCheck },
-    { id: 'backup', label: '15. Sao lưu & Phục hồi', icon: HardDrive },
-    { id: 'office-approvals', label: '16. Duyệt Văn Phòng', icon: FileText },
-    { id: 'ev-transport', label: '17. Vận chuyển sữa (EV)', icon: Truck },
-    { id: 'change-password', label: '18. Đổi mật khẩu', icon: KeyRound },
+    { id: 'hr-adjustments', label: '8. Bổ sung công', icon: FileText },
+    { id: 'notify', label: '9. Thông báo', icon: Bell },
+    { id: 'policies', label: '10. Chính sách', icon: Sliders },
+    { id: 'integrations', label: '11. Tích hợp & Đồng bộ', icon: Database },
+    { id: 'maintenance', label: '12. Bảo trì', icon: Activity },
+    { id: 'audit', label: '13. Nhật ký Audit', icon: FileCheck },
+    { id: 'backup', label: '14. Sao lưu & Phục hồi', icon: HardDrive },
+    { id: 'office-approvals', label: '15. Duyệt Văn Phòng', icon: FileText },
+    { id: 'ev-transport', label: '16. Vận chuyển sữa (EV)', icon: Truck },
+    { id: 'change-password', label: '17. Đổi mật khẩu', icon: KeyRound },
     // GỠ khỏi cổng ADMIN (chỉ HR/Kế toán nghiệp vụ): "Chuyển ca hỗ trợ" (hr-support)
     // và "Duyệt đổi STK" (bank-changes). Toàn bộ chức năng KẾ TOÁN (kể cả
     // "Cấu hình Lương CB & Phụ cấp — theo Khối") chỉ hiển thị trên tài khoản FINANCE.
@@ -329,8 +327,8 @@ export const HR_TAB_GROUPS: RoleTabGroup[] = [
   },
 ];
 
-/** CỔNG ADMIN — gom 16 màn hình thành 6 NHÓM theo mục đích sử dụng, thay cho
- *  danh sách phẳng 18 tab trước đây: sidebar chỉ còn 6 mục lớn dễ quét mắt,
+/** CỔNG ADMIN — gom 17 màn hình thành 7 NHÓM theo mục đích sử dụng, thay cho
+ *  danh sách phẳng 18 tab trước đây: sidebar chỉ còn 7 mục lớn dễ quét mắt,
  *  chức năng chi tiết nằm trong thanh tab con của từng nhóm.
  *
  *  Đã GỠ khỏi ADMIN (giữ nguyên cho HR/Kế toán):
@@ -366,16 +364,8 @@ export const ADMIN_TAB_GROUPS: RoleTabGroup[] = [
     ],
   },
   {
-    id: 'admin-group-sale-monitor',
-    label: '4. Giám sát Sales',
-    icon: Radio,
-    tabs: [
-      { id: 'sale-monitor', label: 'Nhân viên Sale realtime', icon: Radio },
-    ],
-  },
-  {
     id: 'admin-group-work',
-    label: '5. Công',
+    label: '4. Công',
     icon: CheckCircle,
     tabs: [
       { id: 'hr-adjustments', label: 'Bổ sung công', icon: FileText },
@@ -383,7 +373,7 @@ export const ADMIN_TAB_GROUPS: RoleTabGroup[] = [
   },
   {
     id: 'admin-group-approvals',
-    label: '6. Duyệt & Thông báo',
+    label: '5. Duyệt & Thông báo',
     icon: Bell,
     tabs: [
       { id: 'notify', label: 'Thông báo', icon: Bell },
@@ -393,7 +383,7 @@ export const ADMIN_TAB_GROUPS: RoleTabGroup[] = [
   },
   {
     id: 'admin-group-system',
-    label: '7. Hệ thống & Dữ liệu',
+    label: '6. Hệ thống & Dữ liệu',
     icon: Database,
     tabs: [
       { id: 'integrations', label: 'Tích hợp & Đồng bộ', icon: Database },
@@ -404,7 +394,7 @@ export const ADMIN_TAB_GROUPS: RoleTabGroup[] = [
   },
   {
     id: 'admin-group-transport',
-    label: '8. Vận chuyển sữa',
+    label: '7. Vận chuyển sữa',
     icon: Truck,
     tabs: [{ id: 'ev-transport', label: 'Tài xế & Định vị GPS', icon: Truck }],
   },
@@ -494,6 +484,8 @@ export const ADMIN_TAB_ALIASES: Record<string, string> = {
   // về màn gần nhất còn tồn tại, không để trắng trang.
   'hr-support': 'hr-schedule',
   'bank-changes': 'dashboard',
+  // Tool "Giám sát nhân viên Sale" đã gỡ hoàn toàn — tab đã lưu chuyển về Dashboard.
+  'sale-monitor': 'dashboard',
 };
 
 /** Tab HR đã gộp/nhóm: `staff` trùng hoàn toàn với `hr-official` nên gỡ khỏi
@@ -1947,9 +1939,6 @@ export function App() {
             }
             try {
               window.dispatchEvent(new CustomEvent('ubm:schedule-reload', { detail: payload?.data }));
-              // Tool Giám sát nhân viên Sale (ADMIN): tải lại snapshot ngay khi
-              // NV Sale check-in/check-out, HR đổi ca, duyệt OFF hoặc đổi hồ sơ.
-              window.dispatchEvent(new CustomEvent('ubm:sale-monitor-reload', { detail: payload?.data }));
             } catch { /* non-fatal */ }
           }
           if (payload?.entity === 'adjustments' || payload?.entity === 'office-adjustments' || payload?.entity === 'office-leaves' || payload?.entity === 'all') {
@@ -6205,9 +6194,6 @@ export function App() {
 
           {/* ĐỔI MẬT KHẨU TÀI KHOẢN NỘI BỘ (GIÁM ĐỐC / IT) */}
           {activeTab === 'change-password' && <ChangePasswordView />}
-
-          {/* TOOL GIÁM SÁT NHÂN VIÊN SALE (ADMIN) — realtime 100% qua Socket.IO */}
-          {activeTab === 'sale-monitor' && <SaleMonitorView showToast={stableShowToast} />}
 
           {/* GIÁM ĐỐC KÝ PHIẾU LƯƠNG (trước Quản lý chi nhánh) */}
           {activeTab === 'director-payroll' && <DirectorPayrollView currentUser={currentUser} />}
