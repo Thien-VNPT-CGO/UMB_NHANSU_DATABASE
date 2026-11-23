@@ -23,6 +23,7 @@ import {
   deleteTicket,
   fetchTickets,
   syncTicketDrive,
+  updateTicket,
 } from '../services/api';
 import type { ViolationTicket } from '../types';
 import {
@@ -97,6 +98,8 @@ export function TicketsView({ status, refreshKey }: Props) {
   const [approveId, setApproveId] = useState('');
   const [deleteId, setDeleteId] = useState('');
   const [busyId, setBusyId] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [draftFines, setDraftFines] = useState<number[]>([]);
   const [version, setVersion] = useState(0);
 
   useEffect(() => {
@@ -137,6 +140,65 @@ export function TicketsView({ status, refreshKey }: Props) {
 
   const totalAmount = filtered.reduce((sum, ticket) => sum + (ticket.total_amount || 0), 0);
   const detail = tickets.find(ticket => ticket.ticket_id === detailId) || null;
+  const approveTarget = tickets.find(ticket => ticket.ticket_id === approveId) || null;
+
+  // Khởi tạo bản nháp số tiền khi mở một phiếu khác. Cập nhật realtime không
+  // ghi đè bản đang sửa để tránh mất thao tác của người dùng.
+  useEffect(() => {
+    if (!detailId) {
+      setDraftFines([]);
+      return;
+    }
+    const ticket = tickets.find(item => item.ticket_id === detailId);
+    setDraftFines(ticket ? ticket.items.map(item => item.fine_amount) : []);
+  }, [detailId]);
+
+  const draftTotal = draftFines.reduce((sum, value) => sum + (Number(value) || 0), 0);
+  const editDirty =
+    !!detail &&
+    detail.status === 'PENDING' &&
+    draftFines.some((value, index) => value !== (detail.items[index]?.fine_amount ?? 0));
+
+  const setDraftFine = (index: number, value: string) => {
+    const digits = value.replace(/[^\d]/g, '');
+    setDraftFines(current => current.map((fine, i) => (i === index ? Number(digits || 0) : fine)));
+  };
+
+  const saveEdits = async (): Promise<ViolationTicket | null> => {
+    if (!detail || detail.status !== 'PENDING') return null;
+    if (!editDirty) return detail;
+    if (savingEdit) return null;
+    setSavingEdit(true);
+    try {
+      const next = await updateTicket(detail.ticket_id, {
+        items: detail.items.map((item, index) => ({
+          regulation_id: item.regulation_id,
+          fine_amount: draftFines[index] ?? item.fine_amount,
+        })),
+      });
+      replaceTicket(next);
+      setDraftFines(next.items.map(item => item.fine_amount));
+      toast(`Đã cập nhật phiếu ${next.ticket_code}: tổng phạt ${money(next.total_amount)}.`, 'success');
+      setVersion(value => value + 1);
+      return next;
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : 'Không thể cập nhật mức phạt.', 'error');
+      return null;
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const requestApproveFromDetail = async () => {
+    if (!detail) return;
+    if (editDirty) {
+      const next = await saveEdits();
+      if (!next) return;
+      setApproveId(next.ticket_id);
+      return;
+    }
+    setApproveId(detail.ticket_id);
+  };
 
   const replaceTicket = (next: ViolationTicket) => {
     setTickets(current => {
@@ -225,7 +287,7 @@ export function TicketsView({ status, refreshKey }: Props) {
         title={status === 'PENDING' ? 'Phiếu đang chờ phán quyết' : 'Kho phiếu đã duyệt'}
         description={
           status === 'PENDING'
-            ? 'Các phiếu lưu tạm hoặc chờ kiểm tra. Duyệt phiếu sẽ kích hoạt lưu Drive và cấn trừ KPI ngay lập tức.'
+            ? 'Các phiếu lưu tạm hoặc chờ kiểm tra. Mở Chi tiết để nhập lại mức phạt nếu cần giảm, sau đó duyệt để lưu Drive và cấn trừ KPI.'
             : 'Toàn bộ phiếu đã duyệt, kèm trạng thái lưu PDF Drive và đồng bộ TRỪ KPI.'
         }
         actions={
@@ -349,7 +411,7 @@ export function TicketsView({ status, refreshKey }: Props) {
 
             <div className="ticket-actions">
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDetailId(ticket.ticket_id)}>
-                <Eye size={15} /> Chi tiết
+                <Eye size={15} /> {ticket.status === 'PENDING' ? 'Xem & sửa phạt' : 'Chi tiết'}
               </button>
               {ticket.status === 'PENDING' ? (
                 <>
@@ -398,9 +460,25 @@ export function TicketsView({ status, refreshKey }: Props) {
                 Đóng
               </button>
               {detail.status === 'PENDING' ? (
-                <button type="button" className="btn btn-gold" onClick={() => setApproveId(detail.ticket_id)}>
-                  <Gavel size={16} /> Duyệt phiếu
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => void saveEdits()}
+                    disabled={!editDirty || savingEdit}
+                  >
+                    {savingEdit ? <Loader2 size={16} className="spin" /> : <Check size={16} />}
+                    Lưu thay đổi
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-gold"
+                    onClick={() => void requestApproveFromDetail()}
+                    disabled={savingEdit}
+                  >
+                    <Gavel size={16} /> Duyệt phiếu
+                  </button>
+                </>
               ) : detail.drive_sync_status !== 'SYNCED' ? (
                 <button
                   type="button"
@@ -467,6 +545,12 @@ export function TicketsView({ status, refreshKey }: Props) {
               <h4>
                 <FileText size={15} /> Danh sách lỗi vi phạm
               </h4>
+              {detail.status === 'PENDING' ? (
+                <p className="detail-hint">
+                  Nhập lại số tiền từng lỗi nếu cần điều chỉnh (ví dụ giảm cho lần vi phạm đầu), rồi bấm “Lưu thay
+                  đổi” trước khi duyệt.
+                </p>
+              ) : null}
               <div className="detail-items">
                 {detail.items.map((item, index) => (
                   <div key={`${item.regulation_id}-${index}`} className="detail-item">
@@ -478,14 +562,41 @@ export function TicketsView({ status, refreshKey }: Props) {
                         {item.fine_note ? ` · ${item.fine_note}` : ''}
                       </span>
                     </div>
-                    <strong>{item.fine_amount > 0 ? money(item.fine_amount) : (item.fine_note || money(0))}</strong>
+                    {detail.status === 'PENDING' ? (
+                      <label className="money-input detail-money-input" title="Nhập mức phạt điều chỉnh cho lỗi này">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          aria-label={`Số tiền lỗi ${item.name}`}
+                          value={draftFines[index] ? draftFines[index].toLocaleString('vi-VN') : ''}
+                          placeholder="0"
+                          onFocus={event => event.currentTarget.select()}
+                          onChange={event => setDraftFine(index, event.target.value)}
+                        />
+                        <span>đ</span>
+                      </label>
+                    ) : (
+                      <strong>{item.fine_amount > 0 ? money(item.fine_amount) : (item.fine_note || money(0))}</strong>
+                    )}
                   </div>
                 ))}
               </div>
               <div className="detail-total">
-                <span>Tổng mức phạt</span>
-                <strong>{money(detail.total_amount)}</strong>
+                <span>{detail.status === 'PENDING' && editDirty ? 'Tổng sau điều chỉnh' : 'Tổng mức phạt'}</span>
+                <strong>{money(detail.status === 'PENDING' ? draftTotal : detail.total_amount)}</strong>
               </div>
+              {detail.original_total_amount !== undefined && detail.original_total_amount !== detail.total_amount ? (
+                <p className="detail-adjust-note">
+                  Mức gốc {money(detail.original_total_amount)} · điều chỉnh bởi{' '}
+                  {detail.adjusted_by_name || 'quản trị'}
+                  {detail.adjusted_at ? ` lúc ${formatDateTime(detail.adjusted_at)}` : ''}.
+                </p>
+              ) : null}
+              {editDirty ? (
+                <p className="detail-adjust-note is-warning">
+                  Chưa lưu thay đổi — bấm “Lưu thay đổi” để cập nhật phiếu trước khi duyệt.
+                </p>
+              ) : null}
             </div>
 
             {detail.note ? (
@@ -532,8 +643,19 @@ export function TicketsView({ status, refreshKey }: Props) {
         title="Duyệt phiếu vi phạm?"
         message={
           <>
-            Phiếu sẽ được chuyển sang trạng thái <strong>Đã duyệt</strong>. Hệ thống lưu PDF lên Google Drive và cộng
-            tổng phạt vào <strong>TRỪ KPI</strong> của kỳ tương ứng. Thao tác không thể hoàn tác.
+            {approveTarget ? (
+              <>
+                Phiếu của <strong>{approveTarget.employee_name}</strong> với tổng phạt{' '}
+                <strong className="text-red">{money(approveTarget.total_amount)}</strong> sẽ được duyệt.
+                {approveTarget.original_total_amount !== undefined &&
+                approveTarget.original_total_amount !== approveTarget.total_amount ? (
+                  <> Mức gốc trước điều chỉnh: {money(approveTarget.original_total_amount)}.</>
+                ) : null}
+                <br />
+              </>
+            ) : null}
+            Hệ thống lưu PDF lên Google Drive và cộng tổng phạt vào <strong>TRỪ KPI</strong> của kỳ tương ứng. Thao
+            tác không thể hoàn tác.
           </>
         }
         confirmLabel="Duyệt phiếu"

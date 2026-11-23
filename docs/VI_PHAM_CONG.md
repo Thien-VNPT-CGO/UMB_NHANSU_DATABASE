@@ -19,8 +19,8 @@ Web app riêng, phục vụ tại `https://<domain>/violations/`, dùng chung ba
 | Tổng quan | Bảng điều khiển 4 chỉ số (chờ duyệt, đã duyệt, KPI tháng, quy chế hiệu lực) và danh sách phiếu gần đây. |
 | Quy chế Công Ty | Tra cứu, thêm, sửa, xóa lỗi vi phạm và mức phạt — đồng bộ realtime sang màn hình bắt lỗi. |
 | Bắt Lỗi Vi Phạm | Chọn nhân viên (tên + chi nhánh), thêm nhiều lỗi, sửa mức phạt, tự cộng tổng. |
-| Phiếu Chờ Duyệt | Phiếu `Lưu tạm`; có thể xem, duyệt hoặc xóa. |
-| Phiếu Đã Duyệt | Kho phiếu đã duyệt, trạng thái PDF Drive + TRỪ KPI. |
+| Phiếu Chờ Duyệt | Phiếu `Lưu tạm`; xem chi tiết, **nhập lại mức phạt từng lỗi** (VD giảm cho lần vi phạm đầu), lưu thay đổi, duyệt hoặc xóa. |
+| Phiếu Đã Duyệt | Kho phiếu đã duyệt, trạng thái PDF Drive + TRỪ KPI. Mức phạt đã khóa sau khi duyệt. |
 | Tài Khoản & Bảo Mật | Thông tin phiên làm việc, thẩm quyền hệ thống, đổi PIN 8 số và cấp lại mật khẩu khẩn cấp. |
 
 Giao diện dùng nền sáng, thanh điều hướng cố định bên trái (thu gọn thành thanh dưới trên di động).
@@ -35,6 +35,10 @@ Bộ quy chế gốc bám theo bảng **“QUY CHẾ LÀM VIỆC DÀNH CHO NHÂN
 ở màn hình **Bắt Lỗi Vi Phạm**, mức phạt được điền tự động và có thể sửa lại số tiền mong muốn ngay
 trong danh sách lỗi của phiếu trước khi lưu. Nút khôi phục giúp trả về đúng
 mức phạt gốc của quy chế.
+
+Với phiếu đang chờ duyệt, mở **Chi tiết** để nhập lại số tiền từng lỗi và bấm **Lưu thay đổi** trước khi
+duyệt — phù hợp khi cần giảm mức phạt (ví dụ nhân viên vi phạm lần đầu). Hệ thống lưu vết tổng phạt gốc,
+người điều chỉnh và thời điểm điều chỉnh; phiếu đã duyệt bị khóa vì PDF Drive và TRỪ KPI đã đồng bộ.
 
 - Mức phạt cố định (VD `VAO TRE 5P` → 30.000đ) điền thẳng vào ô tiền.
 - Mức phạt không quy ra số tiền cố định (VD `10% lương/ tháng`, `Công ty quyết định`,

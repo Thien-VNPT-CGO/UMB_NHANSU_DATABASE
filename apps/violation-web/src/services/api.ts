@@ -175,6 +175,16 @@ export function approveTicket(id: string) {
   return request<ViolationTicket>(`/violations/tickets/${encodeURIComponent(id)}/approve`, { method: 'POST' });
 }
 
+export function updateTicket(
+  id: string,
+  input: { items: Array<{ regulation_id: string; fine_amount: number }> },
+) {
+  return request<ViolationTicket>(`/violations/tickets/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
 export function deleteTicket(id: string) {
   return request<{ ok: boolean }>(`/violations/tickets/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }

@@ -3148,6 +3148,32 @@ select.input,
   font-weight: 700;
 }
 
+.detail-hint {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.detail-money-input {
+  min-width: 120px;
+  flex: none;
+}
+
+.detail-money-input input {
+  font-size: 0.84rem;
+}
+
+.detail-adjust-note {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.detail-adjust-note.is-warning {
+  color: var(--amber);
+  font-weight: 600;
+}
+
 .detail-note {
   padding: 10px 12px;
   border: 1px solid var(--line);
@@ -3871,6 +3897,15 @@ select.input,
 
   .item-amount {
     margin-left: 40px;
+  }
+
+  .detail-item {
+    flex-wrap: wrap;
+  }
+
+  .detail-money-input {
+    flex: 1;
+    margin-left: 38px;
   }
 
   .ticket-actions .btn:first-child {

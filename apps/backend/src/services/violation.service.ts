@@ -96,6 +96,11 @@ export interface ViolationTicket {
   drive_synced_at?: string;
   drive_sync_status?: 'PENDING' | 'SYNCED' | 'ERROR' | 'NOT_CONFIGURED';
   drive_sync_error?: string;
+  /** Tổng phạt gốc trước lần điều chỉnh đầu tiên (lưu vết). */
+  original_total_amount?: number;
+  adjusted_by?: string;
+  adjusted_by_name?: string;
+  adjusted_at?: string;
 }
 
 export interface ViolationPortalAccount {
@@ -311,6 +316,10 @@ function normalizeTicket(raw: any): ViolationTicket | null {
       ? raw.drive_sync_status
       : undefined,
     drive_sync_error: raw.drive_sync_error ? String(raw.drive_sync_error).slice(0, 500) : undefined,
+    original_total_amount: raw.original_total_amount !== undefined ? safeMoney(raw.original_total_amount) : undefined,
+    adjusted_by: raw.adjusted_by ? String(raw.adjusted_by) : undefined,
+    adjusted_by_name: raw.adjusted_by_name ? String(raw.adjusted_by_name) : undefined,
+    adjusted_at: raw.adjusted_at ? String(raw.adjusted_at) : undefined,
   };
 }
 
@@ -778,6 +787,52 @@ export async function deleteViolationTicket(repo: ISheetsRepository, ticketId: s
   const next = tickets.filter(t => t.ticket_id !== ticketId);
   await persistSettings(repo, { [VIOLATION_TICKETS_KEY]: next });
   return true;
+}
+
+/**
+ * Điều chỉnh mức phạt của phiếu đang chờ duyệt (VD: giảm cho nhân viên vi phạm
+ * lần đầu). Chỉ cho phép sửa số tiền từng lỗi, giữ nguyên thông tin lỗi gốc và
+ * khóa phiếu đã duyệt vì Drive + TRỪ KPI đã đồng bộ.
+ */
+export async function updateViolationTicket(
+  repo: ISheetsRepository,
+  ticketId: string,
+  input: any,
+  actor: ViolationActor,
+): Promise<ViolationTicket | null> {
+  const tickets = await listViolationTickets(repo);
+  const ticket = tickets.find(t => t.ticket_id === ticketId);
+  if (!ticket) return null;
+  if (ticket.status !== 'PENDING') throw new Error('TICKET_APPROVED_LOCKED');
+
+  const rawItems = Array.isArray(input?.items) ? input.items : null;
+  if (!rawItems || rawItems.length === 0) throw new Error('MISSING_ITEMS');
+  if (rawItems.length !== ticket.items.length) throw new Error('INVALID_ITEMS');
+
+  const items: ViolationTicketItem[] = ticket.items.map((item, index) => ({
+    ...item,
+    fine_amount: rawItems[index]?.fine_amount !== undefined
+      ? safeMoney(rawItems[index].fine_amount)
+      : item.fine_amount,
+  }));
+
+  const total = items.reduce((sum, item) => sum + item.fine_amount, 0);
+  const changed = items.some((item, index) => item.fine_amount !== ticket.items[index].fine_amount);
+  if (!changed) return ticket;
+
+  const now = new Date().toISOString();
+  const next: ViolationTicket = {
+    ...ticket,
+    items,
+    total_amount: total,
+    updated_at: now,
+    original_total_amount: ticket.original_total_amount ?? ticket.total_amount,
+    adjusted_by: actor.id,
+    adjusted_by_name: actor.name || actor.id,
+    adjusted_at: now,
+  };
+  await saveTicket(repo, next);
+  return next;
 }
 
 // ---------------------------------------------------------------- payroll KPI

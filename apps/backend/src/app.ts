@@ -68,6 +68,7 @@ import {
   loginViolationPortal,
   resetViolationPin,
   retryViolationDriveSync,
+  updateViolationTicket,
   upsertViolationRegulation,
   VIOLATION_CAPABILITIES,
   VIOLATION_PORTAL_DISPLAY_NAME,
@@ -9174,6 +9175,27 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json(ticket);
     } catch (err: any) {
       res.status(400).json({ error: 'APPROVE_TICKET_FAILED', message: err?.message || 'FAILED' });
+    }
+  });
+
+  app.patch('/violations/tickets/:id', violationAuth, async (req: any, res) => {
+    try {
+      const ticket = await updateViolationTicket(adapter, req.params.id, req.body || {}, violationActor(req));
+      if (!ticket) return res.status(404).json({ error: 'TICKET_NOT_FOUND', message: 'Không tìm thấy phiếu vi phạm.' });
+      await flushViolationSettings();
+      broadcastUpdate('violations', { action: 'ticket-update', id: ticket.ticket_id });
+      res.json(ticket);
+    } catch (err: any) {
+      const code = String(err?.message || 'UPDATE_TICKET_FAILED');
+      const messages: Record<string, string> = {
+        TICKET_APPROVED_LOCKED: 'Phiếu đã duyệt nên không thể sửa mức phạt. Hãy điều chỉnh trước khi duyệt.',
+        MISSING_ITEMS: 'Phiếu phải có ít nhất 1 lỗi vi phạm.',
+        INVALID_ITEMS: 'Danh sách lỗi không khớp với phiếu gốc.',
+      };
+      res.status(code === 'TICKET_APPROVED_LOCKED' ? 409 : 400).json({
+        error: code,
+        message: messages[code] || 'Không thể cập nhật phiếu vi phạm.',
+      });
     }
   });
 

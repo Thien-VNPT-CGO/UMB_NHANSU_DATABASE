@@ -76,6 +76,10 @@ export interface ViolationTicket {
   drive_synced_at?: string;
   drive_sync_status?: DriveSyncStatus;
   drive_sync_error?: string;
+  original_total_amount?: number;
+  adjusted_by?: string;
+  adjusted_by_name?: string;
+  adjusted_at?: string;
 }
 
 export interface ViolationEmployee {
